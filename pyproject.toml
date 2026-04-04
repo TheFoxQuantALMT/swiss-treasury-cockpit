@@ -1,0 +1,49 @@
+[project]
+name = "swiss-treasury-cockpit"
+version = "0.1.0"
+description = "Unified treasury cockpit combining P&L engine and central bank monitoring"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.2.3",
+    "numpy>=2.0.0",
+    "openpyxl>=3.1.5",
+    "dill>=0.3.8",
+    "httpx>=0.27",
+    "yfinance>=0.2",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "pydantic-settings>=2.6",
+    "plotly>=6.6.0",
+    "kaleido>=1.2.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+agents = [
+    "agent-framework>=1.0.0rc5",
+    "agent-framework-ollama>=1.0.0b260319",
+    "mlflow-tracing>=3.10.1",
+]
+notion = [
+    "notion-client>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cockpit"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[project.scripts]
+cockpit = "cockpit.cli:main"
