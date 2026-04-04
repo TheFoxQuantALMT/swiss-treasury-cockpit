@@ -1,0 +1,38 @@
+<div id="tab-macro" class="tab-content active">
+  <div class="grid-4" style="margin-bottom: 24px;">
+    {% for ccy in ['USD', 'EUR', 'CHF', 'GBP'] %}
+    <div class="card">
+      <div style="font-size: 0.8rem; color: var(--text-secondary);">{{ ccy }}</div>
+      <div style="font-size: 1.8rem; font-weight: 700;">{{ macro.score_cards[ccy].composite | int }}</div>
+      {% set lbl = macro.score_cards[ccy].label %}
+      <div class="label-{{ lbl | lower }}">{{ lbl }}</div>
+      <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
+        Driver: {{ macro.score_cards[ccy].driver }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if macro.alerts %}
+  <div class="card" style="margin-bottom: 24px;">
+    <h3 style="margin-bottom: 12px; font-size: 0.9rem;">Active Alerts</h3>
+    {% for alert in macro.alerts %}
+    <span class="alert-badge alert-{{ alert.severity }}">{{ alert.message }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if macro.cb_rates %}
+  <div class="card">
+    <h3 style="margin-bottom: 12px; font-size: 0.9rem;">Central Bank Rates</h3>
+    <table>
+      <thead><tr><th>Bank</th><th>Instrument</th><th>Rate</th></tr></thead>
+      <tbody>
+      {% for bank, info in macro.cb_rates.items() %}
+        <tr><td>{{ bank }}</td><td>{{ info.name }}</td><td>{{ "%.3f" | format(info.rate) }}%</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>

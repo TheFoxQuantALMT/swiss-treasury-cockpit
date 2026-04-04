@@ -1,0 +1,123 @@
+<div id="tab-portfolio" class="tab-content">
+  <div class="card" style="margin-bottom: 24px;">
+    <h3 style="font-size: 0.9rem; margin-bottom: 8px;">Liquidity Ladder</h3>
+    <div class="chart-container" style="height: 400px;">
+      <canvas id="chart-liquidity"></canvas>
+    </div>
+    {% if portfolio.liquidity_ladder.survival_days %}
+    <div style="margin-top: 8px; font-size: 0.85rem; color: var(--accent-yellow);">
+      Survival horizon: {{ portfolio.liquidity_ladder.survival_days }} days
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="grid-2" style="margin-bottom: 24px;">
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Positions by Currency</h3>
+      <table>
+        <thead><tr><th>Currency</th><th>Assets</th><th>Liabilities</th><th>Net</th></tr></thead>
+        <tbody>
+        {% for ccy, pos in portfolio.positions.items() %}
+          <tr>
+            <td>{{ ccy }}</td>
+            <td>{{ "{:,.0f}".format(pos.assets) if pos.assets else "—" }}</td>
+            <td>{{ "{:,.0f}".format(pos.liabilities) if pos.liabilities else "—" }}</td>
+            <td>{{ "{:,.0f}".format(pos.net) if pos.net else "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 8px;">Counterparty Concentration</h3>
+      <div class="chart-container">
+        <canvas id="chart-concentration"></canvas>
+      </div>
+      {% if portfolio.concentration.hhi %}
+      <div style="margin-top: 4px; font-size: 0.8rem; color: var(--text-secondary);">
+        HHI: {{ portfolio.concentration.hhi }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Rating Distribution</h3>
+      <table>
+        <thead><tr><th>Rating</th><th>Nominal</th><th>%</th></tr></thead>
+        <tbody>
+        {% for bucket, info in portfolio.rating.items() %}
+          <tr>
+            <td>{{ bucket }}</td>
+            <td>{{ "{:,.0f}".format(info.nominal) if info.nominal else "—" }}</td>
+            <td>{{ "%.1f" | format(info.pct) if info.pct else "—" }}%</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 12px;">HQLA Composition</h3>
+      <table>
+        <thead><tr><th>Level</th><th>Nominal</th><th>%</th></tr></thead>
+        <tbody>
+        {% for level, info in portfolio.hqla.items() if level != 'total_hqla' %}
+          <tr>
+            <td>{{ level }}</td>
+            <td>{{ "{:,.0f}".format(info.nominal) if info.nominal else "—" }}</td>
+            <td>{{ "%.1f" | format(info.pct) if info.pct else "—" }}%</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const ladder = {{ portfolio.liquidity_ladder | tojson_safe }};
+    const ctx = document.getElementById('chart-liquidity');
+    if (ctx && typeof Chart !== 'undefined' && ladder.labels.length > 0) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ladder.labels,
+          datasets: [
+            { label: 'Inflows', data: ladder.inflows, backgroundColor: 'rgba(63,185,80,0.7)' },
+            { label: 'Outflows', data: ladder.outflows.map(v => -v), backgroundColor: 'rgba(248,81,73,0.7)' },
+            { label: 'Cumulative', data: ladder.cumulative, type: 'line', borderColor: '#58a6ff', borderWidth: 2, pointRadius: 0, fill: false, yAxisID: 'y1' },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3' } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45 } },
+            y: { ticks: { color: '#8b949e' } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#58a6ff' } }
+          }
+        }
+      });
+    }
+
+    const concData = {{ portfolio.concentration | tojson_safe }};
+    const concCtx = document.getElementById('chart-concentration');
+    if (concCtx && typeof Chart !== 'undefined' && concData.top_10 && concData.top_10.length > 0) {
+      new Chart(concCtx, {
+        type: 'doughnut',
+        data: {
+          labels: concData.top_10.map(c => c.counterparty),
+          datasets: [{ data: concData.top_10.map(c => c.nominal), backgroundColor: ['#d62828','#e67e22','#002868','#6f42c1','#58a6ff','#3fb950','#d29922','#8b949e','#f0883e','#a5d6ff'] }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 10 } } } }
+        }
+      });
+    }
+  })();
+  </script>
+</div>

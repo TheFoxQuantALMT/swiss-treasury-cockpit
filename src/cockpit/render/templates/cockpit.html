@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swiss Treasury Cockpit — {{ date }}</title>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --border: #30363d;
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-yellow: #d29922;
+  --accent-red: #f85149;
+  --accent-orange: #e67e22;
+  --fed-blue: #002868;
+  --ecb-orange: #e67e22;
+  --bns-red: #d62828;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.header h1 { font-size: 1.25rem; font-weight: 600; }
+.header .date { color: var(--text-secondary); font-size: 0.875rem; }
+.tabs {
+  display: flex; gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+}
+.tab-btn {
+  padding: 12px 20px;
+  background: none; border: none;
+  color: var(--text-secondary);
+  cursor: pointer; font-size: 0.875rem;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.tab-content { display: none; padding: 24px; }
+.tab-content.active { display: block; }
+.placeholder {
+  text-align: center; padding: 80px 24px;
+  color: var(--text-secondary);
+}
+.placeholder code {
+  background: var(--bg-tertiary); padding: 4px 8px;
+  border-radius: 4px; font-size: 0.875rem;
+}
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+table {
+  width: 100%; border-collapse: collapse;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+.label-calm { color: var(--accent-green); }
+.label-watch { color: var(--accent-yellow); }
+.label-action { color: var(--accent-red); }
+.alert-badge {
+  display: inline-block; padding: 2px 8px;
+  border-radius: 12px; font-size: 0.75rem; font-weight: 600;
+}
+.alert-critical { background: rgba(248,81,73,0.2); color: var(--accent-red); }
+.alert-high { background: rgba(248,81,73,0.15); color: var(--accent-red); }
+.alert-medium { background: rgba(210,153,34,0.2); color: var(--accent-yellow); }
+.alert-low { background: rgba(63,185,80,0.2); color: var(--accent-green); }
+canvas { max-width: 100%; }
+.chart-container { position: relative; height: 300px; margin: 16px 0; }
+.brief-content { max-width: 800px; line-height: 1.7; }
+.brief-content h2 { margin-top: 24px; margin-bottom: 8px; font-size: 1.1rem; }
+.brief-content h3 { margin-top: 16px; margin-bottom: 6px; font-size: 1rem; color: var(--text-secondary); }
+.fact-checked { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.8rem; }
+.fact-checked.reviewed { background: rgba(63,185,80,0.2); color: var(--accent-green); }
+.fact-checked.unverified { background: rgba(210,153,34,0.2); color: var(--accent-yellow); }
+@media print {
+  body { background: #fff; color: #000; }
+  .tabs { display: none; }
+  .tab-content { display: block !important; page-break-before: always; }
+  .header { background: #fff; border-bottom: 2px solid #000; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Swiss Treasury Cockpit</h1>
+  <span class="date">{{ date }}</span>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('macro')">Macro Overview</button>
+  <button class="tab-btn" onclick="switchTab('fx-energy')">FX &amp; Energy</button>
+  <button class="tab-btn" onclick="switchTab('pnl')">P&amp;L Projection</button>
+  <button class="tab-btn" onclick="switchTab('portfolio')">Portfolio Snapshot</button>
+  <button class="tab-btn" onclick="switchTab('brief')">Daily Brief</button>
+</div>
+
+{% if has_macro %}
+{% include '_macro.html' %}
+{% else %}
+<div id="tab-macro" class="tab-content active">
+  <div class="placeholder">
+    <p>Macro data not available.</p>
+    <p>Run <code>cockpit fetch --date {{ date }}</code> first.</p>
+  </div>
+</div>
+{% endif %}
+
+{% if has_macro %}
+{% include '_fx_energy.html' %}
+{% else %}
+<div id="tab-fx-energy" class="tab-content">
+  <div class="placeholder">
+    <p>FX &amp; Energy data not available.</p>
+    <p>Run <code>cockpit fetch --date {{ date }}</code> first.</p>
+  </div>
+</div>
+{% endif %}
+
+{% if has_pnl %}
+{% include '_pnl.html' %}
+{% else %}
+<div id="tab-pnl" class="tab-content">
+  <div class="placeholder">
+    <p>P&amp;L data not available.</p>
+    <p>Run <code>cockpit compute --date {{ date }}</code> first.</p>
+  </div>
+</div>
+{% endif %}
+
+{% if has_portfolio %}
+{% include '_portfolio.html' %}
+{% else %}
+<div id="tab-portfolio" class="tab-content">
+  <div class="placeholder">
+    <p>Portfolio data not available.</p>
+    <p>Run <code>cockpit compute --date {{ date }}</code> first.</p>
+  </div>
+</div>
+{% endif %}
+
+{% if has_brief %}
+{% include '_brief.html' %}
+{% else %}
+<div id="tab-brief" class="tab-content">
+  <div class="placeholder">
+    <p>Daily brief not available.</p>
+    <p>Run <code>cockpit analyze --date {{ date }}</code> first.</p>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function switchTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>

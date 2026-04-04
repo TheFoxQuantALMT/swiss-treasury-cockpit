@@ -1,0 +1,74 @@
+<div id="tab-fx-energy" class="tab-content">
+  <div class="grid-2" style="margin-bottom: 24px;">
+    {% for pair, label in [('usd_chf', 'USD/CHF'), ('eur_chf', 'EUR/CHF'), ('gbp_chf', 'GBP/CHF')] %}
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 8px;">{{ label }}</h3>
+      <div class="chart-container">
+        <canvas id="chart-{{ pair }}"></canvas>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="grid-2">
+    {% for fuel, label in [('brent', 'Brent Crude ($/bbl)'), ('eu_gas', 'EU Gas TTF (EUR/MWh)')] %}
+    <div class="card">
+      <h3 style="font-size: 0.9rem; margin-bottom: 8px;">{{ label }}</h3>
+      <div class="chart-container">
+        <canvas id="chart-{{ fuel }}"></canvas>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if fx_energy.deltas %}
+  <div class="card" style="margin-top: 24px;">
+    <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Historical Deltas</h3>
+    <table>
+      <thead><tr><th>Metric</th><th>Current</th><th>1D</th><th>1W</th><th>1M</th></tr></thead>
+      <tbody>
+      {% for key, d in fx_energy.deltas.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td>{{ "%.4f" | format(d.current) if d.current else "—" }}</td>
+          <td>{{ "%.2f%%" | format(d['1d'].pct) if d.get('1d') else "—" }}</td>
+          <td>{{ "%.2f%%" | format(d['1w'].pct) if d.get('1w') else "—" }}</td>
+          <td>{{ "%.2f%%" | format(d['1m'].pct) if d.get('1m') else "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <script>
+  (function() {
+    const fxData = {{ fx_energy.fx_series | tojson_safe }};
+    const bands = {{ fx_energy.fx_bands | tojson_safe }};
+    {% for pair in ['usd_chf', 'eur_chf', 'gbp_chf'] %}
+    if (fxData['{{ pair }}'] && fxData['{{ pair }}'].dates.length > 0) {
+      const ctx = document.getElementById('chart-{{ pair }}');
+      if (ctx && typeof Chart !== 'undefined') {
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: fxData['{{ pair }}'].dates,
+            datasets: [{
+              data: fxData['{{ pair }}'].values,
+              borderColor: 'rgb(88,166,255)',
+              borderWidth: 1.5,
+              pointRadius: 0,
+              fill: false,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { ticks: { color: '#8b949e' } }, y: { ticks: { color: '#8b949e' } } }
+          }
+        });
+      }
+    }
+    {% endfor %}
+  })();
+  </script>
+</div>

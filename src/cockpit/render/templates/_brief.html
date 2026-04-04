@@ -1,0 +1,12 @@
+<div id="tab-brief" class="tab-content">
+  <div class="card">
+    {% if brief.reviewed is defined %}
+    <span class="fact-checked {{ 'reviewed' if brief.reviewed else 'unverified' }}">
+      {{ 'Fact-Checked' if brief.reviewed else 'Unverified' }}
+    </span>
+    {% endif %}
+    <div class="brief-content" style="margin-top: 16px;">
+      {{ brief.html | default("No brief content available.") }}
+    </div>
+  </div>
+</div>
