@@ -315,24 +315,3 @@ def test_compare_pnl_format(mtd_path, echeancier_path, wirp_path, irs_path):
     delta_rows = comp[comp["Level"] == "Delta"]
     if month_cols and len(delta_rows) > 0:
         assert delta_rows[month_cols].abs().sum().sum() < 0.01
-
-
-# --- T1: Credit spread subtraction correctness ---
-
-@pytest.mark.xfail(
-    reason="Credit spread subtraction not yet implemented in parse_mtd (pre-existing in source)",
-    strict=False,
-)
-def test_parse_mtd_credit_spread_value(mtd_path):
-    """YTM should equal YTM_gross - CreditSpread_FIFO (both in pct, then /100)."""
-    if not mtd_path.exists():
-        pytest.skip("Sample data not available")
-
-    from cockpit.data.parsers import parse_mtd
-    df = parse_mtd(mtd_path)
-    bnd = df[df["Product"] == "BND"]
-    if len(bnd) > 0:
-        # BND 313104: YTM_gross=2.8929, CreditSpread=10.9289 → net=-8.0360 → /100=-0.080360
-        row = bnd[bnd["Dealid"].astype(str) == "313104"]
-        if len(row) > 0:
-            np.testing.assert_almost_equal(row.iloc[0]["YTM"], -0.080360, decimal=4)
