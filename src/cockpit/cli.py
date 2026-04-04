@@ -65,6 +65,7 @@ def cmd_compute(
     data_dir: Path = DATA_DIR,
     output_dir: Path = OUTPUT_DIR,
     dry_run: bool = False,
+    funding_source: str = "ois",
 ) -> None:
     """Run P&L engine, scoring, alerts, and portfolio snapshot."""
     from cockpit.engine.pnl.forecast import ForecastRatePnL
@@ -81,6 +82,7 @@ def cmd_compute(
         export=False,
         input_dir=input_dir,
         output_dir=str(output_dir),
+        funding_source=funding_source,
     )
     pnl.run()
 
@@ -274,10 +276,11 @@ def cmd_run_all(
     data_dir: Path = DATA_DIR,
     output_dir: Path = OUTPUT_DIR,
     dry_run: bool = False,
+    funding_source: str = "ois",
 ) -> None:
     """Execute all pipeline steps in sequence."""
     cmd_fetch(date=date, data_dir=data_dir, dry_run=dry_run)
-    cmd_compute(date=date, input_dir=input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=dry_run)
+    cmd_compute(date=date, input_dir=input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=dry_run, funding_source=funding_source)
     try:
         cmd_analyze(date=date, data_dir=data_dir, dry_run=dry_run)
     except Exception as e:
@@ -303,6 +306,8 @@ def main() -> None:
     p_compute = sub.add_parser("compute", help="Run P&L + scoring + alerts + portfolio")
     p_compute.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
     p_compute.add_argument("--input-dir", help="Path to Excel input files")
+    p_compute.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
+                           help="Funding rate source: OIS curve (default) or deal-level CocRate")
     p_compute.add_argument("--dry-run", action="store_true")
 
     # analyze
@@ -318,6 +323,8 @@ def main() -> None:
     p_all = sub.add_parser("run-all", help="Execute all steps")
     p_all.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
     p_all.add_argument("--input-dir", help="Path to Excel input files")
+    p_all.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
+                       help="Funding rate source: OIS curve (default) or deal-level CocRate")
     p_all.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()
@@ -327,10 +334,10 @@ def main() -> None:
     if args.command == "fetch":
         cmd_fetch(date=args.date, data_dir=data_dir, dry_run=args.dry_run)
     elif args.command == "compute":
-        cmd_compute(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run)
+        cmd_compute(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run, funding_source=args.funding_source)
     elif args.command == "analyze":
         cmd_analyze(date=args.date, data_dir=data_dir, dry_run=args.dry_run)
     elif args.command == "render":
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
     elif args.command == "run-all":
-        cmd_run_all(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run)
+        cmd_run_all(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run, funding_source=args.funding_source)

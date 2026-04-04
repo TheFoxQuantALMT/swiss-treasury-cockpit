@@ -65,6 +65,65 @@ def overlay_wirp(base: pd.DataFrame, wirp: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+def load_carry_compounded(
+    start: Any,
+    end: Any,
+    currency: str,
+) -> Optional[float]:
+    """Load WASP carry-compounded rate for a (start, end, currency) period.
+
+    Uses the WASP ``carryCompounded`` function with carry-specific indices
+    (CHF→CSCML5, EUR→ESAVB1, USD→USSOFR, GBP→GBPOIS) and the
+    ``MESA MARKET ALMT`` ramp — distinct from OIS forward curves.
+
+    Returns the compounded rate as a float, or None if WASP is unavailable.
+    """
+    if wt is None:
+        return None
+
+    from cockpit.config import CURRENCY_TO_CARRY_INDEX
+
+    indice = CURRENCY_TO_CARRY_INDEX.get(currency)
+    if indice is None:
+        logger.warning("No carry index for currency %s", currency)
+        return None
+
+    try:
+        start_excel = wt.datetime_to_excel_date(start)
+        end_excel = wt.datetime_to_excel_date(end)
+        mkt_name = f"mkt{currency}"
+        res = wt.Fwd(start_excel, end_excel, indice, mkt_name)
+        return res.to_list()[0][0][0]
+    except Exception as exc:
+        logger.warning("carryCompounded failed %s [%s, %s]: %s", currency, start, end, exc)
+        return None
+
+
+def load_carry_compounded_series(
+    start: Any,
+    end: Any,
+    currency: str,
+) -> Optional[pd.DataFrame]:
+    """Monthly carry-compounded series via WASP for validation.
+
+    Returns DataFrame with columns [Date, CarryCompounded] where each row
+    is a month-end carry rate from start to end, or None if WASP unavailable.
+    """
+    if wt is None:
+        return None
+
+    months = pd.date_range(start=start, end=end, freq="ME").to_list()
+    if pd.Timestamp(end) not in [pd.Timestamp(m) for m in months]:
+        months.append(pd.Timestamp(end))
+
+    rows = []
+    for month_end in months:
+        carry = load_carry_compounded(start, month_end, currency)
+        rows.append({"Date": month_end, "Currency": currency, "CarryCompounded": carry})
+
+    return pd.DataFrame(rows)
+
+
 class CurveCache:
     def __init__(self) -> None:
         self._store: dict[tuple, pd.DataFrame] = {}

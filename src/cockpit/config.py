@@ -177,3 +177,24 @@ ANALYST_MODEL: str = "deepseek-r1:14b"
 REVIEWER_MODEL: str = "qwen3.5:9b"
 OLLAMA_HOST: str = "http://localhost:11434"
 MAX_REVIEW_RETRIES: int = 3
+
+# ---------------------------------------------------------------------------
+# Cost of Carry / P&L decomposition
+# ---------------------------------------------------------------------------
+
+FUNDING_SOURCE: str = "ois"  # "ois" (default) or "coc"
+
+# WASP carry-compounded curve indices (from wasptools.py)
+# These differ from OIS forward indices for EUR and CHF
+CURRENCY_TO_CARRY_INDEX: dict[str, str] = {
+    "CHF": "CSCML5",
+    "EUR": "ESAVB1",
+    "USD": "USSOFR",
+    "GBP": "GBPOIS",
+}
+
+# RFR lookback in business days (SNB WG: SARON=2, BoE WG: SONIA=5)
+LOOKBACK_DAYS: dict[str, int] = {
+    "CHF": 2,
+    "GBP": 5,
+}

@@ -37,15 +37,33 @@ def aggregate_to_monthly(
     ois_daily: np.ndarray,
     rate_daily: np.ndarray,
     days: pd.DatetimeIndex,
+    funding_daily: np.ndarray | None = None,
+    accrual_days: np.ndarray | None = None,
+    mm_daily: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Aggregate daily arrays to monthly per deal.
 
-    PnL: sum of daily values.
-    Nominal: average daily nominal over alive days in the month (consistent
-        with how PnL accumulates; avoids null for mid-month maturities).
-    OISfwd: nominal-weighted average.
-    RateRef: nominal-weighted average.
-    nominal_days: sum of daily nominals (for rate weighting in downstream aggregation).
+    Core columns (always computed):
+        PnL: sum of daily values.
+        Nominal: average daily nominal over calendar days in the month.
+        OISfwd: nominal-weighted average.
+        RateRef: nominal-weighted average.
+        nominal_days: sum of daily nominals (for rate weighting).
+
+    CoC columns (when ``funding_daily`` is provided):
+        GrossCarry: Σ(Nominal × RateRef × d_i / D) per IFRS 9.B5.4.5.
+        FundingCost: Σ(Nominal × FundingRate × d_i / D).
+        CoC_Simple: GrossCarry − FundingCost (NII component, BCBS 368).
+        CoC_Compound: Nom_avg × [∏(1 + r_i × d_i/D) − ∏(1 + f_i × d_i/D)]
+                      per ISDA 2021 §6.9 compounding in arrears.
+        FundingRate: nominal-weighted average of funding rate.
+
+    Args:
+        funding_daily: (n_deals × n_days) funding rate matrix. None = skip CoC.
+        accrual_days: (n_days,) ISDA d_i weights (calendar days between fixings).
+                      None = assume 1 for all days.
+        mm_daily: (n_deals × n_days) day count divisor. None = not needed for CoC
+                  (uses mm from the daily arrays directly).
     """
     month_idx = days.to_period("M")
     unique_months = month_idx.unique()
@@ -57,6 +75,14 @@ def aggregate_to_monthly(
     nom_days_arr = np.zeros((n_deals, n_months), dtype=np.float64)
     ois_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
     rate_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+
+    has_coc = funding_daily is not None
+    if has_coc:
+        gross_carry_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+        funding_cost_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+        coc_simple_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+        coc_compound_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+        funding_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
 
     for j, m in enumerate(unique_months):
         mask = np.asarray(month_idx == m)
@@ -78,10 +104,43 @@ def aggregate_to_monthly(
         ois_wavg_arr[:, j] = ois_x_nom / safe_nom
         rate_wavg_arr[:, j] = rate_x_nom / safe_nom
 
+        # --- CoC decomposition ---
+        if has_coc:
+            # d_i weights for this month (ISDA 2021 §6.9)
+            d_i = accrual_days[mask] if accrual_days is not None else np.ones(n_cal_days)
+
+            # Day count divisor per deal for this month's days
+            if mm_daily is not None:
+                mm_slice = mm_daily[:, mask]  # (n_deals, n_month_days)
+            else:
+                mm_slice = np.ones((n_deals, n_cal_days))
+
+            rate_slice = rate_daily[:, mask]       # (n_deals, n_month_days)
+            funding_slice = funding_daily[:, mask]  # (n_deals, n_month_days)
+            nom_slice = nominal_daily[:, mask]      # (n_deals, n_month_days)
+
+            # Simple CoC: Σ(Nom × Rate × d_i / D) per IFRS 9.B5.4.5
+            gross_carry_arr[:, j] = (nom_slice * rate_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+            funding_cost_arr[:, j] = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+            coc_simple_arr[:, j] = gross_carry_arr[:, j] - funding_cost_arr[:, j]
+
+            # Compounded CoC: Nom_avg × [∏(1 + r_i × d_i/D) − ∏(1 + f_i × d_i/D)]
+            # per ISDA 2021 §6.9 compounding in arrears
+            rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
+            funding_factors = 1.0 + funding_slice * d_i[np.newaxis, :] / mm_slice
+            rate_product = np.prod(rate_factors, axis=1)
+            funding_product = np.prod(funding_factors, axis=1)
+            nom_avg = nom_avg_arr[:, j]
+            coc_compound_arr[:, j] = nom_avg * (rate_product - funding_product)
+
+            # FundingRate: nominal-weighted average
+            fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
+            funding_wavg_arr[:, j] = fund_x_nom / safe_nom
+
     deal_indices = np.tile(np.arange(n_deals), n_months)
     month_labels = np.repeat(unique_months.values, n_deals)
 
-    return pd.DataFrame({
+    result = {
         "deal_idx": deal_indices,
         "Month": month_labels,
         "PnL": pnl_arr.T.ravel(),
@@ -89,7 +148,16 @@ def aggregate_to_monthly(
         "nominal_days": nom_days_arr.T.ravel(),
         "OISfwd": ois_wavg_arr.T.ravel(),
         "RateRef": rate_wavg_arr.T.ravel(),
-    })
+    }
+
+    if has_coc:
+        result["GrossCarry"] = gross_carry_arr.T.ravel()
+        result["FundingCost"] = funding_cost_arr.T.ravel()
+        result["CoC_Simple"] = coc_simple_arr.T.ravel()
+        result["CoC_Compound"] = coc_compound_arr.T.ravel()
+        result["FundingRate"] = funding_wavg_arr.T.ravel()
+
+    return pd.DataFrame(result)
 
 
 def weighted_average(
@@ -583,7 +651,7 @@ def run_all_shocks(
         # 4h. Enrich monthly with deal metadata for strategy pivot
         deal_meta_cols = [
             c for c in ["Product", "Currency", "Direction", "Strategy IAS",
-                         "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM"]
+                         "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate"]
             if c in deals_use.columns
         ]
         for col in deal_meta_cols:

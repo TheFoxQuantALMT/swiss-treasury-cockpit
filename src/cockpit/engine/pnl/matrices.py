@@ -1,10 +1,18 @@
-"""Build aligned (n_deals × n_days) matrices for vectorized P&L computation."""
+"""Build aligned (n_deals × n_days) matrices for vectorized P&L computation.
+
+Regulatory references:
+    - ISDA 2006 §4.16: day count conventions per instrument type
+    - ISDA 2021 §6.9: d_i = calendar days between fixings for compounding
+    - SNB Working Group: SARON 2-BD lookback
+    - BoE Working Group: SONIA 5-BD lookback
+"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from cockpit.config import MM_BY_CURRENCY
+from cockpit.config import MM_BY_CURRENCY, LOOKBACK_DAYS
+from cockpit.engine.models import get_day_count
 
 
 def build_date_grid(start: pd.Timestamp, months: int = 60) -> pd.DatetimeIndex:
@@ -53,10 +61,50 @@ def build_alive_mask(
 
 
 def build_mm_vector(deals: pd.DataFrame) -> np.ndarray:
+    """Day count divisor per deal (ISDA 2006 §4.16).
+
+    Product-aware: bonds use 30/360 (except GBP: Act/365),
+    money market instruments use Act/360 (GBP: Act/365).
+    """
+    if "Product" in deals.columns:
+        return np.array(
+            [get_day_count(p, c).divisor for p, c in zip(deals["Product"], deals["Currency"])],
+            dtype=np.float64,
+        )
     return np.array([MM_BY_CURRENCY.get(c, 360) for c in deals["Currency"]], dtype=np.float64)
 
 
+def build_accrual_days(days: pd.DatetimeIndex) -> np.ndarray:
+    """Calendar days each fixing accrues for (ISDA 2021 §6.9).
+
+    Weekdays accrue 1 day; Fridays accrue 3 (Fri→Mon).
+    Holiday adjustments require a ``BusinessDayCalendar`` — without one,
+    this function uses the standard Sat/Sun weekend convention.
+
+    Returns:
+        (n_days,) array of integers ≥ 1.
+    """
+    n = len(days)
+    if n == 0:
+        return np.array([], dtype=np.float64)
+    d_i = np.ones(n, dtype=np.float64)
+    # For each day, d_i = calendar days until the next fixing
+    day_arr = days.values.astype("datetime64[D]")
+    for j in range(n - 1):
+        d_i[j] = float((day_arr[j + 1] - day_arr[j]) / np.timedelta64(1, "D"))
+    # Last day: assume 1 (or weekend weight if Friday)
+    if n > 0 and days[-1].weekday() == 4:  # Friday
+        d_i[-1] = 3.0
+    return d_i
+
+
 def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: pd.DataFrame | None = None) -> np.ndarray:
+    """Build (n_deals × n_days) reference rate matrix.
+
+    Fixed-rate deals: broadcast RateRef across all days.
+    Floating-rate deals: load forward curve by ref_index, apply lookback
+    shift for SARON (2-BD) and SONIA (5-BD) per SNB/BoE conventions.
+    """
     n_deals = len(deals)
     n_days = len(days)
     result = np.zeros((n_deals, n_days), dtype=np.float64)
@@ -71,15 +119,44 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
         for i in np.where(is_floating)[0]:
             indice = deals.iloc[i].get("ref_index", "")
             spread = deals.iloc[i].get("Spread", 0.0)
+            ccy = deals.iloc[i].get("Currency", "")
             if not indice:
                 continue
             try:
                 idx_data = ref_by_date.loc[indice]
                 curve_dates = idx_data.index.values.astype("datetime64[D]")
                 curve_vals = idx_data.values
-                sorter = np.searchsorted(curve_dates, day_dates, side="right") - 1
+
+                # Apply lookback shift for SARON/SONIA
+                lookback = LOOKBACK_DAYS.get(ccy, 0)
+                if lookback > 0:
+                    # Shift observation: rate on accrual day T uses fixing from T-N BD
+                    shifted_dates = day_dates - np.timedelta64(lookback, "D")
+                    sorter = np.searchsorted(curve_dates, shifted_dates, side="right") - 1
+                else:
+                    sorter = np.searchsorted(curve_dates, day_dates, side="right") - 1
                 sorter = np.clip(sorter, 0, len(curve_vals) - 1)
                 result[i] = curve_vals[sorter] + spread
             except KeyError:
                 pass
     return result
+
+
+def build_funding_matrix(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    ois_matrix: np.ndarray,
+    funding_source: str = "ois",
+) -> np.ndarray:
+    """Build (n_deals × n_days) funding rate matrix.
+
+    Args:
+        funding_source: "ois" uses the OIS forward curve (default, ISDA CSA standard),
+                        "coc" uses the deal-level CocRate.
+    """
+    if funding_source == "coc" and "CocRate" in deals.columns:
+        n_deals = len(deals)
+        coc_rates = deals["CocRate"].fillna(0.0).values
+        return np.broadcast_to(coc_rates[:, np.newaxis], ois_matrix.shape).copy()
+    # Default: OIS curve = standard post-LIBOR funding rate
+    return ois_matrix

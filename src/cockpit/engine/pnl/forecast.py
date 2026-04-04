@@ -39,7 +39,7 @@ from typing import Optional, Union
 import dill
 import pandas as pd
 
-from cockpit.config import CURRENCY_TO_OIS, NON_STRATEGY_PRODUCTS, SHOCKS
+from cockpit.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PRODUCTS, SHOCKS
 from cockpit.engine.pnl.curves import CurveCache, load_daily_curves, overlay_wirp
 from cockpit.engine.pnl.engine import (
     _build_ois_matrix,
@@ -53,8 +53,10 @@ from cockpit.engine.pnl.engine import (
     weighted_average,
 )
 from cockpit.engine.pnl.matrices import (
+    build_accrual_days,
     build_alive_mask,
     build_date_grid,
+    build_funding_matrix,
     build_mm_vector,
     build_rate_matrix,
     expand_nominal_to_daily,
@@ -108,6 +110,7 @@ class ForecastRatePnL:
         base_dir: Optional[Union[str, Path]] = None,
         input_dir: Optional[Union[str, Path]] = None,
         output_dir: Optional[Union[str, Path]] = None,
+        funding_source: str = FUNDING_SOURCE,
     ):
         self.dateRun = dateRun
         self.date_ref_day = self.dateRun.strftime("%Y%m%d")
@@ -126,6 +129,7 @@ class ForecastRatePnL:
             else root / self.date_ref_month / "output"
         )
 
+        self._funding_source = funding_source
         self._fwd_cache = CurveCache()
 
         # Public result attributes (populated by run)
@@ -147,6 +151,7 @@ class ForecastRatePnL:
         self._month_cols: Optional[list[str]] = None
         self._ois_indices: Optional[list[str]] = None
         self._float_wasp_indices: Optional[list[str]] = None
+        self._accrual_days: Optional[np.ndarray] = None
 
         self.run(shocks=["50", "0"], export=export)
 
@@ -247,6 +252,7 @@ class ForecastRatePnL:
         alive = build_alive_mask(self._deals_use, self._days, date_run=pd.Timestamp(self.dateRun))
         self._nominal_daily = self._nominal_daily * alive
         self._mm = build_mm_vector(self._deals_use)
+        self._accrual_days = build_accrual_days(self._days)
 
         # Collect needed curve indices
         self._ois_indices = list({
@@ -379,16 +385,26 @@ class ForecastRatePnL:
         rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
 
         n_days = len(self._days)
+        mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
         daily_pnl = compute_daily_pnl(
             self._nominal_daily,
             ois_matrix,
             rate_matrix,
-            self._mm[:, np.newaxis] * np.ones((1, n_days)),
+            mm_broadcast,
+        )
+
+        # --- Funding matrix for CoC decomposition ---
+        funding_matrix = build_funding_matrix(
+            self._deals_use, self._days, ois_matrix,
+            funding_source=self._funding_source,
         )
 
         # --- Monthly aggregation (deal-level) ---
         monthly = aggregate_to_monthly(
             daily_pnl, self._nominal_daily, ois_matrix, rate_matrix, self._days,
+            funding_daily=funding_matrix,
+            accrual_days=self._accrual_days,
+            mm_daily=mm_broadcast,
         )
 
         # Enrich with deal metadata
@@ -459,10 +475,13 @@ class ForecastRatePnL:
 
         pnl_all = pd.concat(parts, ignore_index=True)
 
-        # Filter: only Indice in [Nominal, OISfwd, PnL, RateRef] (§12.2)
+        # Filter: keep core + CoC Indice rows (§12.2)
         if "Indice" in pnl_all.columns:
             pnl_all = pnl_all[
-                pnl_all["Indice"].isin(["Nominal", "OISfwd", "PnL", "RateRef"])
+                pnl_all["Indice"].isin([
+                    "Nominal", "OISfwd", "PnL", "RateRef",
+                    "GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate",
+                ])
             ].copy()
 
         logger.info(
@@ -482,15 +501,18 @@ class ForecastRatePnL:
 
         group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Month"]
 
-        # Aggregation: PnL/Nominal/Amount sum; rates weighted avg
+        # Aggregation: PnL/Nominal/Amount/CoC measures sum; rates weighted avg
         sum_cols = {"PnL": "sum", "Nominal": "sum"}
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
+        for coc_col in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound"]:
+            if coc_col in data.columns:
+                sum_cols[coc_col] = "sum"
         agg = data.groupby(group_cols).agg(
             **{k: (k, v) for k, v in sum_cols.items()}
         ).reset_index()
 
-        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM"]
+        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "FundingRate"]
         present_rates = [c for c in rate_cols if c in data.columns]
         if present_rates:
             wavg = weighted_average(data, present_rates, "Nominal", group_cols)
