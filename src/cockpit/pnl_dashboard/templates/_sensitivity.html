@@ -1,0 +1,103 @@
+<div id="tab-sensitivity" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Shock Sensitivity</h3>
+
+  <!-- Toggle -->
+  <div class="controls">
+    <span style="color: var(--text-secondary); font-size: 0.8rem; line-height: 32px; margin-right: 8px;">Delta:</span>
+    <button class="ctrl-btn active" onclick="setSensMode('50')">+50bp vs Base</button>
+    <button class="ctrl-btn" onclick="setSensMode('wirp')">WIRP vs Base</button>
+  </div>
+
+  <div class="card">
+    <div style="overflow-x: auto;">
+      <table id="sensitivity-table">
+        <thead id="sens-thead"></thead>
+        <tbody id="sens-tbody"></tbody>
+        <tfoot id="sens-tfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="text-align: center; padding: 12px;">
+    <span style="font-size: 0.85rem; color: var(--text-secondary);">Grand Total NII Sensitivity: </span>
+    <span id="sens-grand-total" style="font-size: 1.1rem; font-weight: 700;"></span>
+  </div>
+
+  <script>
+  (function() {
+    const sensData = {{ sensitivity | tojson_safe }};
+    let sensMode = '50';
+
+    function heatColor(val, maxAbs) {
+      if (maxAbs === 0) return 'transparent';
+      const ratio = Math.min(Math.abs(val) / maxAbs, 1);
+      if (val > 0) return 'rgba(63, 185, 80, ' + (ratio * 0.5) + ')';
+      if (val < 0) return 'rgba(248, 81, 73, ' + (ratio * 0.5) + ')';
+      return 'transparent';
+    }
+
+    function renderSensTable() {
+      const rows = sensMode === '50' ? sensData.rows_50 : sensData.rows_wirp;
+      const totals = sensMode === '50' ? sensData.totals_50 : sensData.totals_wirp;
+      const grandTotal = sensMode === '50' ? sensData.grand_total_50 : sensData.grand_total_wirp;
+      const months = sensData.months || [];
+
+      if (!rows || !rows.length || !months.length) {
+        document.getElementById('sens-thead').innerHTML = '';
+        document.getElementById('sens-tbody').innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--text-secondary);">No sensitivity data available</td></tr>';
+        document.getElementById('sens-tfoot').innerHTML = '';
+        document.getElementById('sens-grand-total').textContent = '—';
+        return;
+      }
+
+      // Find max absolute value for color scaling
+      let maxAbs = 0;
+      rows.forEach(r => r.values.forEach(v => { if (Math.abs(v) > maxAbs) maxAbs = Math.abs(v); }));
+
+      // Header
+      let thead = '<tr><th>Currency</th><th>Product</th>';
+      months.forEach(m => { thead += '<th>' + m + '</th>'; });
+      thead += '<th>Total</th></tr>';
+      document.getElementById('sens-thead').innerHTML = thead;
+
+      // Body
+      let tbody = '';
+      rows.forEach(r => {
+        tbody += '<tr><td>' + r.currency + '</td><td>' + r.product + '</td>';
+        r.values.forEach(v => {
+          tbody += '<td style="background:' + heatColor(v, maxAbs) + '">' + fmt(v) + '</td>';
+        });
+        tbody += '<td style="font-weight:600;background:' + heatColor(r.total, maxAbs) + '">' + fmt(r.total) + '</td>';
+        tbody += '</tr>';
+      });
+      document.getElementById('sens-tbody').innerHTML = tbody;
+
+      // Currency total rows
+      let tfoot = '';
+      Object.keys(totals).sort().forEach(ccy => {
+        const vals = totals[ccy];
+        const total = vals.reduce((a, b) => a + b, 0);
+        tfoot += '<tr style="font-weight:600;background:var(--bg-tertiary);"><td>' + ccy + '</td><td>TOTAL</td>';
+        vals.forEach(v => { tfoot += '<td>' + fmt(v) + '</td>'; });
+        tfoot += '<td>' + fmt(total) + '</td></tr>';
+      });
+      document.getElementById('sens-tfoot').innerHTML = tfoot;
+
+      // Grand total
+      const gt = document.getElementById('sens-grand-total');
+      gt.textContent = (grandTotal >= 0 ? '+' : '') + fmt(grandTotal);
+      gt.className = valClass(grandTotal);
+    }
+
+    window.setSensMode = function(mode) {
+      sensMode = mode;
+      document.querySelectorAll('#tab-sensitivity .controls .ctrl-btn').forEach(b => {
+        b.classList.toggle('active', (mode === '50' && b.textContent.includes('50')) || (mode === 'wirp' && b.textContent.includes('WIRP')));
+      });
+      renderSensTable();
+    };
+
+    renderSensTable();
+  })();
+  </script>
+</div>

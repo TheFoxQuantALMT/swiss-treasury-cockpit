@@ -1,0 +1,134 @@
+<div id="tab-summary" class="tab-content active">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Executive Summary</h3>
+
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Base (0bp)</div>
+      <div class="value" id="kpi-base">—</div>
+      <div class="sub" id="kpi-base-sub"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Shock +50bp</div>
+      <div class="value" id="kpi-50">—</div>
+      <div class="sub" id="kpi-50-sub"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">WIRP (Market)</div>
+      <div class="value" id="kpi-wirp">—</div>
+      <div class="sub" id="kpi-wirp-sub"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">&Delta; (+50bp vs Base)</div>
+      <div class="value" id="kpi-delta">—</div>
+      <div class="sub">NII Sensitivity</div>
+    </div>
+  </div>
+
+  <!-- Donut + Waterfall -->
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">P&amp;L by Currency (Base)</h3>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-summary-donut"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Realized vs Forecast</h3>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-summary-waterfall"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top 5 Contributors -->
+  {% if summary.top5 %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Top 5 Contributors (Base)</h3>
+    <table>
+      <thead><tr><th>Currency</th><th>Product</th><th>P&amp;L</th></tr></thead>
+      <tbody>
+      {% for row in summary.top5 %}
+        <tr>
+          <td>{{ row.currency }}</td>
+          <td>{{ row.product }}</td>
+          <td>{{ "{:,.0f}".format(row.pnl) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <script>
+  (function() {
+    const kpis = {{ summary.kpis | tojson_safe }};
+    const donutData = {{ summary.donut | tojson_safe }};
+    const wf = {{ summary.waterfall | tojson_safe }};
+
+    // KPI cards
+    function setKpi(id, shockKey) {
+      const el = document.getElementById(id);
+      const sub = document.getElementById(id + '-sub');
+      if (!kpis[shockKey]) return;
+      const v = kpis[shockKey].total;
+      el.textContent = fmt(v);
+      el.className = 'value ' + valClass(v);
+      if (sub && kpis[shockKey].realized != null) {
+        sub.innerHTML = 'R: ' + fmt(kpis[shockKey].realized) + ' / F: ' + fmt(kpis[shockKey].forecast);
+      }
+    }
+    setKpi('kpi-base', 'shock_0');
+    setKpi('kpi-50', 'shock_50');
+    setKpi('kpi-wirp', 'shock_wirp');
+
+    const deltaEl = document.getElementById('kpi-delta');
+    if (kpis.delta_50_0 != null) {
+      deltaEl.textContent = (kpis.delta_50_0 >= 0 ? '+' : '') + fmt(kpis.delta_50_0);
+      deltaEl.className = 'value ' + valClass(kpis.delta_50_0);
+    }
+
+    // Donut chart
+    if (typeof Chart !== 'undefined' && donutData.labels && donutData.labels.length) {
+      new Chart(document.getElementById('chart-summary-donut'), {
+        type: 'doughnut',
+        data: {
+          labels: donutData.labels,
+          datasets: [{
+            data: donutData.values,
+            backgroundColor: donutData.colors,
+            borderColor: '#0d1117',
+            borderWidth: 2,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 11 } } } }
+        }
+      });
+    }
+
+    // Waterfall chart
+    if (typeof Chart !== 'undefined' && wf.labels && wf.labels.length) {
+      new Chart(document.getElementById('chart-summary-waterfall'), {
+        type: 'bar',
+        data: {
+          labels: wf.labels,
+          datasets: [
+            { label: 'Realized', data: wf.realized, backgroundColor: '#3fb950', stack: 's' },
+            { label: 'Forecast', data: wf.forecast, backgroundColor: 'rgba(63,185,80,0.35)', stack: 's' },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3' } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e' } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+</div>

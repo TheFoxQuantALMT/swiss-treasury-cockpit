@@ -1,0 +1,91 @@
+<div id="tab-curves" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">OIS Forward Curves</h3>
+
+  {% if has_curves %}
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-curves"></canvas>
+    </div>
+  </div>
+
+  <!-- WIRP meeting points -->
+  {% if curves.wirp_points %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">WIRP Meeting Expectations</h3>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead><tr><th>Date</th><th>Currency</th><th>Expected Rate (%)</th></tr></thead>
+      <tbody>
+      {% for pt in curves.wirp_points %}
+        <tr><td>{{ pt.date }}</td><td>{{ pt.currency }}</td><td>{{ "{:.4f}".format(pt.rate) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+  (function() {
+    const curvesData = {{ curves.series | tojson_safe }};
+    const ctx = document.getElementById('chart-curves');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    const datasets = [];
+    for (const [ccy, series] of Object.entries(curvesData)) {
+      datasets.push({
+        label: ccy + ' OIS',
+        data: series.dates.map((d, i) => ({ x: d, y: series.values[i] })),
+        borderColor: series.color,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.3,
+      });
+    }
+
+    // WIRP scatter overlay
+    const wirpPoints = {{ curves.wirp_points | tojson_safe }};
+    const wirpColors = { CHF: '#d62828', EUR: '#e67e22', USD: '#002868', GBP: '#6f42c1' };
+    if (wirpPoints && wirpPoints.length) {
+      const byCcy = {};
+      wirpPoints.forEach(pt => {
+        if (!byCcy[pt.currency]) byCcy[pt.currency] = [];
+        byCcy[pt.currency].push({ x: pt.date, y: pt.rate });
+      });
+      for (const [ccy, pts] of Object.entries(byCcy)) {
+        datasets.push({
+          label: ccy + ' WIRP',
+          data: pts,
+          type: 'scatter',
+          backgroundColor: wirpColors[ccy] || '#8b949e',
+          borderColor: wirpColors[ccy] || '#8b949e',
+          pointRadius: 5,
+          pointStyle: 'triangle',
+        });
+      }
+    }
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { type: 'category', ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+          y: { ticks: { color: '#8b949e' }, title: { display: true, text: 'Rate (%)', color: '#8b949e' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No rate curve data available.</p>
+    <p style="font-size: 0.85rem;">OIS forward curves are required for this view.</p>
+  </div>
+  {% endif %}
+</div>

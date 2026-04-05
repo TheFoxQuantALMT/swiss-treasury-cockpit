@@ -278,6 +278,45 @@ def cmd_render(
     print(f"[render] Output: {output_path}")
 
 
+def cmd_render_pnl(
+    *,
+    date: str,
+    input_dir: str | None = None,
+    output_dir: Path = OUTPUT_DIR,
+    funding_source: str = "ois",
+) -> None:
+    """Render dedicated P&L dashboard from Excel inputs."""
+    from cockpit.engine.pnl.forecast import ForecastRatePnL
+    from cockpit.pnl_dashboard.renderer import render_pnl_dashboard
+
+    date_dt = datetime.strptime(date, "%Y-%m-%d")
+
+    print(f"[render-pnl] Running P&L engine for {date}...")
+    pnl = ForecastRatePnL(
+        dateRun=date_dt,
+        dateRates=date_dt,
+        export=False,
+        input_dir=input_dir,
+        output_dir=str(output_dir),
+        funding_source=funding_source,
+    )
+
+    output_path = output_dir / f"{date}_pnl_dashboard.html"
+
+    print("[render-pnl] Rendering P&L dashboard...")
+    render_pnl_dashboard(
+        pnl_all=pnl.pnlAll,
+        pnl_all_s=pnl.pnlAllS,
+        ois_curves=pnl.fwdOIS0,
+        wirp_curves=pnl.fwdWIRP,
+        irs_stock=pnl.irsStock,
+        date_run=date_dt,
+        date_rates=date_dt,
+        output_path=output_path,
+    )
+    print(f"[render-pnl] Output: {output_path}")
+
+
 def cmd_run_all(
     *,
     date: str,
@@ -328,6 +367,13 @@ def main() -> None:
     p_render = sub.add_parser("render", help="Render HTML cockpit")
     p_render.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
 
+    # render-pnl
+    p_render_pnl = sub.add_parser("render-pnl", help="Render dedicated P&L dashboard")
+    p_render_pnl.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
+    p_render_pnl.add_argument("--input-dir", help="Path to Excel input files")
+    p_render_pnl.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
+                              help="Funding rate source: OIS curve (default) or deal-level CocRate")
+
     # run-all
     p_all = sub.add_parser("run-all", help="Execute all steps")
     p_all.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
@@ -348,5 +394,7 @@ def main() -> None:
         cmd_analyze(date=args.date, data_dir=data_dir, dry_run=args.dry_run)
     elif args.command == "render":
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
+    elif args.command == "render-pnl":
+        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source)
     elif args.command == "run-all":
         cmd_run_all(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run, funding_source=args.funding_source)

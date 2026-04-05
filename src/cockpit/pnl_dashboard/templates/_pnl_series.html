@@ -1,0 +1,164 @@
+<div id="tab-pnl-series" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">P&amp;L Time Series</h3>
+
+  <!-- Shock selector -->
+  <div class="controls">
+    <span style="color: var(--text-secondary); font-size: 0.8rem; line-height: 32px; margin-right: 8px;">Shock:</span>
+    <button class="ctrl-btn active" onclick="setPnlShock('0')">Base</button>
+    <button class="ctrl-btn" onclick="setPnlShock('50')">+50bp</button>
+    <button class="ctrl-btn" onclick="setPnlShock('wirp')">WIRP</button>
+  </div>
+
+  <!-- Main chart: by currency -->
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Monthly P&amp;L by Currency</h3>
+    <div class="chart-container">
+      <canvas id="chart-pnl-currency"></canvas>
+    </div>
+  </div>
+
+  <!-- Product breakdown -->
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Product Breakdown (Base)</h3>
+    <div class="chart-container">
+      <canvas id="chart-pnl-product"></canvas>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const pnlData = {{ pnl_series | tojson_safe }};
+    const colors = { CHF: '#d62828', EUR: '#e67e22', USD: '#002868', GBP: '#6f42c1' };
+    let currentShock = '0';
+    let pnlCurrencyChart = null;
+    let pnlProductChart = null;
+
+    function renderCurrencyChart() {
+      const ctx = document.getElementById('chart-pnl-currency');
+      if (!ctx || typeof Chart === 'undefined' || !pnlData.months.length) return;
+      if (pnlCurrencyChart) pnlCurrencyChart.destroy();
+
+      const datasets = [];
+      const shockKey = 'shock_' + currentShock;
+
+      for (const [ccy, shocks] of Object.entries(pnlData.by_currency)) {
+        // Realized portion (solid)
+        const realizedKey = shockKey + '_realized';
+        const forecastKey = shockKey + '_forecast';
+
+        if (shocks[realizedKey] && shocks[forecastKey]) {
+          datasets.push({
+            label: ccy + ' (Realized)',
+            data: shocks[realizedKey],
+            backgroundColor: colors[ccy] || '#8b949e',
+            stack: 'main',
+          });
+          datasets.push({
+            label: ccy + ' (Forecast)',
+            data: shocks[forecastKey],
+            backgroundColor: (colors[ccy] || '#8b949e') + '66',
+            stack: 'main',
+          });
+        } else {
+          datasets.push({
+            label: ccy,
+            data: shocks[shockKey] || [],
+            backgroundColor: colors[ccy] || '#8b949e',
+            stack: 'main',
+          });
+        }
+      }
+
+      // Cumulative line
+      const cumulative = [];
+      let running = 0;
+      for (let i = 0; i < pnlData.months.length; i++) {
+        let monthTotal = 0;
+        for (const shocks of Object.values(pnlData.by_currency)) {
+          const vals = shocks['shock_' + currentShock] || [];
+          monthTotal += vals[i] || 0;
+        }
+        running += monthTotal;
+        cumulative.push(running);
+      }
+      datasets.push({
+        label: 'Cumulative',
+        data: cumulative,
+        type: 'line',
+        borderColor: '#58a6ff',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.3,
+        yAxisID: 'y1',
+      });
+
+      pnlCurrencyChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: pnlData.months, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: '#e6edf3', font: { size: 10 } } },
+            annotation: pnlData.date_rates_month ? {
+              annotations: { ratesLine: {
+                type: 'line', scaleID: 'x',
+                value: pnlData.date_rates_month,
+                borderColor: '#d29922', borderDash: [5,3], borderWidth: 1,
+                label: { display: true, content: 'Rates', color: '#d29922', font: { size: 10 } }
+              }}
+            } : undefined,
+          },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+            y: { stacked: true, ticks: { color: '#8b949e' }, title: { display: true, text: 'P&L', color: '#8b949e' } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#58a6ff' }, title: { display: true, text: 'Cumulative', color: '#58a6ff' } }
+          }
+        }
+      });
+    }
+
+    function renderProductChart() {
+      const ctx = document.getElementById('chart-pnl-product');
+      if (!ctx || typeof Chart === 'undefined' || !pnlData.months.length) return;
+      if (pnlProductChart) pnlProductChart.destroy();
+
+      const datasets = [];
+      for (const [prod, info] of Object.entries(pnlData.by_product)) {
+        datasets.push({
+          label: prod,
+          data: info.values,
+          backgroundColor: info.color,
+          stack: 'prod',
+        });
+      }
+
+      pnlProductChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: pnlData.months, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 10 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    window.setPnlShock = function(shock) {
+      currentShock = shock;
+      const labels = {'0':'Base','50':'+50bp','wirp':'WIRP'};
+      document.querySelectorAll('#tab-pnl-series .controls .ctrl-btn').forEach(b => {
+        b.classList.toggle('active', b.textContent.trim() === labels[shock]);
+      });
+      renderCurrencyChart();
+    };
+
+    renderCurrencyChart();
+    renderProductChart();
+  })();
+  </script>
+</div>

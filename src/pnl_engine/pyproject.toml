@@ -1,0 +1,17 @@
+[project]
+name = "pnl-engine"
+version = "0.1.0"
+description = "Standalone P&L computation engine for treasury rate risk"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=2.2.3",
+    "numpy>=2.0.0",
+    "openpyxl>=3.1.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

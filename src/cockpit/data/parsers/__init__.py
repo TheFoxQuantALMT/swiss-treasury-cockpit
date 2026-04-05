@@ -1,8 +1,9 @@
 from cockpit.data.parsers.mtd import parse_mtd, parse_deals
-from cockpit.data.parsers.echeancier import parse_echeancier, parse_schedule, _month_columns
+from cockpit.data.parsers.echeancier import parse_echeancier, parse_schedule
 from cockpit.data.parsers.wirp import parse_wirp, parse_wirp_ideal
 from cockpit.data.parsers.irs_stock import parse_irs_stock
 from cockpit.data.parsers.reference_table import parse_reference_table
+from pnl_engine.engine import _month_columns
 
 __all__ = [
     # Ideal format parsers
