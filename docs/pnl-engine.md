@@ -42,14 +42,23 @@ pnl.update_pnl(Shock="50")
 | `output_dir` | Path | auto | Directory for output files. |
 | `funding_source` | str | `"ois"` | Funding rate for CoC: `"ois"` (OIS curve) or `"coc"` (deal-level CocRate). |
 
+### Data Loading
+
+`load_data()` supports two input layouts:
+
+- **Ideal format:** `deals.xlsx` (unified BOOK1+BOOK2), `schedule.xlsx`, `wirp.xlsx`
+- **Legacy format:** `*MTD*`, `*Echeancier*`, `*WIRP*`, `*IRS*` (separate files)
+
+Ideal format is tried first (`*deals*` glob); falls back to legacy if not found. When a unified deals file is loaded, `_split_deals_by_book()` splits by `IAS Book`: BOOK1 rows go to `pnlData`, BOOK2 rows are adapted to WASP column format for `irsStock`.
+
 ### Key Attributes
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `pnlData` | DataFrame | Deal-level data from MTD parser |
-| `scheduleData` | DataFrame | Echeancier (nominal schedule) |
+| `pnlData` | DataFrame | BOOK1 deal-level data |
+| `scheduleData` | DataFrame | Nominal schedule (monthly balances) |
 | `wirpData` | DataFrame | WIRP rate expectations |
-| `irsStock` | DataFrame | IRS derivatives stock |
+| `irsStock` | DataFrame | BOOK2 IRS stock (for WASP MTM) |
 | `pnlAll` | DataFrame | Final P&L in wide format (months as columns) |
 | `pnlAllS` | DataFrame | Final P&L in stacked/long format |
 
@@ -126,6 +135,26 @@ Three shock specifications:
 
 WIRP shock replaces OIS forward rates with central bank meeting expectations (forward-filled between meetings).
 
+## Realized vs Forecast Split
+
+When `dateRates` is provided, monthly P&L is split into Realized and Forecast components:
+
+- **Realized:** days <= dateRates (rates are historical fixings)
+- **Forecast:** days > dateRates (rates are forward projections)
+
+For the current month (containing dateRates), three rows are produced per deal:
+- `PnL_Type = "Total"` — full month
+- `PnL_Type = "Realized"` — days up to dateRates
+- `PnL_Type = "Forecast"` — days after dateRates
+
+Past months have only `"Realized"` rows. Future months have only `"Forecast"` rows.
+
+**Key invariant:** `Total = Realized + Forecast` for every (deal, month) combination.
+
+When `date_rates=None` (backward compatibility), all rows have `PnL_Type = "Total"`.
+
+The split applies to all metrics: PnL, Nominal, GrossCarry, FundingCost, CoC_Simple, CoC_Compound.
+
 ## Strategy Decomposition (IAS Hedge Accounting)
 
 Deals with `Strategy IAS` designation are decomposed into 4 synthetic legs:
@@ -140,8 +169,8 @@ Deals with `Strategy IAS` designation are decomposed into 4 synthetic legs:
 Where `marginRate = EqOisRate + YTM - Clientrate_HCD`.
 
 Direction filtering removes invalid leg/direction combinations:
-- BND legs exclude Direction L and D
-- IAM/LD legs exclude Direction B
+- BND legs exclude Direction L and D (loans/deposits are not bonds)
+- IAM/LD legs exclude Direction B and S (bought/sold bonds are not money market)
 
 ## BOOK2: IRS MTM
 
@@ -156,11 +185,13 @@ Falls back to zero MTM when WASP is unavailable.
 ### Wide Format (`pnlAll`)
 
 ```
-| Perimetre TOTAL | Deal currency | Product2BuyBack | Direction | Indice    | Shock | 2026-04 | 2026-05 | ... |
-|-----------------|---------------|-----------------|-----------|-----------|-------|---------|---------|-----|
-| CC              | CHF           | IAM/LD          | L         | PnL       | 0     | -12345  | -11234  | ... |
-| CC              | CHF           | IAM/LD          | L         | Nominal   | 0     | 5000000 | 4800000 | ... |
-| CC              | CHF           | IAM/LD          | L         | CoC_Simple| 0     | 8234    | 7890    | ... |
+| Perimetre TOTAL | Deal currency | Product2BuyBack | Direction | Indice    | PnL_Type | Shock | 2026-04 | 2026-05 | ... |
+|-----------------|---------------|-----------------|-----------|-----------|----------|-------|---------|---------|-----|
+| CC              | CHF           | IAM/LD          | L         | PnL       | Total    | 0     | -12345  | -11234  | ... |
+| CC              | CHF           | IAM/LD          | L         | PnL       | Realized | 0     | -4115   |         | ... |
+| CC              | CHF           | IAM/LD          | L         | PnL       | Forecast | 0     | -8230   | -11234  | ... |
+| CC              | CHF           | IAM/LD          | L         | Nominal   | Total    | 0     | 5000000 | 4800000 | ... |
+| CC              | CHF           | IAM/LD          | L         | CoC_Simple| Total    | 0     | 8234    | 7890    | ... |
 ```
 
 ### Indice Rows
@@ -179,7 +210,7 @@ Falls back to zero MTM when WASP is unavailable.
 
 ### Stacked Format (`pnlAllS`)
 
-7-level MultiIndex: `(Perimetre TOTAL, Deal currency, Product2BuyBack, Direction, Indice, Month, Shock)` with a single `Value` column.
+8-level MultiIndex: `(Perimetre TOTAL, Deal currency, Product2BuyBack, Direction, Indice, PnL_Type, Month, Shock)` with a single `Value` column.
 
 ## Serialization
 

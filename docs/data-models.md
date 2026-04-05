@@ -4,6 +4,8 @@
 
 The project defines the ideal data model in `src/cockpit/engine/models.py`. Input parsers adapt external data to fit these models -- never the reverse. Fields missing from a data source get explicit defaults or null.
 
+The ideal input file format (`deals.xlsx`, `schedule.xlsx`, `wirp.xlsx`) uses snake_case column names that map directly to these models. Parsers rename to internal names (e.g. `deal_id` → `Dealid`, `client_rate` → `Clientrate`) for backward compatibility with the engine. See [data-ingestion.md](data-ingestion.md) for input column mappings.
+
 ## `Deal`
 
 Canonical deal representation with all fields needed for P&L decomposition.
@@ -15,7 +17,7 @@ class Deal:
     deal_id: str
     product: str                    # IAM/LD, BND, FXS, IRS, IRS-MTM, HCD
     currency: str                   # CHF, EUR, USD, GBP
-    direction: str                  # B(orrow), L(end), D(eposit)
+    direction: str                  # B(ond), S(old), L(oan), D(eposit)
 
     # Dates
     trade_date: date | None = None

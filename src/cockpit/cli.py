@@ -97,7 +97,16 @@ def cmd_compute(
             pnl_result["by_currency"][ccy] = {}
             for shock in ccy_data.index.get_level_values("Shock").unique():
                 shock_data = ccy_data.xs(shock, level="Shock")
-                pnl_result["by_currency"][ccy][f"shock_{shock}"] = shock_data.groupby("Month")["PnL"].sum().tolist()
+                shock_key = f"shock_{shock}"
+                if "PnL_Type" in shock_data.index.names:
+                    pnl_result["by_currency"][ccy][shock_key] = {}
+                    for pnl_type in shock_data.index.get_level_values("PnL_Type").unique():
+                        type_data = shock_data.xs(pnl_type, level="PnL_Type")
+                        pnl_result["by_currency"][ccy][shock_key][pnl_type] = (
+                            type_data.groupby("Month")["PnL"].sum().tolist()
+                        )
+                else:
+                    pnl_result["by_currency"][ccy][shock_key] = shock_data.groupby("Month")["PnL"].sum().tolist()
 
     # --- Portfolio Snapshot ---
     print("[compute] Building portfolio snapshot...")

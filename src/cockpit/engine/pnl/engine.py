@@ -31,6 +31,67 @@ def compute_daily_pnl(
     return nominal * (ois - rate_ref) / mm
 
 
+def _aggregate_slice(
+    daily_pnl: np.ndarray,
+    nominal_daily: np.ndarray,
+    ois_daily: np.ndarray,
+    rate_daily: np.ndarray,
+    mask: np.ndarray,
+    n_cal_days: int,
+    funding_daily: np.ndarray | None,
+    accrual_days: np.ndarray | None,
+    mm_daily: np.ndarray | None,
+) -> dict:
+    """Aggregate daily arrays over a boolean day-mask into a single column of metrics.
+
+    Returns dict of (n_deals,) arrays for all core + CoC metrics.
+    """
+    n_deals = daily_pnl.shape[0]
+    n_mask_days = mask.sum()
+
+    pnl = daily_pnl[:, mask].sum(axis=1)
+    nom_days = nominal_daily[:, mask].sum(axis=1)
+    nom_avg = nom_days / n_cal_days if n_cal_days > 0 else np.zeros(n_deals)
+
+    ois_x_nom = (ois_daily[:, mask] * nominal_daily[:, mask]).sum(axis=1)
+    rate_x_nom = (rate_daily[:, mask] * nominal_daily[:, mask]).sum(axis=1)
+    safe_nom = np.where(nom_days == 0, np.nan, nom_days)
+
+    out = {
+        "PnL": pnl,
+        "Nominal": nom_avg,
+        "nominal_days": nom_days,
+        "OISfwd": ois_x_nom / safe_nom,
+        "RateRef": rate_x_nom / safe_nom,
+    }
+
+    if funding_daily is not None and n_mask_days > 0:
+        d_i = accrual_days[mask] if accrual_days is not None else np.ones(n_mask_days)
+        mm_slice = mm_daily[:, mask] if mm_daily is not None else np.ones((n_deals, n_mask_days))
+        rate_slice = rate_daily[:, mask]
+        funding_slice = funding_daily[:, mask]
+        nom_slice = nominal_daily[:, mask]
+
+        gross = (nom_slice * rate_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+        fund = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+        out["GrossCarry"] = gross
+        out["FundingCost"] = fund
+        out["CoC_Simple"] = gross - fund
+
+        rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
+        funding_factors = 1.0 + funding_slice * d_i[np.newaxis, :] / mm_slice
+        out["CoC_Compound"] = nom_avg * (np.prod(rate_factors, axis=1) - np.prod(funding_factors, axis=1))
+
+        fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
+        out["FundingRate"] = fund_x_nom / safe_nom
+    elif funding_daily is not None:
+        zeros = np.zeros(n_deals)
+        for k in ("GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"):
+            out[k] = zeros
+
+    return out
+
+
 def aggregate_to_monthly(
     daily_pnl: np.ndarray,
     nominal_daily: np.ndarray,
@@ -40,6 +101,7 @@ def aggregate_to_monthly(
     funding_daily: np.ndarray | None = None,
     accrual_days: np.ndarray | None = None,
     mm_daily: np.ndarray | None = None,
+    date_rates: "pd.Timestamp | None" = None,
 ) -> pd.DataFrame:
     """Aggregate daily arrays to monthly per deal.
 
@@ -58,106 +120,79 @@ def aggregate_to_monthly(
                       per ISDA 2021 §6.9 compounding in arrears.
         FundingRate: nominal-weighted average of funding rate.
 
+    Realized / Forecast split (when ``date_rates`` is provided):
+        Adds a PnL_Type column: past months → Realized, future months → Forecast,
+        current month (containing date_rates) → Total + Realized + Forecast rows.
+        When date_rates is None, PnL_Type = "Total" for all rows.
+
     Args:
         funding_daily: (n_deals × n_days) funding rate matrix. None = skip CoC.
         accrual_days: (n_days,) ISDA d_i weights (calendar days between fixings).
                       None = assume 1 for all days.
         mm_daily: (n_deals × n_days) day count divisor. None = not needed for CoC
                   (uses mm from the daily arrays directly).
+        date_rates: Boundary between realized and forecast rates. Days <= date_rates
+                    are realized; days > date_rates are forecast.
     """
     month_idx = days.to_period("M")
     unique_months = month_idx.unique()
     n_deals = daily_pnl.shape[0]
-    n_months = len(unique_months)
 
-    pnl_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-    nom_avg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-    nom_days_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-    ois_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-    rate_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+    rates_month = date_rates.to_period("M") if date_rates is not None else None
 
-    has_coc = funding_daily is not None
-    if has_coc:
-        gross_carry_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-        funding_cost_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-        coc_simple_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-        coc_compound_arr = np.zeros((n_deals, n_months), dtype=np.float64)
-        funding_wavg_arr = np.zeros((n_deals, n_months), dtype=np.float64)
+    common_kw = dict(
+        daily_pnl=daily_pnl, nominal_daily=nominal_daily,
+        ois_daily=ois_daily, rate_daily=rate_daily,
+        funding_daily=funding_daily, accrual_days=accrual_days, mm_daily=mm_daily,
+    )
+
+    rows: list[dict] = []
 
     for j, m in enumerate(unique_months):
-        mask = np.asarray(month_idx == m)
-        n_cal_days = mask.sum()
+        month_mask = np.asarray(month_idx == m)
+        n_cal_days = int(month_mask.sum())
 
-        pnl_arr[:, j] = daily_pnl[:, mask].sum(axis=1)
+        agg_total = _aggregate_slice(mask=month_mask, n_cal_days=n_cal_days, **common_kw)
 
-        # Nominal-days: sum of daily nominals (for rate weighting)
-        nom_days = nominal_daily[:, mask].sum(axis=1)
-        nom_days_arr[:, j] = nom_days
+        if date_rates is None:
+            # Backward compat: no split
+            for deal_i in range(n_deals):
+                row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Total"}
+                for k, arr in agg_total.items():
+                    row[k] = arr[deal_i]
+                rows.append(row)
+        elif m == rates_month:
+            # Current month: produce Total + Realized + Forecast
+            realized_within = np.zeros(len(days), dtype=bool)
+            realized_within[month_mask] = days[month_mask] <= date_rates
+            forecast_within = np.zeros(len(days), dtype=bool)
+            forecast_within[month_mask] = days[month_mask] > date_rates
 
-        # Nominal: average over calendar days in the month
-        nom_avg_arr[:, j] = nom_days / n_cal_days if n_cal_days > 0 else 0.0
+            agg_real = _aggregate_slice(mask=realized_within, n_cal_days=n_cal_days, **common_kw)
+            agg_fore = _aggregate_slice(mask=forecast_within, n_cal_days=n_cal_days, **common_kw)
 
-        # OISfwd and RateRef: nominal-weighted average
-        ois_x_nom = (ois_daily[:, mask] * nominal_daily[:, mask]).sum(axis=1)
-        rate_x_nom = (rate_daily[:, mask] * nominal_daily[:, mask]).sum(axis=1)
-        safe_nom = np.where(nom_days == 0, np.nan, nom_days)
-        ois_wavg_arr[:, j] = ois_x_nom / safe_nom
-        rate_wavg_arr[:, j] = rate_x_nom / safe_nom
+            for deal_i in range(n_deals):
+                for pnl_type, agg in [("Total", agg_total), ("Realized", agg_real), ("Forecast", agg_fore)]:
+                    row = {"deal_idx": deal_i, "Month": m, "PnL_Type": pnl_type}
+                    for k, arr in agg.items():
+                        row[k] = arr[deal_i]
+                    rows.append(row)
+        elif m < rates_month:
+            # Past month: all realized
+            for deal_i in range(n_deals):
+                row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Realized"}
+                for k, arr in agg_total.items():
+                    row[k] = arr[deal_i]
+                rows.append(row)
+        else:
+            # Future month: all forecast
+            for deal_i in range(n_deals):
+                row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Forecast"}
+                for k, arr in agg_total.items():
+                    row[k] = arr[deal_i]
+                rows.append(row)
 
-        # --- CoC decomposition ---
-        if has_coc:
-            # d_i weights for this month (ISDA 2021 §6.9)
-            d_i = accrual_days[mask] if accrual_days is not None else np.ones(n_cal_days)
-
-            # Day count divisor per deal for this month's days
-            if mm_daily is not None:
-                mm_slice = mm_daily[:, mask]  # (n_deals, n_month_days)
-            else:
-                mm_slice = np.ones((n_deals, n_cal_days))
-
-            rate_slice = rate_daily[:, mask]       # (n_deals, n_month_days)
-            funding_slice = funding_daily[:, mask]  # (n_deals, n_month_days)
-            nom_slice = nominal_daily[:, mask]      # (n_deals, n_month_days)
-
-            # Simple CoC: Σ(Nom × Rate × d_i / D) per IFRS 9.B5.4.5
-            gross_carry_arr[:, j] = (nom_slice * rate_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
-            funding_cost_arr[:, j] = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
-            coc_simple_arr[:, j] = gross_carry_arr[:, j] - funding_cost_arr[:, j]
-
-            # Compounded CoC: Nom_avg × [∏(1 + r_i × d_i/D) − ∏(1 + f_i × d_i/D)]
-            # per ISDA 2021 §6.9 compounding in arrears
-            rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
-            funding_factors = 1.0 + funding_slice * d_i[np.newaxis, :] / mm_slice
-            rate_product = np.prod(rate_factors, axis=1)
-            funding_product = np.prod(funding_factors, axis=1)
-            nom_avg = nom_avg_arr[:, j]
-            coc_compound_arr[:, j] = nom_avg * (rate_product - funding_product)
-
-            # FundingRate: nominal-weighted average
-            fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
-            funding_wavg_arr[:, j] = fund_x_nom / safe_nom
-
-    deal_indices = np.tile(np.arange(n_deals), n_months)
-    month_labels = np.repeat(unique_months.values, n_deals)
-
-    result = {
-        "deal_idx": deal_indices,
-        "Month": month_labels,
-        "PnL": pnl_arr.T.ravel(),
-        "Nominal": nom_avg_arr.T.ravel(),
-        "nominal_days": nom_days_arr.T.ravel(),
-        "OISfwd": ois_wavg_arr.T.ravel(),
-        "RateRef": rate_wavg_arr.T.ravel(),
-    }
-
-    if has_coc:
-        result["GrossCarry"] = gross_carry_arr.T.ravel()
-        result["FundingCost"] = funding_cost_arr.T.ravel()
-        result["CoC_Simple"] = coc_simple_arr.T.ravel()
-        result["CoC_Compound"] = coc_compound_arr.T.ravel()
-        result["FundingRate"] = funding_wavg_arr.T.ravel()
-
-    return pd.DataFrame(result)
+    return pd.DataFrame(rows)
 
 
 def weighted_average(
@@ -216,7 +251,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
 
     # ── Step 1: Pre-aggregate with nominal-weighted avg rates (§10.1) ──
     group_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Product",
-                  "Direction", "Month", "Days in Month"]
+                  "Direction", "Month", "Days in Month", "PnL_Type"]
     present_group = [c for c in group_cols if c in strat.columns]
 
     # Sums
@@ -238,7 +273,8 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
                     agg = agg.drop(columns=f"{col}_drop")
 
     # ── Step 2: Pivot by Product (§10.2) ──
-    idx_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "Days in Month"]
+    idx_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "Days in Month", "PnL_Type"]
+    idx_cols = [c for c in idx_cols if c in agg.columns]
     pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL"]
     present_vals = [v for v in pivot_vals if v in agg.columns]
 
@@ -276,7 +312,8 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
         else:
             return np.where(mask, nom * rate * dim / mm, 0.0)
 
-    base_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month"]
+    base_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "PnL_Type"]
+    base_cols = [c for c in base_cols if c in pivoted.columns]
     base = pivoted[base_cols]
 
     legs = []
@@ -379,7 +416,7 @@ def merge_results(
 
     Direction filters applied to strategy legs:
     - BND-HCD / BND-NHCD: exclude Direction L and D
-    - IAM/LD-HCD / IAM/LD-NHCD: exclude Direction B
+    - IAM/LD-HCD / IAM/LD-NHCD: exclude Direction B and S (bond-like)
     """
     parts = []
 
@@ -392,7 +429,7 @@ def merge_results(
         iam_mask = strategy["Product2BuyBack"].isin(["IAM/LD-HCD", "IAM/LD-NHCD"])
 
         exclude_bnd = bnd_mask & strategy["Direction"].isin(["L", "D"])
-        exclude_iam = iam_mask & strategy["Direction"].isin(["B"])
+        exclude_iam = iam_mask & strategy["Direction"].isin(["B", "S"])
 
         filtered = strategy[~(exclude_bnd | exclude_iam)]
         parts.append(filtered)
@@ -646,7 +683,10 @@ def run_all_shocks(
         )
 
         # 4g. aggregate_to_monthly
-        monthly = aggregate_to_monthly(daily_pnl, nominal_daily, ois_matrix, rate_matrix, days)
+        monthly = aggregate_to_monthly(
+            daily_pnl, nominal_daily, ois_matrix, rate_matrix, days,
+            date_rates=pd.Timestamp(date_rates) if date_rates else None,
+        )
 
         # 4h. Enrich monthly with deal metadata for strategy pivot
         deal_meta_cols = [

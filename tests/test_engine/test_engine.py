@@ -169,15 +169,18 @@ def test_build_rate_matrix_floating():
 # --- Issue #13: Direction filtering test ---
 
 def test_merge_results_direction_filtering():
-    """BND legs exclude L/D; IAM/LD legs exclude B."""
+    """BND legs exclude L/D; IAM/LD legs exclude B and S (bond-like)."""
     from cockpit.engine.pnl.engine import merge_results
 
     strategy = pd.DataFrame({
         "Product2BuyBack": ["BND-HCD", "BND-NHCD", "IAM/LD-HCD", "IAM/LD-NHCD",
-                            "BND-HCD", "IAM/LD-HCD"],
-        "Direction": ["B", "L", "L", "B", "D", "B"],
-        # B=bond, L=lender, D=deposit
-        "Value": [100, 200, 300, 400, 500, 600],
+                            "BND-HCD", "IAM/LD-HCD",
+                            "IAM/LD-NHCD", "BND-NHCD"],
+        "Direction": ["B", "L", "L", "B", "D", "B",
+                      "S", "S"],
+        # B=bond, L=loan, D=deposit, S=sold (bond-like)
+        "Value": [100, 200, 300, 400, 500, 600,
+                  700, 800],
     })
     result = merge_results(pd.DataFrame(), strategy, pd.DataFrame())
 
@@ -197,6 +200,14 @@ def test_merge_results_direction_filtering():
     assert len(result[
         (result["Product2BuyBack"] == "IAM/LD-HCD") & (result["Direction"] == "B")
     ]) == 0
+    # IAM/LD-NHCD with Direction=S should be excluded (S=sold is bond-like)
+    assert len(result[
+        (result["Product2BuyBack"] == "IAM/LD-NHCD") & (result["Direction"] == "S")
+    ]) == 0
+    # BND-NHCD with Direction=S should survive (S is valid for bonds)
+    assert len(result[
+        (result["Product2BuyBack"] == "BND-NHCD") & (result["Direction"] == "S")
+    ]) == 1
     # BND-HCD with Direction=B should survive
     assert len(result[
         (result["Product2BuyBack"] == "BND-HCD") & (result["Direction"] == "B")
@@ -315,3 +326,67 @@ def test_compare_pnl_format(mtd_path, echeancier_path, wirp_path, irs_path):
     delta_rows = comp[comp["Level"] == "Delta"]
     if month_cols and len(delta_rows) > 0:
         assert delta_rows[month_cols].abs().sum().sum() < 0.01
+
+
+# --- Realized / Forecast P&L split ---
+
+def test_aggregate_to_monthly_realized_forecast_split():
+    """Current month produces Total + Realized + Forecast; Total = Realized + Forecast."""
+    days = pd.date_range("2026-04-01", "2026-04-30")
+    n_days = len(days)
+    nominal = np.full((1, n_days), 1_000_000.0)
+    ois = np.full((1, n_days), 0.05)
+    rate_ref = np.full((1, n_days), 0.02)
+    mm = np.full((1, n_days), 360.0)
+    daily_pnl = compute_daily_pnl(nominal, ois, rate_ref, mm)
+
+    date_rates = pd.Timestamp("2026-04-15")
+    result = aggregate_to_monthly(daily_pnl, nominal, ois, rate_ref, days, date_rates=date_rates)
+
+    assert "PnL_Type" in result.columns
+    types = set(result["PnL_Type"].unique())
+    assert types == {"Total", "Realized", "Forecast"}
+
+    total_pnl = result.loc[result["PnL_Type"] == "Total", "PnL"].iloc[0]
+    realized_pnl = result.loc[result["PnL_Type"] == "Realized", "PnL"].iloc[0]
+    forecast_pnl = result.loc[result["PnL_Type"] == "Forecast", "PnL"].iloc[0]
+    np.testing.assert_almost_equal(total_pnl, realized_pnl + forecast_pnl, decimal=6)
+    assert realized_pnl > 0  # 15 days of positive P&L
+    assert forecast_pnl > 0  # 15 days of positive P&L
+
+
+def test_aggregate_to_monthly_past_future_months():
+    """Past months → Realized; future months → Forecast; current month → all three."""
+    days = pd.date_range("2026-03-01", "2026-05-31")
+    n_days = len(days)
+    nominal = np.full((1, n_days), 1_000_000.0)
+    ois = np.full((1, n_days), 0.04)
+    rate_ref = np.full((1, n_days), 0.01)
+    mm = np.full((1, n_days), 360.0)
+    daily_pnl = compute_daily_pnl(nominal, ois, rate_ref, mm)
+
+    date_rates = pd.Timestamp("2026-04-15")
+    result = aggregate_to_monthly(daily_pnl, nominal, ois, rate_ref, days, date_rates=date_rates)
+
+    march = result[result["Month"] == pd.Period("2026-03", "M")]
+    april = result[result["Month"] == pd.Period("2026-04", "M")]
+    may = result[result["Month"] == pd.Period("2026-05", "M")]
+
+    assert set(march["PnL_Type"].unique()) == {"Realized"}
+    assert set(april["PnL_Type"].unique()) == {"Total", "Realized", "Forecast"}
+    assert set(may["PnL_Type"].unique()) == {"Forecast"}
+
+
+def test_aggregate_to_monthly_no_date_rates_backward_compat():
+    """Without date_rates, all rows have PnL_Type = Total."""
+    days = pd.date_range("2026-04-01", "2026-04-30")
+    n_days = len(days)
+    nominal = np.full((1, n_days), 1_000_000.0)
+    ois = np.full((1, n_days), 0.05)
+    rate_ref = np.full((1, n_days), 0.02)
+    mm = np.full((1, n_days), 360.0)
+    daily_pnl = compute_daily_pnl(nominal, ois, rate_ref, mm)
+
+    result = aggregate_to_monthly(daily_pnl, nominal, ois, rate_ref, days)
+    assert "PnL_Type" in result.columns
+    assert set(result["PnL_Type"].unique()) == {"Total"}

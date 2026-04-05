@@ -63,6 +63,7 @@ from cockpit.engine.pnl.matrices import (
 )
 from cockpit.data.parsers import (
     _month_columns,
+    parse_deals,
     parse_echeancier,
     parse_irs_stock,
     parse_mtd,
@@ -156,18 +157,38 @@ class ForecastRatePnL:
         self.run(shocks=["50", "0"], export=export)
 
     def load_data(self) -> None:
-        """Load deal data, schedule, WIRP, and IRS stock from Excel files."""
-        mtd_file = next(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
-        echeancier_file = next(self.input_dir.glob("*Echeancier*"))
-        wirp_file = next(self.input_dir.glob("*WIRP*"))
-        irs_file = next(self.input_dir.glob("*IRS*"))
+        """Load deal data, schedule, WIRP, and IRS stock from Excel files.
 
-        self.pnlData = parse_mtd(mtd_file)
+        Supports two input layouts:
+        - **Ideal format**: ``deals.xlsx`` (unified BOOK1+BOOK2), ``schedule.xlsx``, ``wirp.xlsx``
+        - **Legacy format**: ``*MTD*``, ``*Echeancier*``, ``*WIRP*``, ``*IRS*`` (separate files)
+
+        Ideal format is tried first; falls back to legacy if no ``*deals*`` file found.
+        """
+        # --- Deals: try unified deals file, fall back to legacy MTD + IRS ---
+        deals_files = list(self.input_dir.glob("*deals*"))
+        if deals_files:
+            all_deals = parse_deals(deals_files[0])
+            self.pnlData, self.irsStock = self._split_deals_by_book(all_deals)
+            logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
+                        deals_files[0].name, len(self.pnlData), len(self.irsStock))
+        else:
+            mtd_file = next(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
+            irs_file = next(self.input_dir.glob("*IRS*"))
+            self.pnlData = parse_mtd(mtd_file)
+            self.irsStock = parse_irs_stock(irs_file)
+
+        # --- Schedule ---
+        schedule_files = list(self.input_dir.glob("*schedule*")) or list(self.input_dir.glob("*Echeancier*"))
+        echeancier_file = schedule_files[0] if schedule_files else next(self.input_dir.glob("*Echeancier*"))
         self.scheduleData = parse_echeancier(echeancier_file)
-        self.wirpData = parse_wirp(wirp_file)
-        self.irsStock = parse_irs_stock(irs_file)
 
-        # Filter TMSWBFIGE folder for IRS-MTM deals (mirrors pnl_init.py)
+        # --- WIRP ---
+        wirp_files = list(self.input_dir.glob("*wirp*")) or list(self.input_dir.glob("*WIRP*"))
+        wirp_file = wirp_files[0] if wirp_files else next(self.input_dir.glob("*WIRP*"))
+        self.wirpData = parse_wirp(wirp_file)
+
+        # Filter TMSWBFIGE folder for IRS-MTM deals (legacy schedule only)
         if "Folder" in self.scheduleData.columns:
             self.scheduleDataMTM = self.scheduleData[
                 self.scheduleData["Folder"].isin(["TMSWBFIGE"])
@@ -175,9 +196,53 @@ class ForecastRatePnL:
             self._append_mtm_from_schedule()
         else:
             self.scheduleDataMTM = pd.DataFrame()
-            logger.warning("Folder column not found in Echeancier — skipping MTM schedule append")
+            if not deals_files:
+                logger.warning("Folder column not found in Echeancier — skipping MTM schedule append")
 
         logger.info("load_data Done (%d deals, %d schedule rows)", len(self.pnlData), len(self.scheduleData))
+
+    @staticmethod
+    def _split_deals_by_book(all_deals: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Split unified deals into BOOK1 (accrual) and BOOK2 (IRS stock for WASP MTM).
+
+        BOOK2 rows are adapted to the column format expected by ``compute_book2_mtm``
+        and ``_format_book2_wide``.
+        """
+        if "IAS Book" not in all_deals.columns:
+            # No book column → treat everything as BOOK1
+            return all_deals.copy(), pd.DataFrame()
+
+        book1 = all_deals[all_deals["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
+        book2_raw = all_deals[all_deals["IAS Book"] == "BOOK2"].copy()
+
+        if book2_raw.empty:
+            return book1, pd.DataFrame()
+
+        # Adapt BOOK2 deals to legacy IRS stock column names for WASP compatibility
+        # WASP swapLegPricing uses: Value Date, Maturity Date, Currency Code (ISO),
+        # Amount, Index, Buy / Sell, Rate
+        irs_stock = book2_raw.rename(columns={
+            "Maturitydate": "Maturity Date",
+            "Valuedate": "Value Date",
+            "Strategy IAS": "Strategy (Agapes IAS)",
+            "Currency": "Currency Code (ISO)",
+            "notional": "Notional",
+            "pay_receive": "Pay/Receive",
+            "Dealid": "Deal",
+            "Floating Rates Short Name": "Index",
+            "Clientrate": "Rate",
+        })
+
+        # WASP expects "Buy / Sell" and "Asset / Liabilities"
+        if "Pay/Receive" in irs_stock.columns:
+            irs_stock["Buy / Sell"] = np.where(
+                irs_stock["Pay/Receive"] == "RECEIVE", "Buy", "Sell"
+            )
+            irs_stock["Asset / Liabilities"] = np.where(
+                irs_stock["Pay/Receive"] == "RECEIVE", "Actif", "Passif"
+            )
+
+        return book1, irs_stock.reset_index(drop=True)
 
     def _append_mtm_from_schedule(self) -> None:
         """Append IRS-MTM deals from TMSWBFIGE schedule rows missing in conso.
@@ -405,6 +470,7 @@ class ForecastRatePnL:
             funding_daily=funding_matrix,
             accrual_days=self._accrual_days,
             mm_daily=mm_broadcast,
+            date_rates=pd.Timestamp(self.dateRates),
         )
 
         # Enrich with deal metadata
@@ -463,7 +529,7 @@ class ForecastRatePnL:
             ]
             pnl_strat = pnl_strat[
                 ~(pnl_strat["Product2BuyBack"].isin(["IAM/LD-HCD", "IAM/LD-NHCD"])
-                  & pnl_strat["Direction"].isin(["B"]))
+                  & pnl_strat["Direction"].isin(["B", "S"]))
             ]
             parts.append(pnl_strat)
 
@@ -499,7 +565,7 @@ class ForecastRatePnL:
         if data.empty:
             return pd.DataFrame()
 
-        group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Month"]
+        group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
 
         # Aggregation: PnL/Nominal/Amount/CoC measures sum; rates weighted avg
         sum_cols = {"PnL": "sum", "Nominal": "sum"}
@@ -529,7 +595,7 @@ class ForecastRatePnL:
                         agg = agg.drop(columns=f"{col}_wavg")
 
         # Stack measures into Indice rows
-        id_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Month"]
+        id_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
         measure_cols = ["Amount", "Nominal", "PnL"] + present_rates
         present_measures = [c for c in measure_cols if c in agg.columns]
 
@@ -541,7 +607,7 @@ class ForecastRatePnL:
         )
 
         # Pivot months to columns
-        pivot_idx = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Indice"]
+        pivot_idx = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Indice", "PnL_Type"]
         wide = pd.pivot_table(
             agg_long,
             values="Value",
@@ -556,7 +622,7 @@ class ForecastRatePnL:
             wide.columns = [c[0] if c[1] == "" else c[1] for c in wide.columns]
 
         wide["Shock"] = shock
-        # Insert Shock after Direction (position 4→5, like pnl.py)
+        # Insert Shock after Direction (position 4→5)
         cols = list(wide.columns)
         cols.remove("Shock")
         cols.insert(5, "Shock")
@@ -578,7 +644,7 @@ class ForecastRatePnL:
         if "Deal currency" not in strategy.columns:
             strategy["Deal currency"] = strategy.get("Currency", "")
 
-        group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Month"]
+        group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
         present_group = [c for c in group_cols if c in strategy.columns]
 
         # Sum P&L, Nominal, Amount across strategies
@@ -610,7 +676,7 @@ class ForecastRatePnL:
         )
 
         # Pivot months to columns
-        pivot_idx = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Indice"]
+        pivot_idx = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Indice", "PnL_Type"]
         present_idx = [c for c in pivot_idx if c in agg_long.columns]
 
         wide = pd.pivot_table(
@@ -685,7 +751,7 @@ class ForecastRatePnL:
             return pd.DataFrame()
 
         idx_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack",
-                     "Direction", "Indice", "Shock"]
+                     "Direction", "Indice", "PnL_Type", "Shock"]
         present_idx = [c for c in idx_cols if c in self.pnlAll.columns]
 
         # Month columns = everything not in idx_cols
@@ -697,9 +763,9 @@ class ForecastRatePnL:
         stacked.columns.name = "Month"
         result = stacked.stack().rename("Value").reset_index()
 
-        # Set 7-level MultiIndex like pnl.py
+        # Set MultiIndex
         mi_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack",
-                    "Direction", "Indice", "Month", "Shock"]
+                    "Direction", "Indice", "PnL_Type", "Month", "Shock"]
         present_mi = [c for c in mi_cols if c in result.columns]
         result = result.set_index(present_mi)
 
@@ -786,7 +852,7 @@ def compare_pnl(
 
     # 3. Pivot months to columns (wide format)
     pivot_idx = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack",
-                 "Direction", "Shock", "Indice", "Level"]
+                 "Direction", "Shock", "Indice", "PnL_Type", "Level"]
     present_idx = [c for c in pivot_idx if c in comp.columns]
 
     if "Month" in comp.columns:

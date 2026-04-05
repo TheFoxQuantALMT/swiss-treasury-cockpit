@@ -107,67 +107,136 @@ Wraps API calls with failure tracking:
 
 Excel parsers for internal treasury data. All return `pd.DataFrame`.
 
-### `parse_mtd(path) -> DataFrame`
+Each data source has two parsers: an **ideal-format** parser (clean schema, thin validation) and a **legacy adapter** that auto-detects the format and delegates to the ideal parser when possible.
 
-Parses the MTD Standard Liquidity PnL Report (BOOK1 deals).
+### Input File Formats
 
-**Source sheet:** "Conso Deal Level" (skip first row)
+#### Ideal format (4 files)
 
-**Key transformations:**
-- Column renaming from Excel headers to internal names
-- Direction: first character of "ALMT Direction" (B, L, D)
-- Perimeter: classified from counterparty code (CC, WM, CIB)
+| File | Sheet | Parser | Description |
+|------|-------|--------|-------------|
+| `deals.xlsx` | Deals | `parse_deals()` | Unified BOOK1 + BOOK2 deals |
+| `schedule.xlsx` | Schedule | `parse_schedule()` | Monthly nominal balances |
+| `wirp.xlsx` | WIRP | `parse_wirp_ideal()` | Rate expectations |
+| `reference_table.xlsx` | Reference | `parse_reference_table()` | Counterparty metadata |
+
+#### Legacy format (5 files)
+
+| File | Parser | Notes |
+|------|--------|-------|
+| `*MTD Standard Liquidity PnL Report*` | `parse_mtd()` | Auto-detects ideal format |
+| `*Echeancier*` | `parse_echeancier()` | Auto-detects ideal format |
+| `*WIRP*` | `parse_wirp()` | Auto-detects ideal format |
+| `*IRS*` | `parse_irs_stock()` | Separate BOOK2 IRS stock |
+| `reference_table.xlsx` | `parse_reference_table()` | Already clean |
+
+`ForecastRatePnL.load_data()` tries ideal-format files first (`*deals*`, `*schedule*`, `*wirp*`), then falls back to legacy globs.
+
+---
+
+### `parse_deals(path) -> DataFrame`
+
+Parses ideal-format `deals.xlsx` — unified BOOK1 + BOOK2 deals with clean schema.
+
+**Source sheet:** "Deals" (header row 1)
+
+**Input columns (snake_case) → internal names:**
+
+| Input | Internal | Type | Values |
+|-------|----------|------|--------|
+| `deal_id` | Dealid | int | Numeric join key |
+| `product` | Product | str | IAM/LD, BND, FXS, IRS, IRS-MTM, HCD |
+| `currency` | Currency | str | CHF, EUR, USD, GBP |
+| `direction` | Direction | str | B, L, D, S (single char) |
+| `book` | IAS Book | str | BOOK1, BOOK2 |
+| `amount` | Amount | float | Signed balance |
+| `client_rate` | Clientrate | float | Decimal (0.0125 = 1.25%) |
+| `eq_ois_rate` | EqOisRate | float | Decimal |
+| `ytm` | YTM | float | Decimal, net of credit spread |
+| `coc_rate` | CocRate | float | Decimal |
+| `spread` | Spread | float | Decimal (not bps) |
+| `floating_index` | Floating Rates Short Name | str | SARON, ESTR, SOFR, SONIA, "" |
+| `trade_date` | Tradedate | date | ISO 8601 |
+| `value_date` | Valuedate | date | ISO 8601 |
+| `maturity_date` | Maturitydate | date | Required |
+| `strategy_ias` | Strategy IAS | str | Hedge designation |
+| `perimeter` | Périmètre TOTAL | str | CC, WM, CIB (explicit) |
+| `counterparty` | Counterparty | str | Counterparty code |
+| `pay_receive` | pay_receive | str | PAY, RECEIVE (BOOK2 only) |
+| `notional` | notional | float | BOOK2 only |
+| `last_fixing_date` | last_fixing_date | date | Most recent floating rate reset (BOOK2 only) |
+| `next_fixing_date` | next_fixing_date | date | Next floating rate reset (BOOK2 only) |
+
+**Validation:** deal_id non-null, product/currency/direction/book in allowed sets, maturity_date valid, rates |v| < 0.50, perimeter defaults to CC.
+
+**BOOK split:** `ForecastRatePnL._split_deals_by_book()` splits by `IAS Book`: BOOK1 → accrual P&L, BOOK2 → adapted to WASP `stockSwapMTM` column format.
+
+### `parse_mtd(path) -> DataFrame` (legacy)
+
+Parses the MTD Standard Liquidity PnL Report. Auto-detects ideal format (checks for "Deals" sheet) and delegates to `parse_deals()` if found.
+
+**Legacy transformations:**
+- Direction: first character of "ALMT Direction" (B: Bond, L: Loan, D: Deposit, S: Sold)
+- Perimeter: derived from counterparty code (CC, WM, CIB)
 - BOOK1 filter: only IAS Book == "BOOK1" rows
 - Credit spread subtraction: BND YTM -= CreditSpread_FIFO
-- Rate conversion: percent to decimal (divide by 100)
-- Spread conversion: bps to decimal (divide by 10,000)
-- Currency filter: only CHF, EUR, USD, GBP
-- Maturity filter: valid maturity date required
+- Rate conversion: percent → decimal (÷ 100)
+- Spread conversion: bps → decimal (÷ 10,000)
 
-**Output columns:**
+---
 
-| Column | Type | Description |
-|--------|------|-------------|
-| Dealid | numeric | Deal identifier |
-| Product | str | IAM/LD, BND, FXS, IRS, HCD |
-| Currency | str | CHF, EUR, USD, GBP |
-| Direction | str | B, L, D |
-| Amount | float | Outstanding balance |
-| Clientrate | float | Contractual rate (decimal) |
-| EqOisRate | float | BD-1 OIS equivalent rate (decimal) |
-| YTM | float | Yield to maturity (decimal, bonds only) |
-| CocRate | float | Cost of carry rate (decimal) |
-| Spread | float | Spread over index (decimal) |
-| Valuedate | str | Value date |
-| Maturitydate | str | Maturity date |
-| Strategy IAS | str/NaN | IAS hedge designation |
-| Counterparty | str | Counterparty code |
-| Perimetre TOTAL | str | CC, WM, CIB |
+### `parse_schedule(path) -> DataFrame`
 
-### `parse_echeancier(path) -> DataFrame`
+Parses ideal-format `schedule.xlsx` — monthly nominal balances with clean schema.
 
-Parses the Echeancier (nominal schedule by month).
+**Source sheet:** "Schedule" (header row 1)
 
-**Key features:**
-- Month columns in `YYYY/MM` format (e.g., "2026/04")
-- Join key: `(Dealid, Direction, Currency)`
-- Aggregates F+V legs if both present for same deal
+**Input columns:**
+
+| Input | Internal | Type | Notes |
+|-------|----------|------|-------|
+| `deal_id` | Dealid | int | Plain numeric (not "Type@ID") |
+| `direction` | Direction | str | B, L, D, S |
+| `currency` | Currency | str | CHF, EUR, USD, GBP |
+| `rate_type` | Rate Type | str | F or V |
+| `YYYY/MM` | (same) | float | Monthly balance columns |
+
+**Pre-conditions (source system responsibility):** RFR V-legs pre-filtered, reverse repos pre-filtered, V-leg balances pre-forward-filled, direction explicit.
+
+### `parse_echeancier(path) -> DataFrame` (legacy)
+
+Parses the legacy Echeancier. Auto-detects ideal format (checks for "Schedule" sheet) and delegates to `parse_schedule()` if found.
+
+**Legacy transformations:** "Type@ID" splitting, RFR V-leg filtering, reverse repo filtering, direction from deal type/balance sign, V-leg forward-fill.
+
+---
+
+### `parse_wirp_ideal(path) -> DataFrame`
+
+Parses ideal-format `wirp.xlsx` — rate expectations with proper header and WASP index names.
+
+**Source sheet:** "WIRP" (header row 1)
+
+| Input | Internal | Type | Example |
+|-------|----------|------|---------|
+| `index` | Indice | str | CHFSON, EUREST, USSOFR, GBPOIS |
+| `meeting_date` | Meeting | date | 2026-06-19 |
+| `rate` | Rate | float | 0.0125 (decimal) |
+| `change_bps` | Hike / Cut | float | -25 |
+
+### `parse_wirp(path) -> DataFrame` (legacy)
+
+Parses legacy WIRP. Auto-detects ideal format and delegates. Legacy uses usecols/skiprows/forward-fill.
+
+---
 
 ### `_month_columns(df) -> list[str]`
 
-Extracts month column names from an echeancier DataFrame. Identifies columns matching the `YYYY/MM` pattern.
+Extracts month column names matching the `YYYY/MM` pattern.
 
-### `parse_wirp(path) -> DataFrame`
+### `parse_irs_stock(path) -> DataFrame` (legacy)
 
-Parses WIRP (rate expectations) data.
-
-**Output columns:** Indice, Meeting (date), Rate
-
-Used for the WIRP shock scenario: central bank meeting rates are forward-filled to create a step-function rate path.
-
-### `parse_irs_stock(path) -> DataFrame`
-
-Parses the IRS derivatives stock for BOOK2 MTM valuation.
+Parses the IRS derivatives stock for BOOK2 MTM valuation. Only needed with legacy input layout — unified `deals.xlsx` includes BOOK2 rows directly.
 
 ### `parse_reference_table(path) -> DataFrame`
 

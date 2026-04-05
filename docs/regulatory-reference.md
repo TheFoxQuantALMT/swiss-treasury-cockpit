@@ -184,5 +184,46 @@ Deals with `Strategy IAS` designation are split into:
 Where `marginRate = EqOisRate + YTM - Clientrate_HCD`.
 
 Direction filtering ensures valid combinations:
-- BND legs: exclude Lend (L) and Deposit (D) directions
-- IAM/LD legs: exclude Borrow (B) direction
+- BND legs: exclude Loan (L) and Deposit (D) directions
+- IAM/LD legs: exclude Bond (B) and Sold (S) directions
+
+---
+
+## Validation Test Suite
+
+The engine includes a three-tier validation framework mapped to regulatory requirements:
+
+### Tier 1: Known-Answer Tests (`test_engine/test_validation.py`)
+
+Hand-calculated expected values for simple deals. Each test cites the specific regulatory formula.
+
+| Regulation | What is tested |
+|---|---|
+| IFRS 9 §5.4.1 | `PnL = Nom * (OIS - Rate) / MM * days` for fixed deposits |
+| ISDA 2006 §4.16(b) | GBP Act/365 vs CHF Act/360 day count |
+| ISDA 2006 §4.16(e) | Bond 30/360 with YTM as RateRef |
+| IFRS 9 B5.4.5 | `CoC_Simple = GrossCarry - FundingCost` |
+| ISDA 2021 §6.9 | `CoC_Compound = Nom * [∏(1+r*d_i/D) - ∏(1+f*d_i/D)]` |
+| BCBS 368 §3.2 | Shock sensitivity: +50bp exact delta for deposits and loans |
+
+### Tier 2: Invariant Tests (`test_engine/test_invariants.py`)
+
+Properties that must hold for any portfolio:
+
+| Invariant | Regulatory basis |
+|---|---|
+| `Total = Realized + Forecast` | Additive P&L decomposition |
+| `CoC_Simple ≈ CoC_Compound` for low rates | ISDA 2021 §6.9 vs IFRS 9 B5.4.5 consistency |
+| Zero nominal → zero PnL | Dead deal correctness |
+| Direction filtering on strategy legs | IFRS 9 §6.5.16 hedge effectiveness |
+
+### Tier 3: Reconciliation Tests (`test_engine/test_reconciliation.py`)
+
+Cross-validation against independent sources (auto-skipped when WASP unavailable):
+
+| Source | What is compared |
+|---|---|
+| WASP `load_daily_curves` | OIS curve values and shape |
+| WASP `stockSwapMTM` | BOOK2 MTM output structure |
+| WIRP mock curves | Step-function shape, shock uniformity, rate plausibility |
+| Manual Python loop | Independent P&L calculation matches engine |

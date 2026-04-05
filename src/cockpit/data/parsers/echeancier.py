@@ -1,10 +1,17 @@
-"""Parser for Echeancier (forward balance schedule) Excel files."""
+"""Parsers for schedule data — ideal format (parse_schedule) and legacy (parse_echeancier)."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from cockpit.config import SUPPORTED_CURRENCIES
+
+logger = logging.getLogger(__name__)
+
+_VALID_DIRECTIONS = {"B", "L", "D", "S"}
 
 
 def _month_columns(df: pd.DataFrame) -> list[str]:
@@ -12,8 +19,79 @@ def _month_columns(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if isinstance(c, str) and "/" in c and c[:4].isdigit()]
 
 
+# ---------------------------------------------------------------------------
+# Ideal format: schedule.xlsx — clean schema, pre-filtered, explicit direction
+# ---------------------------------------------------------------------------
+
+_SCHEDULE_RENAME = {
+    "deal_id": "Dealid",
+    "direction": "Direction",
+    "currency": "Currency",
+    "rate_type": "Rate Type",
+}
+
+
+def parse_schedule(path: Path) -> pd.DataFrame:
+    """Parse ideal-format schedule.xlsx → wide DataFrame with monthly balances.
+
+    Expects sheet 'Schedule' with header in row 1, deal_id as plain integer,
+    direction as single char, RFR V-legs and reverse repos pre-filtered,
+    V-leg balances pre-forward-filled.
+    """
+    df = pd.read_excel(path, sheet_name="Schedule", engine="openpyxl")
+
+    # Rename to internal column names
+    rename = {k: v for k, v in _SCHEDULE_RENAME.items() if k in df.columns}
+    df = df.rename(columns=rename)
+
+    # --- Validation ---
+    if "Dealid" not in df.columns:
+        raise ValueError("schedule.xlsx: missing required column 'deal_id'")
+
+    df["Dealid"] = pd.to_numeric(df["Dealid"], errors="coerce")
+    n_bad = df["Dealid"].isna().sum()
+    if n_bad > 0:
+        logger.warning("schedule.xlsx: %d rows with non-numeric deal_id (dropped)", n_bad)
+        df = df[df["Dealid"].notna()].copy()
+
+    if "Direction" in df.columns:
+        bad_dir = ~df["Direction"].isin(_VALID_DIRECTIONS)
+        if bad_dir.any():
+            logger.warning("schedule.xlsx: %d rows with invalid direction (dropped)", bad_dir.sum())
+            df = df[~bad_dir].copy()
+
+    if "Currency" in df.columns:
+        bad_ccy = ~df["Currency"].isin(SUPPORTED_CURRENCIES)
+        if bad_ccy.any():
+            logger.warning("schedule.xlsx: %d rows with unsupported currency (dropped)", bad_ccy.sum())
+            df = df[~bad_ccy].copy()
+
+    month_cols = _month_columns(df)
+    if not month_cols:
+        logger.warning("schedule.xlsx: no YYYY/MM balance columns found")
+
+    return df.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Legacy format: Echeancier — composite IDs, implicit direction, needs filtering
+# ---------------------------------------------------------------------------
+
 def parse_echeancier(path: Path) -> pd.DataFrame:
-    """Parse Echeancier → wide DataFrame with monthly balances, V-legs carried forward."""
+    """Parse legacy Echeancier → wide DataFrame with monthly balances.
+
+    This is the legacy adapter. For the ideal format, use parse_schedule().
+    """
+    # Try ideal format first
+    try:
+        xl = pd.ExcelFile(path, engine="openpyxl")
+        if "Schedule" in xl.sheet_names:
+            logger.info("Detected ideal-format schedule file: %s", path)
+            return parse_schedule(path)
+    except Exception:
+        pass
+
+    # Legacy Echeancier format
     df = pd.read_excel(path, sheet_name="Operations Propres EoM", skiprows=2, engine="openpyxl")
 
     # Drop leading unnamed column
@@ -31,11 +109,7 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
     rate_type_col = [c for c in df.columns if "Rate Type" in str(c)]
     post_flag_col = [c for c in df.columns if "Post-counted" in str(c)]
 
-    # Filter: drop RFR V-legs.  Two sub-cases:
-    #   (a) Post-counted interest flag == 1  (standard RFR reset leg)
-    #   (b) Post-counted flag is NaN but Rate index Code is "RFR"
-    # Both represent floating-rate resets that are not forecast-able and must
-    # be excluded before carry-forward.
+    # Filter: drop RFR V-legs
     rate_code_col = [c for c in df.columns if "level 1 Code" in str(c)]
     if rate_type_col:
         rt = df[rate_type_col[0]]
@@ -51,18 +125,18 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
         l5 = df[level5_col[0]].fillna("")
         df = df[~((rt == "V") & (l5 == "Reverse repos"))].copy()
 
-    # Direction: BD@ = Bond → B, else from balance sign (L if negative, D if positive)
+    # Direction: BD@ = Bond → B, else from balance sign
     month_cols = _month_columns(df)
     is_bond = df["Deal Type"] == "BD"
     balance_sum = df[month_cols].sum(axis=1)
     df["Direction"] = np.where(is_bond, "B", np.where(balance_sum < 0, "L", "D"))
 
-    # Currency (optional — column may not exist in all versions)
+    # Currency
     curr_cols = [c for c in df.columns if "currency" in str(c).lower()]
     if curr_cols:
         df["Currency"] = df[curr_cols[0]]
 
-    # V-leg carry-forward: fill NaN months forward with last known balance
+    # V-leg carry-forward
     if rate_type_col:
         rt_col = rate_type_col[0]
         v_mask = df[rt_col] == "V"
