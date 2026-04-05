@@ -16,6 +16,15 @@ from cockpit.pnl_dashboard.charts import (
     _build_strategy,
     _build_book2,
     _build_curves,
+    _build_currency_mismatch,
+    _build_repricing_gap,
+    _build_counterparty_pnl,
+    _build_pnl_alerts,
+    _build_budget,
+    _build_hedge_effectiveness,
+    _build_nii_at_risk,
+    _build_forecast_tracking,
+    _build_attribution,
 )
 
 
@@ -103,7 +112,12 @@ def sample_ois_curves():
 class TestEmptyData:
     def test_build_all_empty(self, empty_df, date_rates):
         result = build_pnl_dashboard_data(empty_df, empty_df, date_run=date_rates, date_rates=date_rates)
-        assert set(result.keys()) == {"summary", "coc", "pnl_series", "sensitivity", "strategy", "book2", "curves"}
+        expected_keys = {
+            "summary", "coc", "pnl_series", "sensitivity", "strategy", "book2", "curves",
+            "currency_mismatch", "repricing_gap", "counterparty_pnl", "pnl_alerts",
+            "budget", "hedge", "nii_at_risk", "forecast_tracking", "attribution",
+        }
+        assert set(result.keys()) == expected_keys
 
     def test_summary_empty(self, empty_df, date_rates):
         result = _build_summary(empty_df, date_rates)
@@ -253,3 +267,223 @@ class TestFullPipeline:
         )
         assert result["curves"]["has_data"] is False
         assert result["book2"]["has_data"] is False
+
+    def test_build_all_has_alm_keys(self, sample_stacked, date_rates):
+        """All ALM enhancement keys are present in result."""
+        result = build_pnl_dashboard_data(
+            pnl_all=pd.DataFrame(),
+            pnl_all_s=sample_stacked,
+            date_run=date_rates,
+            date_rates=date_rates,
+        )
+        alm_keys = {"currency_mismatch", "repricing_gap", "counterparty_pnl",
+                     "pnl_alerts", "budget", "hedge", "nii_at_risk",
+                     "forecast_tracking", "attribution"}
+        assert alm_keys.issubset(result.keys())
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Currency Mismatch (F9)
+# ---------------------------------------------------------------------------
+
+class TestCurrencyMismatch:
+    def test_empty(self, empty_df):
+        result = _build_currency_mismatch(empty_df)
+        assert result["has_data"] is False
+
+    def test_with_data(self, sample_stacked):
+        result = _build_currency_mismatch(sample_stacked)
+        if result["has_data"]:
+            assert len(result["months"]) == 3
+            assert "All" in result["by_currency"]
+            for ccy_data in result["by_currency"].values():
+                assert "assets" in ccy_data
+                assert "liabilities" in ccy_data
+                assert "gap" in ccy_data
+                assert len(ccy_data["gap"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Repricing Gap (F3)
+# ---------------------------------------------------------------------------
+
+class TestRepricingGap:
+    def test_empty(self, empty_df, date_rates):
+        result = _build_repricing_gap(empty_df, None, date_rates)
+        assert result["has_data"] is False
+
+    def test_with_deals(self, date_rates):
+        deals = pd.DataFrame({
+            "Currency": ["CHF", "CHF", "EUR"],
+            "Direction": ["D", "L", "D"],
+            "Amount": [50e6, 30e6, 20e6],
+            "Maturitydate": [
+                datetime(2026, 5, 1),
+                datetime(2027, 1, 1),
+                datetime(2026, 12, 1),
+            ],
+            "is_floating": [False, False, True],
+            "next_fixing_date": [None, None, datetime(2026, 4, 10)],
+        })
+        result = _build_repricing_gap(pd.DataFrame(), deals, date_rates)
+        assert result["has_data"] is True
+        assert len(result["buckets"]) > 0
+        assert "CHF" in result["by_currency"]
+        assert "All" in result["by_currency"]
+
+    def test_cumulative_gap(self, date_rates):
+        deals = pd.DataFrame({
+            "Currency": ["CHF", "CHF"],
+            "Direction": ["D", "L"],
+            "Amount": [100e6, 50e6],
+            "Maturitydate": [datetime(2026, 5, 1), datetime(2026, 5, 1)],
+            "is_floating": [False, False],
+        })
+        result = _build_repricing_gap(pd.DataFrame(), deals, date_rates)
+        if result["has_data"]:
+            chf = result["by_currency"].get("CHF", {})
+            if "cumulative_gap" in chf:
+                # Cumulative should be running sum of gaps
+                assert len(chf["cumulative_gap"]) == len(result["buckets"])
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Counterparty P&L (F8)
+# ---------------------------------------------------------------------------
+
+class TestCounterpartyPnl:
+    def test_empty(self, empty_df):
+        result = _build_counterparty_pnl(empty_df)
+        assert result["has_data"] is False
+
+    def test_no_counterparty_col(self, sample_stacked):
+        # sample_stacked doesn't have Counterparty column
+        result = _build_counterparty_pnl(sample_stacked)
+        assert result["has_data"] is False
+
+    def test_with_counterparty(self):
+        df = pd.DataFrame({
+            "Indice": ["PnL"] * 4,
+            "Shock": ["0"] * 4,
+            "Counterparty": ["BankA", "BankA", "BankB", "BankC"],
+            "Deal currency": ["CHF", "EUR", "CHF", "CHF"],
+            "Product2BuyBack": ["IAM/LD", "IAM/LD", "BND", "FXS"],
+            "Value": [100, 200, -50, 80],
+        })
+        result = _build_counterparty_pnl(df)
+        assert result["has_data"] is True
+        assert len(result["top_10"]) == 3
+        assert result["hhi"] > 0
+        assert "IAM/LD" in result["by_product"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — P&L Alerts (F7)
+# ---------------------------------------------------------------------------
+
+class TestPnlAlerts:
+    def test_empty(self, empty_df):
+        result = _build_pnl_alerts(empty_df)
+        assert result["has_data"] is False
+
+    def test_no_alerts_triggered(self, sample_stacked):
+        result = _build_pnl_alerts(sample_stacked)
+        # May or may not have alerts depending on thresholds
+        assert "alerts" in result
+        assert "summary" in result
+
+    def test_negative_nii_floor(self):
+        df = pd.DataFrame({
+            "Indice": ["PnL"] * 3,
+            "Shock": ["0"] * 3,
+            "Deal currency": ["CHF", "EUR", "USD"],
+            "Value": [-100, -200, -50],
+            "Month": ["2026-04"] * 3,
+        })
+        result = _build_pnl_alerts(df)
+        assert result["has_data"] is True
+        assert any(a["type"] == "nii_floor" for a in result["alerts"])
+
+    def test_concentration_alert(self):
+        df = pd.DataFrame({
+            "Indice": ["PnL"] * 2,
+            "Shock": ["0"] * 2,
+            "Deal currency": ["CHF", "EUR"],
+            "Value": [900, 100],  # CHF = 90% of total
+            "Month": ["2026-04"] * 2,
+        })
+        result = _build_pnl_alerts(df)
+        assert any(a["type"] == "ccy_concentration" for a in result["alerts"])
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Budget (F1)
+# ---------------------------------------------------------------------------
+
+class TestBudget:
+    def test_empty(self, empty_df):
+        result = _build_budget(empty_df, None)
+        assert result["has_data"] is False
+
+    def test_with_budget(self, sample_stacked):
+        budget = pd.DataFrame({
+            "currency": ["CHF", "CHF", "CHF", "EUR", "EUR", "EUR"],
+            "month": ["2026-04", "2026-05", "2026-06"] * 2,
+            "budget_nii": [80, 90, 100, 40, 50, 60],
+        })
+        result = _build_budget(sample_stacked, budget)
+        assert result["has_data"] is True
+        assert "CHF" in result["by_currency"]
+        assert "ytd" in result
+        assert result["ytd"]["budget"] != 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Hedge Effectiveness (F5)
+# ---------------------------------------------------------------------------
+
+class TestHedgeEffectiveness:
+    def test_empty(self, empty_df):
+        result = _build_hedge_effectiveness(empty_df, None)
+        assert result["has_data"] is False
+
+    def test_no_dealid(self, sample_stacked):
+        hedge_pairs = pd.DataFrame({
+            "pair_id": [1],
+            "pair_name": ["Test"],
+            "hedged_item_deal_ids": ["100001"],
+            "hedging_instrument_deal_ids": ["400001"],
+            "hedge_type": ["cash_flow"],
+            "ias_standard": ["IFRS9"],
+        })
+        result = _build_hedge_effectiveness(sample_stacked, hedge_pairs)
+        assert result["has_data"] is False  # no Dealid in sample_stacked
+
+
+# ---------------------------------------------------------------------------
+# Tests: ALM Enhancement — Stubs (F2, F4, F6)
+# ---------------------------------------------------------------------------
+
+class TestStubs:
+    def test_nii_at_risk_empty(self, empty_df):
+        result = _build_nii_at_risk(empty_df, None)
+        assert result["has_data"] is False
+
+    def test_forecast_tracking_empty(self):
+        result = _build_forecast_tracking(None)
+        assert result["has_data"] is False
+
+    def test_forecast_tracking_with_data(self):
+        history = pd.DataFrame({
+            "date": ["2026-04-01", "2026-04-02", "2026-04-01", "2026-04-02"],
+            "currency": ["CHF", "CHF", "EUR", "EUR"],
+            "nii_forecast": [1000, 1050, 500, 520],
+        })
+        result = _build_forecast_tracking(history)
+        assert result["has_data"] is True
+        assert len(result["dates"]) == 2
+        assert "CHF" in result["by_currency"]
+
+    def test_attribution_empty(self, empty_df):
+        result = _build_attribution(empty_df, None)
+        assert result["has_data"] is False

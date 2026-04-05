@@ -284,6 +284,9 @@ def cmd_render_pnl(
     input_dir: str | None = None,
     output_dir: Path = OUTPUT_DIR,
     funding_source: str = "ois",
+    budget_file: str | None = None,
+    hedge_pairs_file: str | None = None,
+    prev_date: str | None = None,
 ) -> None:
     """Render dedicated P&L dashboard from Excel inputs."""
     from cockpit.engine.pnl.forecast import ForecastRatePnL
@@ -301,6 +304,67 @@ def cmd_render_pnl(
         funding_source=funding_source,
     )
 
+    # Load optional ALM inputs
+    budget = None
+    hedge_pairs = None
+    prev_pnl_all_s = None
+    forecast_history = None
+
+    if input_dir:
+        input_path = Path(input_dir)
+        # Auto-discover budget file
+        budget_path = Path(budget_file) if budget_file else None
+        if budget_path is None:
+            candidates = list(input_path.glob("*budget*"))
+            if candidates:
+                budget_path = candidates[0]
+        if budget_path and budget_path.exists():
+            try:
+                from cockpit.data.parsers.budget import parse_budget
+                budget = parse_budget(budget_path)
+                print(f"[render-pnl] Loaded budget from {budget_path}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load budget: {e}")
+
+        # Auto-discover hedge pairs file
+        hp_path = Path(hedge_pairs_file) if hedge_pairs_file else None
+        if hp_path is None:
+            candidates = list(input_path.glob("*hedge*"))
+            if candidates:
+                hp_path = candidates[0]
+        if hp_path and hp_path.exists():
+            try:
+                from cockpit.data.parsers.hedge_pairs import parse_hedge_pairs
+                hedge_pairs = parse_hedge_pairs(hp_path)
+                print(f"[render-pnl] Loaded hedge pairs from {hp_path}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load hedge pairs: {e}")
+
+    # Load previous day's pnlAllS for attribution
+    if prev_date:
+        try:
+            prev_dt = datetime.strptime(prev_date, "%Y-%m-%d")
+            prev_pnl_obj = ForecastRatePnL(
+                dateRun=prev_dt, dateRates=prev_dt,
+                export=False, input_dir=input_dir,
+                output_dir=str(output_dir), funding_source=funding_source,
+            )
+            prev_pnl_all_s = prev_pnl_obj.pnlAllS
+            print(f"[render-pnl] Loaded previous P&L from {prev_date}")
+        except Exception as e:
+            print(f"[render-pnl] Warning: could not load previous P&L: {e}")
+
+    # Load forecast history from snapshots
+    snapshot_dir = DATA_DIR / "pnl_snapshots"
+    if snapshot_dir.exists():
+        try:
+            from cockpit.engine.pnl.forecast_tracking import load_forecast_history
+            forecast_history = load_forecast_history(snapshot_dir)
+            if forecast_history is not None and not forecast_history.empty:
+                print(f"[render-pnl] Loaded {len(forecast_history)} forecast history records")
+        except Exception as e:
+            print(f"[render-pnl] Warning: could not load forecast history: {e}")
+
     output_path = output_dir / f"{date}_pnl_dashboard.html"
 
     print("[render-pnl] Rendering P&L dashboard...")
@@ -313,6 +377,11 @@ def cmd_render_pnl(
         date_run=date_dt,
         date_rates=date_dt,
         output_path=output_path,
+        deals=pnl.pnlData,
+        budget=budget,
+        hedge_pairs=hedge_pairs,
+        prev_pnl_all_s=prev_pnl_all_s,
+        forecast_history=forecast_history,
     )
     print(f"[render-pnl] Output: {output_path}")
 
@@ -373,6 +442,9 @@ def main() -> None:
     p_render_pnl.add_argument("--input-dir", help="Path to Excel input files")
     p_render_pnl.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
                               help="Funding rate source: OIS curve (default) or deal-level CocRate")
+    p_render_pnl.add_argument("--budget", dest="budget_file", help="Path to budget.xlsx")
+    p_render_pnl.add_argument("--hedge-pairs", dest="hedge_pairs_file", help="Path to hedge_pairs.xlsx")
+    p_render_pnl.add_argument("--prev-date", help="Previous date for P&L attribution (YYYY-MM-DD)")
 
     # run-all
     p_all = sub.add_parser("run-all", help="Execute all steps")
@@ -395,6 +467,6 @@ def main() -> None:
     elif args.command == "render":
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
     elif args.command == "render-pnl":
-        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source)
+        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source, budget_file=args.budget_file, hedge_pairs_file=args.hedge_pairs_file, prev_date=args.prev_date)
     elif args.command == "run-all":
         cmd_run_all(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run, funding_source=args.funding_source)

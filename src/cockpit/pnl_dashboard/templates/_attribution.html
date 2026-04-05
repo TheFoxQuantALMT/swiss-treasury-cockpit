@@ -1,0 +1,68 @@
+<div id="tab-attribution" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">P&amp;L Attribution &mdash; Rate vs Volume vs Mix</h3>
+
+  {% if has_attribution %}
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-attribution"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Attribution Detail</h3>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead><tr><th>Currency</th><th>Rate Effect</th><th>Volume Effect</th><th>Mix Effect</th><th>Total &Delta;</th></tr></thead>
+      <tbody>
+      {% for ccy, vals in attribution.by_currency.items() %}
+        <tr>
+          <td>{{ ccy }}</td>
+          <td class="{{ 'positive' if vals.rate_effect > 0 else 'negative' if vals.rate_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.rate_effect) }}</td>
+          <td class="{{ 'positive' if vals.volume_effect > 0 else 'negative' if vals.volume_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.volume_effect) }}</td>
+          <td class="{{ 'positive' if vals.mix_effect > 0 else 'negative' if vals.mix_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.mix_effect) }}</td>
+          <td class="{{ 'positive' if vals.total_delta > 0 else 'negative' if vals.total_delta < 0 else 'neutral' }}"><strong>{{ "{:,.0f}".format(vals.total_delta) }}</strong></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ attribution.by_currency | tojson_safe }};
+    const ccys = Object.keys(data);
+    const ctx = document.getElementById('chart-attribution');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ccys,
+        datasets: [
+          { label: 'Rate Effect', data: ccys.map(c => data[c].rate_effect), backgroundColor: 'rgba(88,166,255,0.8)' },
+          { label: 'Volume Effect', data: ccys.map(c => data[c].volume_effect), backgroundColor: 'rgba(63,185,80,0.8)' },
+          { label: 'Mix Effect', data: ccys.map(c => data[c].mix_effect), backgroundColor: 'rgba(210,153,34,0.8)' },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { stacked: true, ticks: { color: '#8b949e' } },
+          y: { stacked: true, ticks: { color: '#8b949e' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  <p class="footnote">&Delta;P&amp;L = Nom<sub>old</sub> &times; &Delta;Rate / MM (rate) + &Delta;Nom &times; Rate<sub>old</sub> / MM (volume) + &Delta;Nom &times; &Delta;Rate / MM (mix). Requires consecutive-day snapshots.</p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No P&amp;L attribution data available.</p>
+    <p style="font-size: 0.85rem;">Requires previous day's P&amp;L snapshot for comparison.</p>
+  </div>
+  {% endif %}
+</div>

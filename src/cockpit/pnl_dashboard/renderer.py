@@ -29,6 +29,13 @@ def render_pnl_dashboard(
     date_run: datetime,
     date_rates: datetime,
     output_path: Path,
+    # ALM enhancement inputs (all optional)
+    deals: Optional[pd.DataFrame] = None,
+    budget: Optional[pd.DataFrame] = None,
+    hedge_pairs: Optional[pd.DataFrame] = None,
+    prev_pnl_all_s: Optional[pd.DataFrame] = None,
+    forecast_history: Optional[pd.DataFrame] = None,
+    scenarios_data: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Render the P&L dashboard HTML from engine output.
 
@@ -41,6 +48,12 @@ def render_pnl_dashboard(
         date_run: Stock/run reference date.
         date_rates: Market date (realized/forecast boundary).
         output_path: Where to write the HTML file.
+        deals: Parsed deals DataFrame (for repricing gap).
+        budget: Parsed budget DataFrame (for budget comparison).
+        hedge_pairs: Parsed hedge pairs DataFrame.
+        prev_pnl_all_s: Previous day's pnlAllS (for attribution).
+        forecast_history: Historical NII forecast DataFrame.
+        scenarios_data: BCBS 368 scenario results.
 
     Returns:
         The output path.
@@ -60,11 +73,18 @@ def render_pnl_dashboard(
         irs_stock=irs_stock,
         date_run=date_run,
         date_rates=date_rates,
+        deals=deals,
+        budget=budget,
+        hedge_pairs=hedge_pairs,
+        prev_pnl_all_s=prev_pnl_all_s,
+        forecast_history=forecast_history,
+        scenarios_data=scenarios_data,
     )
 
     context = {
         "date_run": date_run.strftime("%Y-%m-%d"),
         "date_rates": date_rates.strftime("%Y-%m-%d"),
+        # Original 7 tabs
         "summary": data["summary"],
         "coc": data["coc"],
         "pnl_series": data["pnl_series"],
@@ -76,6 +96,25 @@ def render_pnl_dashboard(
         "has_strategy": data["strategy"].get("has_data", False),
         "has_book2": data["book2"].get("has_data", False),
         "has_curves": data["curves"].get("has_data", False),
+        # ALM enhancement tabs
+        "currency_mismatch": data["currency_mismatch"],
+        "has_currency_mismatch": data["currency_mismatch"].get("has_data", False),
+        "repricing_gap": data["repricing_gap"],
+        "has_repricing_gap": data["repricing_gap"].get("has_data", False),
+        "counterparty_pnl": data["counterparty_pnl"],
+        "has_counterparty": data["counterparty_pnl"].get("has_data", False),
+        "pnl_alerts": data["pnl_alerts"],
+        "has_pnl_alerts": data["pnl_alerts"].get("has_data", False),
+        "budget": data["budget"],
+        "has_budget": data["budget"].get("has_data", False),
+        "hedge": data["hedge"],
+        "has_hedge": data["hedge"].get("has_data", False),
+        "nii_at_risk": data["nii_at_risk"],
+        "has_nii_at_risk": data["nii_at_risk"].get("has_data", False),
+        "forecast_tracking": data["forecast_tracking"],
+        "has_forecast_tracking": data["forecast_tracking"].get("has_data", False),
+        "attribution": data["attribution"],
+        "has_attribution": data["attribution"].get("has_data", False),
     }
 
     template = env.get_template("pnl_dashboard.html")

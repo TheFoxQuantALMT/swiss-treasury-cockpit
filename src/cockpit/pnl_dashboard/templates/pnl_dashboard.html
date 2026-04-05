@@ -122,22 +122,52 @@ canvas { max-width: 100%; }
 </div>
 
 <div class="tabs">
+  <!-- NII Core -->
   <button class="tab-btn active" onclick="switchTab('summary')">Summary</button>
   <button class="tab-btn" onclick="switchTab('coc')">CoC Decomposition</button>
   <button class="tab-btn" onclick="switchTab('pnl-series')">P&amp;L Series</button>
   <button class="tab-btn" onclick="switchTab('sensitivity')">Shock Sensitivity</button>
+  <!-- Risk -->
+  <button class="tab-btn" onclick="switchTab('nii-at-risk')">NII-at-Risk</button>
+  <button class="tab-btn" onclick="switchTab('repricing-gap')">Repricing Gap</button>
+  <button class="tab-btn" onclick="switchTab('currency-mismatch')">FX Mismatch</button>
+  <!-- Attribution -->
+  <button class="tab-btn" onclick="switchTab('budget')">Budget vs Actual</button>
+  <button class="tab-btn" onclick="switchTab('attribution')">P&amp;L Attribution</button>
+  <button class="tab-btn" onclick="switchTab('forecast-tracking')">Forecast Tracking</button>
+  <!-- Structure -->
   <button class="tab-btn" onclick="switchTab('strategy')">Strategy IAS</button>
+  <button class="tab-btn" onclick="switchTab('counterparty')">Counterparty</button>
+  <button class="tab-btn" onclick="switchTab('hedge')">Hedge Effectiveness</button>
+  <!-- Market -->
   <button class="tab-btn" onclick="switchTab('book2')">BOOK2 MTM</button>
   <button class="tab-btn" onclick="switchTab('curves')">Rate Curves</button>
+  <!-- Monitoring -->
+  <button class="tab-btn" onclick="switchTab('pnl-alerts')">Alerts</button>
 </div>
 
+<!-- NII Core -->
 {% include '_summary.html' %}
 {% include '_coc.html' %}
 {% include '_pnl_series.html' %}
 {% include '_sensitivity.html' %}
+<!-- Risk -->
+{% include '_nii_at_risk.html' %}
+{% include '_repricing_gap.html' %}
+{% include '_currency_mismatch.html' %}
+<!-- Attribution -->
+{% include '_budget.html' %}
+{% include '_attribution.html' %}
+{% include '_forecast_tracking.html' %}
+<!-- Structure -->
 {% include '_strategy.html' %}
+{% include '_counterparty.html' %}
+{% include '_hedge.html' %}
+<!-- Market -->
 {% include '_book2.html' %}
 {% include '_curves.html' %}
+<!-- Monitoring -->
+{% include '_pnl_alerts.html' %}
 
 <script>
 function switchTab(id) {

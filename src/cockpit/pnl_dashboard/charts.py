@@ -487,6 +487,176 @@ def _build_curves(
 
 
 # ---------------------------------------------------------------------------
+# Tab 8: Currency Mismatch (F9)
+# ---------------------------------------------------------------------------
+
+def _build_currency_mismatch(df: pd.DataFrame) -> dict:
+    """Asset/liability gap by currency by month."""
+    if df.empty:
+        return {"has_data": False, "months": [], "by_currency": {}}
+
+    nom_rows = df[(df["Indice"] == "Nominal") & (df["Shock"] == "0")].copy()
+    if nom_rows.empty or "Direction" not in nom_rows.columns:
+        return {"has_data": False, "months": [], "by_currency": {}}
+
+    # Map direction to asset/liability
+    nom_rows["_side"] = nom_rows["Direction"].map({"B": "asset", "D": "asset", "L": "liability", "S": "liability"})
+    nom_rows["_side"] = nom_rows["_side"].fillna("asset")
+
+    months = sorted(nom_rows["Month"].unique())
+    month_labels = _month_labels(months)
+    currencies = sorted(nom_rows["Deal currency"].unique()) if "Deal currency" in nom_rows.columns else []
+
+    by_currency = {}
+    for ccy in currencies:
+        ccy_data = nom_rows[nom_rows["Deal currency"] == ccy]
+        assets_by_month = ccy_data[ccy_data["_side"] == "asset"].groupby("Month")["Value"].sum()
+        liab_by_month = ccy_data[ccy_data["_side"] == "liability"].groupby("Month")["Value"].sum()
+        assets = [round(float(assets_by_month.get(m, 0)), 0) for m in months]
+        liabs = [round(float(liab_by_month.get(m, 0)), 0) for m in months]
+        gap = [a - l for a, l in zip(assets, liabs)]
+        by_currency[ccy] = {"assets": assets, "liabilities": liabs, "gap": gap}
+
+    # Net across all currencies
+    all_assets = [sum(by_currency[c]["assets"][i] for c in currencies) for i in range(len(months))]
+    all_liabs = [sum(by_currency[c]["liabilities"][i] for c in currencies) for i in range(len(months))]
+    by_currency["All"] = {
+        "assets": all_assets,
+        "liabilities": all_liabs,
+        "gap": [a - l for a, l in zip(all_assets, all_liabs)],
+    }
+
+    return {"has_data": True, "months": month_labels, "by_currency": by_currency}
+
+
+# ---------------------------------------------------------------------------
+# Tab 9: Repricing Gap (F3)
+# ---------------------------------------------------------------------------
+
+def _build_repricing_gap(
+    df: pd.DataFrame,
+    deals: Optional[pd.DataFrame] = None,
+    date_run: Optional[datetime] = None,
+) -> dict:
+    """Repricing gap profile by bucket and currency."""
+    if deals is None or deals.empty:
+        return {"has_data": False, "buckets": [], "by_currency": {}}
+
+    try:
+        from pnl_engine.repricing import compute_repricing_gap
+        gap_df = compute_repricing_gap(deals, pd.DataFrame(), date_run or datetime.now())
+    except Exception as e:
+        logger.warning(f"Repricing gap computation failed: {e}")
+        return {"has_data": False, "buckets": [], "by_currency": {}}
+
+    if gap_df.empty:
+        return {"has_data": False, "buckets": [], "by_currency": {}}
+
+    buckets = gap_df[gap_df["currency"] == gap_df["currency"].iloc[0]]["bucket"].tolist()
+
+    by_currency = {}
+    for ccy in sorted(gap_df["currency"].unique()):
+        ccy_df = gap_df[gap_df["currency"] == ccy].sort_values("bucket_order")
+        by_currency[ccy] = {
+            "assets": [round(v, 0) for v in ccy_df["assets"].tolist()],
+            "liabilities": [round(v, 0) for v in ccy_df["liabilities"].tolist()],
+            "gap": [round(v, 0) for v in ccy_df["gap"].tolist()],
+            "cumulative_gap": [round(v, 0) for v in ccy_df["cumulative_gap"].tolist()],
+        }
+
+    # Aggregate all currencies
+    all_assets = [0.0] * len(buckets)
+    all_liabs = [0.0] * len(buckets)
+    for ccy_data in by_currency.values():
+        for i in range(len(buckets)):
+            all_assets[i] += ccy_data["assets"][i]
+            all_liabs[i] += ccy_data["liabilities"][i]
+    all_gap = [a - l for a, l in zip(all_assets, all_liabs)]
+    cum = []
+    running = 0
+    for g in all_gap:
+        running += g
+        cum.append(round(running, 0))
+    by_currency["All"] = {
+        "assets": [round(v, 0) for v in all_assets],
+        "liabilities": [round(v, 0) for v in all_liabs],
+        "gap": [round(v, 0) for v in all_gap],
+        "cumulative_gap": cum,
+    }
+
+    return {"has_data": True, "buckets": buckets, "by_currency": by_currency}
+
+
+# ---------------------------------------------------------------------------
+# Tab 10: Counterparty P&L Concentration (F8)
+# ---------------------------------------------------------------------------
+
+def _build_counterparty_pnl(df: pd.DataFrame) -> dict:
+    """P&L concentration by counterparty."""
+    if df.empty or "Counterparty" not in df.columns:
+        return {"has_data": False, "top_10": [], "hhi": 0, "by_product": {}}
+
+    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
+    if pnl.empty:
+        return {"has_data": False, "top_10": [], "hhi": 0, "by_product": {}}
+
+    # Group by counterparty
+    cpty_pnl = pnl.groupby("Counterparty")["Value"].sum().reset_index()
+    cpty_pnl["abs_val"] = cpty_pnl["Value"].abs()
+    total = cpty_pnl["abs_val"].sum()
+
+    if total == 0:
+        return {"has_data": False, "top_10": [], "hhi": 0, "by_product": {}}
+
+    # HHI on PnL shares
+    cpty_pnl["share_pct"] = (cpty_pnl["abs_val"] / total) * 100
+    hhi = float((cpty_pnl["share_pct"] ** 2).sum())
+
+    # Top 10
+    top = cpty_pnl.nlargest(10, "abs_val")
+    top_10 = []
+    for _, row in top.iterrows():
+        top_10.append({
+            "counterparty": str(row["Counterparty"]),
+            "pnl": round(float(row["Value"]), 0),
+            "pct": round(float(row["share_pct"]), 1),
+        })
+
+    # Product breakdown
+    by_product = {}
+    if "Product2BuyBack" in pnl.columns:
+        prod_pnl = pnl.groupby("Product2BuyBack")["Value"].sum()
+        for prod, val in prod_pnl.items():
+            by_product[prod] = {
+                "value": round(float(val), 0),
+                "color": PRODUCT_COLORS.get(prod, "#8b949e"),
+            }
+
+    return {"has_data": True, "top_10": top_10, "hhi": round(hhi, 0), "by_product": by_product}
+
+
+# ---------------------------------------------------------------------------
+# Tab 11: P&L Alerts (F7)
+# ---------------------------------------------------------------------------
+
+def _build_pnl_alerts(df: pd.DataFrame) -> dict:
+    """Generate P&L alerts from data."""
+    if df.empty:
+        return {"has_data": False, "alerts": [], "summary": {"critical": 0, "high": 0, "medium": 0}}
+
+    from cockpit.engine.alerts.pnl_alerts import check_pnl_alerts
+    alerts = check_pnl_alerts(df)
+
+    summary = {"critical": 0, "high": 0, "medium": 0}
+    for a in alerts:
+        sev = a.get("severity", "medium")
+        if sev in summary:
+            summary[sev] += 1
+
+    return {"has_data": len(alerts) > 0, "alerts": alerts, "summary": summary}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -498,6 +668,15 @@ def build_pnl_dashboard_data(
     irs_stock: Optional[pd.DataFrame] = None,
     date_run: Optional[datetime] = None,
     date_rates: Optional[datetime] = None,
+    # Wave 1 optional inputs
+    deals: Optional[pd.DataFrame] = None,
+    # Wave 2 optional inputs
+    budget: Optional[pd.DataFrame] = None,
+    hedge_pairs: Optional[pd.DataFrame] = None,
+    # Wave 3 optional inputs
+    prev_pnl_all_s: Optional[pd.DataFrame] = None,
+    forecast_history: Optional[pd.DataFrame] = None,
+    scenarios_data: Optional[pd.DataFrame] = None,
 ) -> dict:
     """Build all chart data for the P&L dashboard.
 
@@ -509,14 +688,21 @@ def build_pnl_dashboard_data(
         irs_stock: IRS stock for BOOK2 detail.
         date_run: Stock/run reference date.
         date_rates: Market date (realized/forecast boundary).
+        deals: Parsed deals DataFrame (for repricing gap).
+        budget: Parsed budget DataFrame (for budget comparison).
+        hedge_pairs: Parsed hedge pairs DataFrame.
+        prev_pnl_all_s: Previous day's pnlAllS (for attribution).
+        forecast_history: Historical NII forecast DataFrame.
+        scenarios_data: BCBS 368 scenario results.
 
     Returns:
-        Dict with keys: summary, coc, pnl_series, sensitivity, strategy, book2, curves.
+        Dict with keys for all tabs.
     """
     df = _safe_stacked(pnl_all_s)
     dr = date_rates or date_run or datetime.now()
 
-    return {
+    result = {
+        # Original 7 tabs
         "summary": _build_summary(df, dr),
         "coc": _build_coc(df),
         "pnl_series": _build_pnl_series(df, dr),
@@ -524,4 +710,241 @@ def build_pnl_dashboard_data(
         "strategy": _build_strategy(df),
         "book2": _build_book2(df, irs_stock),
         "curves": _build_curves(ois_curves, wirp_curves),
+        # Wave 1
+        "currency_mismatch": _build_currency_mismatch(df),
+        "repricing_gap": _build_repricing_gap(df, deals, date_run),
+        "counterparty_pnl": _build_counterparty_pnl(df),
+        "pnl_alerts": _build_pnl_alerts(df),
+        # Wave 2 (placeholders — built when parsers are ready)
+        "budget": _build_budget(df, budget),
+        "hedge": _build_hedge_effectiveness(df, hedge_pairs),
+        # Wave 3 (placeholders)
+        "nii_at_risk": _build_nii_at_risk(df, scenarios_data),
+        "forecast_tracking": _build_forecast_tracking(forecast_history),
+        "attribution": _build_attribution(df, prev_pnl_all_s),
     }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 & 3 stubs (will be implemented in subsequent steps)
+# ---------------------------------------------------------------------------
+
+def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> dict:
+    """Budget vs actual comparison."""
+    if budget is None or budget.empty:
+        return {"has_data": False, "months": [], "by_currency": {}, "ytd": {}}
+
+    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")] if not df.empty else pd.DataFrame()
+    if pnl.empty:
+        return {"has_data": False, "months": [], "by_currency": {}, "ytd": {}}
+
+    # Actual by currency × month
+    actual_by_cm = pnl.groupby(["Deal currency", "Month"])["Value"].sum()
+
+    months = sorted(budget["month"].unique()) if "month" in budget.columns else []
+    currencies = sorted(budget["currency"].unique()) if "currency" in budget.columns else []
+    month_labels = _month_labels(months)
+
+    by_currency = {}
+    ytd_actual = 0.0
+    ytd_budget = 0.0
+
+    for ccy in currencies:
+        ccy_budget = budget[budget["currency"] == ccy]
+        actuals = []
+        budgets = []
+        variances = []
+        for m in months:
+            bgt = ccy_budget[ccy_budget["month"] == m]["budget_nii"].sum()
+            # Try to match month format
+            act = 0.0
+            for key_m in actual_by_cm.index:
+                if key_m[0] == ccy and str(key_m[1]) == str(m):
+                    act = actual_by_cm[key_m]
+                    break
+            actuals.append(round(float(act), 0))
+            budgets.append(round(float(bgt), 0))
+            variances.append(round(float(act - bgt), 0))
+            ytd_actual += act
+            ytd_budget += bgt
+
+        by_currency[ccy] = {
+            "actual": actuals,
+            "budget": budgets,
+            "variance": variances,
+        }
+
+    ytd = {
+        "actual": round(float(ytd_actual), 0),
+        "budget": round(float(ytd_budget), 0),
+        "variance": round(float(ytd_actual - ytd_budget), 0),
+        "variance_pct": round(float((ytd_actual - ytd_budget) / abs(ytd_budget) * 100), 1) if ytd_budget != 0 else 0,
+    }
+
+    return {"has_data": True, "months": month_labels, "by_currency": by_currency, "ytd": ytd}
+
+
+def _build_hedge_effectiveness(df: pd.DataFrame, hedge_pairs: Optional[pd.DataFrame] = None) -> dict:
+    """Hedge effectiveness per pair."""
+    if hedge_pairs is None or hedge_pairs.empty:
+        return {"has_data": False, "pairs": [], "summary": {"pass": 0, "fail": 0, "total": 0}}
+
+    if df.empty or "Dealid" not in df.columns:
+        return {"has_data": False, "pairs": [], "summary": {"pass": 0, "fail": 0, "total": 0}}
+
+    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
+    pairs = []
+    n_pass = 0
+    n_fail = 0
+
+    for _, pair_row in hedge_pairs.iterrows():
+        pair_id = pair_row.get("pair_id", "")
+        pair_name = pair_row.get("pair_name", f"Pair {pair_id}")
+        hedge_type = pair_row.get("hedge_type", "cash_flow")
+        ias_standard = pair_row.get("ias_standard", "IFRS9")
+
+        # Parse deal IDs
+        hedged_ids = _parse_deal_ids(pair_row.get("hedged_item_deal_ids", ""))
+        instrument_ids = _parse_deal_ids(pair_row.get("hedging_instrument_deal_ids", ""))
+
+        # Extract monthly PnL for each side
+        hedged_pnl = pnl[pnl["Dealid"].isin(hedged_ids)].groupby("Month")["Value"].sum()
+        instrument_pnl = pnl[pnl["Dealid"].isin(instrument_ids)].groupby("Month")["Value"].sum()
+
+        cum_hedged = hedged_pnl.sum()
+        cum_instrument = instrument_pnl.sum()
+
+        # Dollar-offset ratio
+        dollar_offset = (cum_instrument / cum_hedged) if abs(cum_hedged) > 0 else 0.0
+
+        # R-squared (simple)
+        r_squared = 0.0
+        common_months = sorted(set(hedged_pnl.index) & set(instrument_pnl.index))
+        if len(common_months) >= 3:
+            x = np.array([hedged_pnl.get(m, 0) for m in common_months])
+            y = np.array([instrument_pnl.get(m, 0) for m in common_months])
+            if np.std(x) > 0 and np.std(y) > 0:
+                corr = np.corrcoef(x, y)[0, 1]
+                r_squared = float(corr ** 2)
+
+        # Pass/fail
+        if ias_standard == "IAS39":
+            passed = -1.25 <= dollar_offset <= -0.80
+        else:  # IFRS9 — economic relationship
+            passed = r_squared >= 0.80
+
+        if passed:
+            n_pass += 1
+        else:
+            n_fail += 1
+
+        pairs.append({
+            "pair_id": str(pair_id),
+            "pair_name": str(pair_name),
+            "hedge_type": str(hedge_type),
+            "ias_standard": str(ias_standard),
+            "dollar_offset": round(float(dollar_offset), 4),
+            "r_squared": round(float(r_squared), 4),
+            "status": "pass" if passed else "fail",
+            "hedged_pnl": round(float(cum_hedged), 0),
+            "instrument_pnl": round(float(cum_instrument), 0),
+        })
+
+    return {
+        "has_data": len(pairs) > 0,
+        "pairs": pairs,
+        "summary": {"pass": n_pass, "fail": n_fail, "total": n_pass + n_fail},
+    }
+
+
+def _parse_deal_ids(s: str) -> list:
+    """Parse comma-separated deal IDs."""
+    if not s or pd.isna(s):
+        return []
+    return [x.strip() for x in str(s).split(",") if x.strip()]
+
+
+def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] = None) -> dict:
+    """NII-at-Risk from BCBS 368 scenarios."""
+    if scenarios_data is None or (isinstance(scenarios_data, pd.DataFrame) and scenarios_data.empty):
+        return {"has_data": False, "scenarios": [], "by_currency": {}, "worst_case": {}}
+
+    # scenarios_data expected: DataFrame with Shock column containing scenario names
+    # and standard pnlAllS structure
+    if isinstance(scenarios_data, dict):
+        return {"has_data": True, **scenarios_data}
+
+    return {"has_data": False, "scenarios": [], "by_currency": {}, "worst_case": {}}
+
+
+def _build_forecast_tracking(forecast_history: Optional[pd.DataFrame] = None) -> dict:
+    """Historical NII forecast evolution."""
+    if forecast_history is None or (isinstance(forecast_history, pd.DataFrame) and forecast_history.empty):
+        return {"has_data": False, "dates": [], "by_currency": {}, "total": []}
+
+    dates = sorted(forecast_history["date"].unique()) if "date" in forecast_history.columns else []
+    date_labels = [str(d) for d in dates]
+
+    by_currency = {}
+    if "currency" in forecast_history.columns:
+        for ccy in sorted(forecast_history["currency"].unique()):
+            ccy_data = forecast_history[forecast_history["currency"] == ccy].sort_values("date")
+            by_currency[ccy] = [round(float(v), 0) for v in ccy_data["nii_forecast"].tolist()]
+
+    totals = []
+    for d in dates:
+        d_data = forecast_history[forecast_history["date"] == d]
+        totals.append(round(float(d_data["nii_forecast"].sum()), 0))
+
+    return {"has_data": len(dates) > 0, "dates": date_labels, "by_currency": by_currency, "total": totals}
+
+
+def _build_attribution(df: pd.DataFrame, prev_pnl_all_s: Optional[pd.DataFrame] = None) -> dict:
+    """P&L attribution: rate vs volume vs mix."""
+    if prev_pnl_all_s is None or (isinstance(prev_pnl_all_s, pd.DataFrame) and prev_pnl_all_s.empty):
+        return {"has_data": False, "by_currency": {}}
+
+    prev = _safe_stacked(prev_pnl_all_s)
+    if df.empty or prev.empty:
+        return {"has_data": False, "by_currency": {}}
+
+    # Current and previous PnL, Nominal, OISfwd (shock=0)
+    def _extract(frame, indice):
+        rows = frame[(frame["Indice"] == indice) & (frame["Shock"] == "0")]
+        if "Deal currency" in rows.columns:
+            return rows.groupby("Deal currency")["Value"].sum()
+        return pd.Series(dtype=float)
+
+    curr_pnl = _extract(df, "PnL")
+    prev_pnl = _extract(prev, "PnL")
+    curr_nom = _extract(df, "Nominal")
+    prev_nom = _extract(prev, "Nominal")
+    curr_ois = _extract(df, "OISfwd")
+    prev_ois = _extract(prev, "OISfwd")
+
+    currencies = sorted(set(curr_pnl.index) | set(prev_pnl.index))
+    by_currency = {}
+
+    for ccy in currencies:
+        nom_old = prev_nom.get(ccy, 0)
+        rate_old = prev_ois.get(ccy, 0)
+        nom_new = curr_nom.get(ccy, 0)
+        rate_new = curr_ois.get(ccy, 0)
+
+        d_nom = nom_new - nom_old
+        d_rate = rate_new - rate_old
+
+        rate_effect = nom_old * d_rate
+        volume_effect = d_nom * rate_old
+        mix_effect = d_nom * d_rate
+        total_delta = float(curr_pnl.get(ccy, 0) - prev_pnl.get(ccy, 0))
+
+        by_currency[ccy] = {
+            "rate_effect": round(float(rate_effect), 0),
+            "volume_effect": round(float(volume_effect), 0),
+            "mix_effect": round(float(mix_effect), 0),
+            "total_delta": round(total_delta, 0),
+        }
+
+    return {"has_data": len(by_currency) > 0, "by_currency": by_currency}

@@ -1,0 +1,43 @@
+<div id="tab-nii-at-risk" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">NII-at-Risk &mdash; BCBS 368 Scenarios</h3>
+
+  {% if has_nii_at_risk %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Scenario Impact Heatmap</h3>
+    <div style="overflow-x: auto;">
+    <table id="tbl-nii-risk">
+      <thead><tr><th>Scenario</th>
+      {% for ccy in nii_at_risk.by_currency.keys() %}<th>{{ ccy }}</th>{% endfor %}
+      <th>Total</th></tr></thead>
+      <tbody>
+      {% for sc in nii_at_risk.scenarios %}
+      <tr>
+        <td>{{ sc }}</td>
+        {% for ccy in nii_at_risk.by_currency.keys() %}
+        <td>{{ "{:,.0f}".format(nii_at_risk.by_currency[ccy].get(sc, 0)) }}</td>
+        {% endfor %}
+        <td><strong>{{ "{:,.0f}".format(nii_at_risk.by_currency.values()|map(attribute=sc)|sum if nii_at_risk.by_currency else 0) }}</strong></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  {% if nii_at_risk.worst_case %}
+  <div class="kpi-card" style="margin-top: 16px; border-left: 3px solid var(--accent-red);">
+    <div class="label">Worst Case</div>
+    <div class="value negative">{{ nii_at_risk.worst_case.get('scenario', 'N/A') }}</div>
+    <div class="sub">NII Impact: {{ "{:,.0f}".format(nii_at_risk.worst_case.get('impact', 0)) }}</div>
+  </div>
+  {% endif %}
+
+  <p class="footnote">BCBS 368 standard interest rate shock scenarios: parallel &plusmn;200bp, short-rate &plusmn;300bp, steepener, flattener. NII impact computed over 12-month horizon.</p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No NII-at-Risk scenario data available.</p>
+    <p style="font-size: 0.85rem;">Provide scenarios.xlsx with BCBS 368 scenario definitions, or run engine with --scenarios flag.</p>
+  </div>
+  {% endif %}
+</div>

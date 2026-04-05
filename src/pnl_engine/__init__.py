@@ -37,6 +37,7 @@ from pnl_engine.matrices import (
     build_funding_matrix,
 )
 from pnl_engine.report import export_excel
+from pnl_engine.repricing import compute_repricing_gap
 
 __all__ = [
     # Main entry point
@@ -63,4 +64,6 @@ __all__ = [
     "build_funding_matrix",
     # Report
     "export_excel",
+    # Repricing
+    "compute_repricing_gap",
 ]

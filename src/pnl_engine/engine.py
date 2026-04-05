@@ -686,7 +686,8 @@ def run_all_shocks(
         # 4h. Enrich monthly with deal metadata for strategy pivot
         deal_meta_cols = [
             c for c in ["Product", "Currency", "Direction", "Strategy IAS",
-                         "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate"]
+                         "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate",
+                         "Counterparty", "Dealid", "Maturitydate", "is_floating"]
             if c in deals_use.columns
         ]
         for col in deal_meta_cols:
