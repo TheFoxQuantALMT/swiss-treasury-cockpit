@@ -42,6 +42,10 @@ tests/
     test_invariants.py              Tier 2: Property invariant tests
     test_reconciliation.py          Tier 3: Cross-system reconciliation
 
+  test_eve.py                       EVE computation, scenario ΔEVE, key rate durations
+  test_nmd.py                       NMD decay profiles, deposit beta, behavioral maturity
+  test_pnl_explain.py               P&L explain waterfall decomposition
+
   test_fetchers/
     test_imports.py                 Module import checks
 
@@ -53,8 +57,8 @@ tests/
     test_enrichment.py              Deal enrichment
 
   fixtures/
-    generate_mock_inputs.py         Generator for ideal-format mock Excel files
-    ideal_input/                    Generated mock files (deals, schedule, wirp, reference_table)
+    generate_mock_inputs.py         Generator for mock Excel files (10 files)
+    ideal_input/                    Generated mock files (see Fixtures section)
 ```
 
 ## Key Test Areas
@@ -165,6 +169,34 @@ Validates all 4 ideal-format input file parsers using generated mock Excel files
 - Deposit movement alerts
 - Daily percentage move alerts
 
+### EVE Computation (`test_eve.py`)
+
+| Test Class | Tests | Validates |
+|---|---|---|
+| `TestEveComputation` | 4 | Base EVE computes, currency metadata present, nonzero total, reasonable duration (0-60Y) |
+| `TestEveScenarios` | 4 | ΔEVE with BCBS scenarios, all 6 scenarios present, KRD computed, parallel_up reduces EVE |
+| `TestEveChartBuilder` | 2 | Empty EVE data, EVE with data builds chart payload |
+
+### NMD Behavioral Model (`test_nmd.py`)
+
+| Test Class | Tests | Validates |
+|---|---|---|
+| `TestNmdDecay` | 4 | Deposit nominal decayed, loan not decayed, empty profiles no-op, None profiles no-op |
+| `TestDepositBeta` | 3 | Beta reduces rate passthrough, beta=1.0 unchanged, floor rate respected |
+| `TestBehavioralMaturity` | 1 | Behavioral maturity returned from profiles |
+| `TestNmdParser` | 1 | Parser reads nmd_profiles.xlsx correctly |
+| `TestLimitsParser` | 1 | Parser reads limits.xlsx correctly |
+| `TestAlertThresholdsParser` | 1 | Parser reads alert_thresholds.xlsx correctly |
+
+### P&L Explain (`test_pnl_explain.py`)
+
+| Test Class | Tests | Validates |
+|---|---|---|
+| `TestPnlExplainBasic` | 2 | Identical portfolios → ΔNII=0, waterfall first+effects=last |
+| `TestNewAndMaturedDeals` | 3 | New deal detected, matured deal detected, matured by date |
+| `TestEmptyInputs` | 3 | None prev → no data, None curr → no data, empty DataFrames |
+| `TestMultiCurrency` | 1 | Rate effect visible in per-currency breakdown |
+
 ### Integration (`test_integration.py`)
 
 End-to-end smoke tests that verify the full pipeline renders correctly with synthetic data.
@@ -185,6 +217,12 @@ uv run python -m tests.fixtures.generate_mock_inputs
 | `schedule.xlsx` | 10 rows, 60 monthly balance columns (2026/04-2031/03), zeroed after maturity |
 | `wirp.xlsx` | 19 rate expectations across 4 indices (CHFSON, EUREST, USSOFR, GBPOIS) |
 | `reference_table.xlsx` | 8 counterparties with ratings, HQLA levels, countries |
+| `budget.xlsx` | Monthly NII budget per currency (CHF, EUR, USD, GBP) |
+| `scenarios.xlsx` | BCBS 368 rate shock definitions (6 scenarios × 10 tenor points × 4 currencies) |
+| `hedge_pairs.xlsx` | 2 hedge relationship designations (cash flow + fair value) |
+| `nmd_profiles.xlsx` | 7 NMD behavioral profiles (3 tiers × currencies: core, volatile, term) |
+| `limits.xlsx` | 4 board-approved limit metrics (NII sensitivity, NII-at-Risk, EVE change) |
+| `alert_thresholds.xlsx` | 5 per-currency alert threshold overrides (CHF, EUR, USD, GBP, ALL) |
 
 ### Sample Data (`test_engine/conftest.py`)
 
@@ -207,7 +245,7 @@ Tests that require external dependencies skip gracefully:
 
 After code changes, verify:
 
-1. `uv run pytest` -- all tests pass (175+ tests)
+1. `uv run pytest` -- all tests pass (257+ tests)
 2. **Tier 1 (known-answer):** hand-calculated P&L matches engine output to 0.01 tolerance
 3. **Tier 2 (invariants):** `Total = Realized + Forecast` holds for all deals and months
 4. `CoC_Simple == GrossCarry - FundingCost` exactly (per month)
@@ -220,3 +258,8 @@ After code changes, verify:
 11. Direction S (Sold bond): excluded from IAM/LD strategy legs, included in BND legs
 12. Ideal-format parsers auto-detected by legacy parser functions
 13. BOOK1/BOOK2 split from unified deals file produces correct shapes
+14. EVE base > 0, ΔEVE negative for parallel_up scenario
+15. NMD decay reduces nominal over time, deposit beta reduces rate passthrough
+16. P&L explain waterfall reconciles: `Prev + effects = Current`
+17. Limit utilization bars render green/yellow/red based on % of limit
+18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 17 tabs render

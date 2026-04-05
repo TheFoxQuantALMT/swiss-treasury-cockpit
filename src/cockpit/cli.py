@@ -86,6 +86,16 @@ def cmd_compute(
     )
     pnl.run()
 
+    # Save NII forecast snapshot for forecast tracking
+    if pnl.pnlAllS is not None and not dry_run:
+        try:
+            from cockpit.engine.pnl.forecast_tracking import save_nii_forecast
+            snapshot_path = save_nii_forecast(pnl.pnlAllS, date, data_dir)
+            if snapshot_path:
+                print(f"[compute] Saved NII forecast snapshot to {snapshot_path}")
+        except Exception as e:
+            print(f"[compute] Warning: could not save NII forecast snapshot: {e}")
+
     # Serialize P&L results to JSON
     pnl_result = {}
     if pnl.pnlAllS is not None:
@@ -307,8 +317,14 @@ def cmd_render_pnl(
     # Load optional ALM inputs
     budget = None
     hedge_pairs = None
+    scenarios_data = None
+    alert_thresholds = None
     prev_pnl_all_s = None
     forecast_history = None
+    eve_results = None
+    eve_scenarios = None
+    eve_krd = None
+    limits = None
 
     if input_dir:
         input_path = Path(input_dir)
@@ -340,7 +356,67 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not load hedge pairs: {e}")
 
-    # Load previous day's pnlAllS for attribution
+        # Auto-discover scenarios file
+        sc_candidates = list(input_path.glob("*scenario*"))
+        if sc_candidates:
+            try:
+                from cockpit.data.parsers.scenarios import parse_scenarios
+                scenarios_def = parse_scenarios(sc_candidates[0])
+                print(f"[render-pnl] Running BCBS 368 scenarios from {sc_candidates[0]}...")
+                scenarios_data = pnl._engine.run_scenarios(scenarios_def) if pnl._engine else None
+                if scenarios_data is not None and not scenarios_data.empty:
+                    print(f"[render-pnl] Computed {scenarios_data['Shock'].nunique()} scenarios")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not run scenarios: {e}")
+
+        # Auto-discover NMD profiles
+        nmd_candidates = list(input_path.glob("*nmd*"))
+        if nmd_candidates:
+            try:
+                from cockpit.data.parsers.nmd_profiles import parse_nmd_profiles
+                nmd_profiles = parse_nmd_profiles(nmd_candidates[0])
+                # Inject into engine for next computation
+                if pnl._engine:
+                    pnl._engine._nmd_profiles = nmd_profiles
+                    print(f"[render-pnl] Loaded NMD profiles from {nmd_candidates[0]} ({len(nmd_profiles)} profiles)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load NMD profiles: {e}")
+
+        # Run EVE computation (uses scenarios if available)
+        if pnl._engine:
+            try:
+                sc_for_eve = locals().get('scenarios_def')
+                eve_results = pnl._engine.run_eve(scenarios=sc_for_eve)
+                eve_scenarios = pnl._engine.eve_scenarios
+                eve_krd = pnl._engine.eve_krd
+                print(f"[render-pnl] EVE computed (total={eve_results['eve'].sum():,.0f})")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not compute EVE: {e}")
+
+        # Auto-discover limits
+        limits_candidates = list(input_path.glob("*limits*")) + list(input_path.glob("*limit*"))
+        # Exclude alert_thresholds files
+        limits_candidates = [p for p in limits_candidates if "threshold" not in p.stem.lower() and "alert" not in p.stem.lower()]
+        if limits_candidates:
+            try:
+                from cockpit.data.parsers.limits import parse_limits
+                limits = parse_limits(limits_candidates[0])
+                print(f"[render-pnl] Loaded limits from {limits_candidates[0]} ({len(limits)} metrics)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load limits: {e}")
+
+        # Auto-discover alert thresholds
+        threshold_candidates = list(input_path.glob("*threshold*")) + list(input_path.glob("*alert_config*"))
+        if threshold_candidates:
+            try:
+                from cockpit.data.parsers.alert_thresholds import parse_alert_thresholds
+                alert_thresholds = parse_alert_thresholds(threshold_candidates[0])
+                print(f"[render-pnl] Loaded alert thresholds from {threshold_candidates[0]}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load alert thresholds: {e}")
+
+    # Load previous day's P&L for attribution / explain
+    pnl_explain = None
     if prev_date:
         try:
             prev_dt = datetime.strptime(prev_date, "%Y-%m-%d")
@@ -351,6 +427,26 @@ def cmd_render_pnl(
             )
             prev_pnl_all_s = prev_pnl_obj.pnlAllS
             print(f"[render-pnl] Loaded previous P&L from {prev_date}")
+
+            # Compute full P&L explain if deal-level data available
+            prev_pnl_by_deal = getattr(prev_pnl_obj, 'pnl_by_deal', None)
+            curr_pnl_by_deal = getattr(pnl, 'pnl_by_deal', None)
+            if curr_pnl_by_deal is not None and prev_pnl_by_deal is not None:
+                from cockpit.engine.pnl.pnl_explain import compute_pnl_explain
+                pnl_explain = compute_pnl_explain(
+                    curr_pnl_by_deal=curr_pnl_by_deal,
+                    prev_pnl_by_deal=prev_pnl_by_deal,
+                    curr_pnl_all_s=pnl.pnlAllS,
+                    prev_pnl_all_s=prev_pnl_all_s,
+                    deals=pnl.pnlData,
+                    date_run=date_dt,
+                    prev_date_run=prev_dt,
+                )
+                if pnl_explain and pnl_explain.get("has_data"):
+                    s = pnl_explain["summary"]
+                    print(f"[render-pnl] P&L explain: dNII={s['delta']:+,.0f} "
+                          f"(time={s['time_effect']:+,.0f}, new={s['new_deal_effect']:+,.0f}, "
+                          f"matured={s['matured_deal_effect']:+,.0f}, rate={s['rate_effect']:+,.0f})")
         except Exception as e:
             print(f"[render-pnl] Warning: could not load previous P&L: {e}")
 
@@ -378,10 +474,18 @@ def cmd_render_pnl(
         date_rates=date_dt,
         output_path=output_path,
         deals=pnl.pnlData,
+        pnl_by_deal=getattr(pnl, 'pnl_by_deal', None),
         budget=budget,
         hedge_pairs=hedge_pairs,
         prev_pnl_all_s=prev_pnl_all_s,
         forecast_history=forecast_history,
+        scenarios_data=scenarios_data,
+        alert_thresholds=alert_thresholds,
+        eve_results=eve_results,
+        eve_scenarios=eve_scenarios,
+        eve_krd=eve_krd,
+        limits=limits,
+        pnl_explain=pnl_explain,
     )
     print(f"[render-pnl] Output: {output_path}")
 

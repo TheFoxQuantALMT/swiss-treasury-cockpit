@@ -11,6 +11,9 @@ This document maps each regulatory standard to where and how it is applied in th
 | IFRS 9.5.4.1 | Interest Revenue | Effective interest rate method |
 | IFRS 9.B5.4.5 | EIR Approximation | Simple carry as management approximation |
 | BCBS 368 section 3.2 | IRRBB NII | Interest rate risk in the banking book |
+| BCBS 368 section 3.3 | IRRBB EVE | Economic Value of Equity sensitivity |
+| BCBS 368 Annex 2 | IRRBB Scenarios | 6 standardized rate shock scenarios |
+| EBA/GL/2018/02 | NMD Guidelines | Non-Maturing Deposit behavioral modeling |
 | SNB Working Group | SARON Convention | 2 business day lookback |
 | BoE Working Group | SONIA Convention | 5 business day lookback |
 
@@ -112,6 +115,97 @@ NII_sensitivity = CoC(shock=50) - CoC(shock=0)
 ```
 
 This is a subset of the full IRRBB NII calculation (which also includes repricing risk, basis risk, and optionality).
+
+---
+
+## BCBS 368 section 3.3: IRRBB EVE (Economic Value of Equity)
+
+**What it specifies:** Banks must measure the change in economic value of equity under standardized interest rate shocks.
+
+**Where applied:**
+- `src/pnl_engine/eve.py` -- `compute_eve()`, `compute_eve_scenarios()`, `compute_key_rate_durations()`
+- `src/pnl_engine/orchestrator.py` -- `run_eve()` method on `PnlEngine`
+- `src/cockpit/pnl_dashboard/templates/_eve.html` -- EVE dashboard tab
+
+**How applied:**
+
+EVE = present value of future cash flows (interest + principal) discounted at OIS forward rates:
+
+```
+EVE = Σ_i Σ_t CF(i,t) × exp(-OIS(t) × t_years)
+```
+
+Where `CF(i,t)` includes daily interest accrual and principal return at maturity.
+
+ΔEVE measures the change under each BCBS scenario:
+
+```
+ΔEVE = EVE(shocked) - EVE(base)
+```
+
+Key Rate Duration (KRD) measures sensitivity at each BCBS tenor point (O/N, 3M, ..., 30Y) via 1bp Gaussian bump:
+
+```
+KRD(tenor) = -[EVE(+1bp at tenor) - EVE(base)] / EVE(base)
+```
+
+---
+
+## BCBS 368 Annex 2: Standardized Rate Shock Scenarios
+
+**What it specifies:** Six prescribed interest rate shock scenarios for IRRBB assessment.
+
+**Where applied:**
+- `src/pnl_engine/scenarios.py` -- `interpolate_scenario_shifts()`, `get_default_scenarios()`
+- `src/cockpit/data/parsers/__init__.py` -- `parse_scenarios()` for custom scenario definitions
+
+**Scenarios:**
+
+| Scenario | Short End | Long End | Description |
+|----------|-----------|----------|-------------|
+| `parallel_up` | +200bp | +200bp | Uniform upward shift |
+| `parallel_down` | -200bp | -200bp | Uniform downward shift |
+| `short_up` | +300bp @ O/N | 0bp @ 20Y | Short-end steepening |
+| `short_down` | -300bp @ O/N | 0bp @ 20Y | Short-end flattening |
+| `steepener` | -100bp | +100bp | Curve steepening |
+| `flattener` | +100bp | -100bp | Curve flattening |
+
+Shifts are interpolated from BCBS standard tenor points (O/N, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y) to the daily date grid using `numpy.interp`. Applied per currency.
+
+---
+
+## EBA/GL/2018/02: Non-Maturing Deposit Guidelines
+
+**What it specifies:** Guidelines for modeling Non-Maturing Deposits (NMDs) in IRRBB. Deposits with no contractual maturity (sight deposits) require behavioral assumptions for repricing risk.
+
+**Where applied:**
+- `src/pnl_engine/nmd.py` -- `apply_nmd_decay()`, `apply_deposit_beta()`, `get_behavioral_maturity()`
+- `src/pnl_engine/orchestrator.py` -- NMD integration in `_build_static_matrices()` and `update_pnl()`
+- `src/cockpit/data/parsers/nmd_profiles.py` -- `parse_nmd_profiles()`
+
+**How applied:**
+
+NMD behavioral model with three components:
+
+1. **Decay profile** — exponential nominal runoff:
+   ```
+   nominal(t) = nominal(0) × exp(-decay_rate × t)
+   ```
+
+2. **Deposit beta** — partial rate passthrough to client rates:
+   ```
+   effective_rate = floor_rate + beta × max(0, OIS - floor_rate)
+   ```
+   Where `beta < 1` means the bank retains a margin when rates rise.
+
+3. **Behavioral maturity** — replaces contractual maturity in repricing gap analysis.
+
+Standard tiers follow SNB/EBA convention:
+- **Core**: stable balances, long behavioral maturity (5-7Y), low beta (0.3-0.5)
+- **Volatile**: rate-sensitive, short maturity (1-2Y), high beta (0.7-0.9)
+- **Term**: contractual maturity, beta = 1.0
+
+Profiles are loaded from `nmd_profiles.xlsx` (optional). When absent, all deposits use contractual maturity.
 
 ---
 
@@ -227,3 +321,29 @@ Cross-validation against independent sources (auto-skipped when WASP unavailable
 | WASP `stockSwapMTM` | BOOK2 MTM output structure |
 | WIRP mock curves | Step-function shape, shock uniformity, rate plausibility |
 | Manual Python loop | Independent P&L calculation matches engine |
+
+### EVE Tests (`test_eve.py`)
+
+| Regulation | What is tested |
+|---|---|
+| BCBS 368 §3.3 | EVE base computes with positive total, reasonable duration (0-60Y) |
+| BCBS 368 Annex 2 | ΔEVE computed for all 6 scenarios, parallel_up reduces EVE |
+| BCBS 368 §3.3 | Key rate durations at standard BCBS tenor points |
+
+### NMD Behavioral Model Tests (`test_nmd.py`)
+
+| Regulation | What is tested |
+|---|---|
+| EBA/GL/2018/02 | Exponential decay reduces deposit nominal over time |
+| EBA/GL/2018/02 | Deposit beta < 1 reduces rate passthrough |
+| EBA/GL/2018/02 | Floor rate enforced as minimum client rate |
+| EBA/GL/2018/02 | Behavioral maturity returned for repricing gap analysis |
+
+### P&L Explain Tests (`test_pnl_explain.py`)
+
+| What is tested | Validates |
+|---|---|
+| Identical portfolios → ΔNII = 0 | Waterfall baseline correctness |
+| Waterfall first + effects = last | Decomposition reconciliation |
+| New/matured deal detection | Deal lifecycle classification |
+| Multi-currency rate effect | Per-currency rate sensitivity attribution |

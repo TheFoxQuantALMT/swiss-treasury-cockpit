@@ -1,0 +1,189 @@
+<!-- Tab 17: EVE (Economic Value of Equity) -->
+<div id="tab-eve" class="tab-content">
+{% if has_eve %}
+<h2>Economic Value of Equity (EVE) &mdash; BCBS 368</h2>
+
+<!-- KPI Cards -->
+<div class="grid-4" style="margin-bottom: 16px;">
+  <div class="kpi-card">
+    <div class="kpi-label">Total EVE</div>
+    <div class="kpi-value">{{ "{:,.0f}".format(eve.total_eve) }}</div>
+  </div>
+  {% if eve.scenarios and eve.scenarios.worst_scenario %}
+  <div class="kpi-card">
+    <div class="kpi-label">Worst Scenario</div>
+    <div class="kpi-value" style="font-size: 0.9rem;">{{ eve.scenarios.worst_scenario }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Worst &Delta;EVE</div>
+    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
+      {{ "{:,.0f}".format(eve.scenarios.worst_delta) }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Worst &Delta;EVE %</div>
+    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
+      {% if eve.total_eve != 0 %}
+        {{ "{:.1f}%".format(eve.scenarios.worst_delta / eve.total_eve * 100) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- EVE by Currency -->
+<div class="grid-2">
+  <div class="card">
+    <h3>EVE by Currency</h3>
+    <table>
+      <thead>
+        <tr><th>Currency</th><th>EVE</th><th>Mod. Duration</th><th>Deals</th></tr>
+      </thead>
+      <tbody>
+        {% for ccy, data in eve.by_currency.items() %}
+        <tr>
+          <td><span style="color: {{ data.color }};">&block;</span> {{ ccy }}</td>
+          <td class="{{ 'positive' if data.eve > 0 else 'negative' }}">{{ "{:,.0f}".format(data.eve) }}</td>
+          <td>{{ "%.2f"|format(data.duration) }}Y</td>
+          <td>{{ data.deal_count }}</td>
+        </tr>
+        {% endfor %}
+        <tr style="font-weight: bold; border-top: 2px solid var(--border);">
+          <td>Total</td>
+          <td>{{ "{:,.0f}".format(eve.total_eve) }}</td>
+          <td>&mdash;</td>
+          <td>&mdash;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Duration Profile Chart -->
+  <div class="card">
+    <h3>Modified Duration Profile</h3>
+    <canvas id="eveDurationChart" height="250"></canvas>
+  </div>
+</div>
+
+<!-- Scenario ΔEVE Heatmap -->
+{% if eve.scenarios and eve.scenarios.heatmap %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Scenario &Delta;EVE Heatmap (BCBS 368)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        {% for ccy in eve.scenarios.currencies %}
+        <th>{{ ccy }}</th>
+        {% endfor %}
+        <th style="font-weight: bold;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in eve.scenarios.heatmap %}
+      <tr>
+        <td>{{ row.scenario }}</td>
+        {% for ccy in eve.scenarios.currencies %}
+        {% set val = row.get(ccy, 0) %}
+        <td class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">
+          {{ "{:,.0f}".format(val) }}
+        </td>
+        {% endfor %}
+        <td class="{{ 'positive' if row.total > 0 else 'negative' if row.total < 0 else '' }}" style="font-weight: bold;">
+          {{ "{:,.0f}".format(row.total) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Key Rate Duration Chart -->
+{% if eve.krd and eve.krd.tenors %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Key Rate Durations (KRD)</h3>
+  <canvas id="eveKrdChart" height="300"></canvas>
+</div>
+{% endif %}
+
+<script>
+(function() {
+  // Duration bar chart
+  {% if eve.duration and eve.duration.labels %}
+  new Chart(document.getElementById('eveDurationChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ eve.duration.labels | tojson_safe }},
+      datasets: [{
+        label: 'Modified Duration (years)',
+        data: {{ eve.duration.values | tojson_safe }},
+        backgroundColor: {{ eve.duration.colors | tojson_safe }},
+        borderWidth: 0,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: {
+          title: { display: true, text: 'Duration (years)', color: '#8b949e' },
+          grid: { color: '#30363d' },
+          ticks: { color: '#8b949e' }
+        },
+        x: { grid: { display: false }, ticks: { color: '#e6edf3' } }
+      }
+    }
+  });
+  {% endif %}
+
+  // KRD grouped bar chart
+  {% if eve.krd and eve.krd.tenors %}
+  var krdDatasets = [];
+  {% for ds in eve.krd.datasets %}
+  krdDatasets.push({
+    label: {{ ds.label | tojson_safe }},
+    data: {{ ds.data | tojson_safe }},
+    backgroundColor: {{ ds.color | tojson_safe }},
+    borderWidth: 0,
+    borderRadius: 3,
+  });
+  {% endfor %}
+  new Chart(document.getElementById('eveKrdChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ eve.krd.tenors | tojson_safe }},
+      datasets: krdDatasets,
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e6edf3' } },
+      },
+      scales: {
+        y: {
+          title: { display: true, text: 'Key Rate Duration', color: '#8b949e' },
+          grid: { color: '#30363d' },
+          ticks: { color: '#8b949e' }
+        },
+        x: {
+          title: { display: true, text: 'Tenor', color: '#8b949e' },
+          grid: { display: false },
+          ticks: { color: '#e6edf3' }
+        }
+      }
+    }
+  });
+  {% endif %}
+})();
+</script>
+
+{% else %}
+<div class="card" style="text-align: center; padding: 48px;">
+  <p style="color: var(--text-secondary);">No EVE data available. Run the engine with <code>scenarios</code> input to compute EVE.</p>
+</div>
+{% endif %}
+</div>

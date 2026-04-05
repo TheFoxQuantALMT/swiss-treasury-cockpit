@@ -38,6 +38,14 @@ from pnl_engine.matrices import (
 )
 from pnl_engine.report import export_excel
 from pnl_engine.repricing import compute_repricing_gap
+from pnl_engine.eve import compute_eve, compute_eve_scenarios, compute_key_rate_durations
+from pnl_engine.nmd import apply_nmd_decay, apply_deposit_beta, get_behavioral_maturity
+from pnl_engine.scenarios import (
+    interpolate_scenario_shifts,
+    apply_scenario_to_curves,
+    BCBS_SCENARIOS,
+    TENOR_YEARS,
+)
 
 __all__ = [
     # Main entry point
@@ -66,4 +74,17 @@ __all__ = [
     "export_excel",
     # Repricing
     "compute_repricing_gap",
+    # EVE
+    "compute_eve",
+    "compute_eve_scenarios",
+    "compute_key_rate_durations",
+    # NMD
+    "apply_nmd_decay",
+    "apply_deposit_beta",
+    "get_behavioral_maturity",
+    # Scenarios
+    "interpolate_scenario_shifts",
+    "apply_scenario_to_curves",
+    "BCBS_SCENARIOS",
+    "TENOR_YEARS",
 ]

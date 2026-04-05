@@ -237,11 +237,131 @@ REFERENCE_DATA = [
 
 
 # ---------------------------------------------------------------------------
+# budget.xlsx — monthly NII budget per currency
+# ---------------------------------------------------------------------------
+
+def _generate_budget_data():
+    """12 months × 4 currencies with slight growth trend."""
+    rows = []
+    base = {"CHF": 125000, "EUR": 85000, "USD": 60000, "GBP": 15000}
+    months = [f"2026-{m:02d}" for m in range(4, 16)]  # 2026-04 to 2027-03
+    months = [m if int(m.split("-")[1]) <= 12 else f"{int(m.split('-')[0])+1}-{int(m.split('-')[1])-12:02d}" for m in months]
+    for i, m in enumerate(months):
+        for ccy, base_nii in base.items():
+            rows.append({
+                "currency": ccy,
+                "month": m,
+                "budget_nii": round(base_nii * (1 + 0.005 * i), 2),
+                "perimeter": "CC",
+            })
+    return rows
+
+
+BUDGET_DATA = _generate_budget_data()
+
+
+# ---------------------------------------------------------------------------
+# scenarios.xlsx — BCBS 368 rate shock definitions
+# ---------------------------------------------------------------------------
+
+def _generate_scenarios_data():
+    """Use default BCBS 368 scenarios."""
+    from cockpit.data.parsers.scenarios import get_default_scenarios
+    return get_default_scenarios().to_dict("records")
+
+
+# ---------------------------------------------------------------------------
+# hedge_pairs.xlsx — hedge relationship definitions
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# alert_thresholds.xlsx — per-currency alert threshold overrides
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# nmd_profiles.xlsx — Non-Maturing Deposit behavioral profiles
+# ---------------------------------------------------------------------------
+
+NMD_PROFILES_DATA = [
+    # Core deposits: stable, long behavioral maturity, low beta
+    {"product": "IAM/LD", "currency": "CHF", "direction": "D", "tier": "core",
+     "behavioral_maturity_years": 5.0, "decay_rate": 0.15, "deposit_beta": 0.40, "floor_rate": 0.0},
+    {"product": "IAM/LD", "currency": "EUR", "direction": "D", "tier": "core",
+     "behavioral_maturity_years": 4.0, "decay_rate": 0.20, "deposit_beta": 0.45, "floor_rate": 0.0},
+    {"product": "IAM/LD", "currency": "USD", "direction": "D", "tier": "core",
+     "behavioral_maturity_years": 3.0, "decay_rate": 0.25, "deposit_beta": 0.50, "floor_rate": 0.0},
+    {"product": "IAM/LD", "currency": "GBP", "direction": "D", "tier": "core",
+     "behavioral_maturity_years": 3.0, "decay_rate": 0.25, "deposit_beta": 0.55, "floor_rate": 0.0},
+    # Volatile deposits: rate-sensitive, short maturity, high beta
+    {"product": "IAM/LD", "currency": "CHF", "direction": "D", "tier": "volatile",
+     "behavioral_maturity_years": 1.5, "decay_rate": 0.50, "deposit_beta": 0.80, "floor_rate": 0.0},
+    {"product": "IAM/LD", "currency": "EUR", "direction": "D", "tier": "volatile",
+     "behavioral_maturity_years": 1.0, "decay_rate": 0.60, "deposit_beta": 0.85, "floor_rate": 0.0},
+    # Loans: no NMD treatment (contractual maturity, beta=1.0)
+    {"product": "IAM/LD", "currency": "CHF", "direction": "L", "tier": "term",
+     "behavioral_maturity_years": 0.0, "decay_rate": 0.0, "deposit_beta": 1.0, "floor_rate": 0.0},
+]
+
+
+# ---------------------------------------------------------------------------
+# limits.xlsx — Board-approved NII/EVE limits
+# ---------------------------------------------------------------------------
+
+LIMITS_DATA = [
+    {"metric": "nii_sensitivity_50bp", "currency": "ALL", "limit_value": 500000, "warning_pct": 80.0, "limit_type": "absolute"},
+    {"metric": "nii_at_risk_worst", "currency": "ALL", "limit_value": 1000000, "warning_pct": 75.0, "limit_type": "absolute"},
+    {"metric": "eve_change_200bp", "currency": "ALL", "limit_value": 2000000, "warning_pct": 80.0, "limit_type": "absolute"},
+    {"metric": "eve_change_worst", "currency": "ALL", "limit_value": 3000000, "warning_pct": 80.0, "limit_type": "absolute"},
+    {"metric": "nii_sensitivity_50bp", "currency": "CHF", "limit_value": 300000, "warning_pct": 80.0, "limit_type": "absolute"},
+]
+
+
+ALERT_THRESHOLDS_DATA = [
+    {"currency": "ALL", "annual_nii_floor": -100000, "mom_delta_pct": 40.0, "ccy_concentration_pct": 75.0, "shock_sensitivity_limit": 500000},
+    {"currency": "CHF", "annual_nii_floor": -50000, "mom_delta_pct": 50.0, "ccy_concentration_pct": 80.0, "shock_sensitivity_limit": 300000},
+    {"currency": "EUR", "annual_nii_floor": -30000, "mom_delta_pct": 45.0, "ccy_concentration_pct": 70.0, "shock_sensitivity_limit": 200000},
+    {"currency": "USD", "annual_nii_floor": -20000, "mom_delta_pct": 50.0, "ccy_concentration_pct": 60.0, "shock_sensitivity_limit": 150000},
+    {"currency": "GBP", "annual_nii_floor": -10000, "mom_delta_pct": 60.0, "ccy_concentration_pct": 50.0, "shock_sensitivity_limit": 100000},
+]
+
+
+HEDGE_PAIRS_DATA = [
+    {
+        "pair_id": 1,
+        "pair_name": "CHF D60M Deposit Hedge",
+        "hedged_item_deal_ids": "100001",
+        "hedging_instrument_deal_ids": "400001",
+        "hedge_type": "cash_flow",
+        "designation_date": "2025-06-15",
+        "ias_standard": "IFRS9",
+    },
+    {
+        "pair_id": 2,
+        "pair_name": "CHF Loan Portfolio Hedge",
+        "hedged_item_deal_ids": "100003",
+        "hedging_instrument_deal_ids": "400002",
+        "hedge_type": "fair_value",
+        "designation_date": "2025-01-20",
+        "ias_standard": "IAS39",
+    },
+    {
+        "pair_id": 3,
+        "pair_name": "EUR Bond Hedge",
+        "hedged_item_deal_ids": "200002",
+        "hedging_instrument_deal_ids": "400003",
+        "hedge_type": "cash_flow",
+        "designation_date": "2025-09-01",
+        "ias_standard": "IFRS9",
+    },
+]
+
+
+# ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
 
 def generate(output_dir: Path) -> None:
-    """Write all 4 ideal-format Excel files to output_dir."""
+    """Write all 10 ideal-format Excel files to output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # deals.xlsx
@@ -269,6 +389,43 @@ def generate(output_dir: Path) -> None:
     with pd.ExcelWriter(output_dir / "reference_table.xlsx", engine="openpyxl") as w:
         ref_df.to_excel(w, sheet_name="Reference", index=False)
     print(f"  reference_table  ({len(ref_df)} counterparties)")
+
+    # budget.xlsx
+    budget_df = pd.DataFrame(BUDGET_DATA)
+    with pd.ExcelWriter(output_dir / "budget.xlsx", engine="openpyxl") as w:
+        budget_df.to_excel(w, sheet_name="Budget", index=False)
+    print(f"  budget.xlsx      ({len(budget_df)} rows: {budget_df['currency'].nunique()} currencies)")
+
+    # scenarios.xlsx
+    scenarios_records = _generate_scenarios_data()
+    scenarios_df = pd.DataFrame(scenarios_records)
+    with pd.ExcelWriter(output_dir / "scenarios.xlsx", engine="openpyxl") as w:
+        scenarios_df.to_excel(w, sheet_name="Scenarios", index=False)
+    print(f"  scenarios.xlsx   ({len(scenarios_df)} rows: {scenarios_df['scenario'].nunique()} scenarios)")
+
+    # hedge_pairs.xlsx
+    hp_df = pd.DataFrame(HEDGE_PAIRS_DATA)
+    with pd.ExcelWriter(output_dir / "hedge_pairs.xlsx", engine="openpyxl") as w:
+        hp_df.to_excel(w, sheet_name="HedgePairs", index=False)
+    print(f"  hedge_pairs.xlsx ({len(hp_df)} pairs)")
+
+    # limits.xlsx
+    limits_df = pd.DataFrame(LIMITS_DATA)
+    with pd.ExcelWriter(output_dir / "limits.xlsx", engine="openpyxl") as w:
+        limits_df.to_excel(w, sheet_name="Limits", index=False)
+    print(f"  limits.xlsx      ({len(limits_df)} rows: {limits_df['metric'].nunique()} metrics)")
+
+    # nmd_profiles.xlsx
+    nmd_df = pd.DataFrame(NMD_PROFILES_DATA)
+    with pd.ExcelWriter(output_dir / "nmd_profiles.xlsx", engine="openpyxl") as w:
+        nmd_df.to_excel(w, sheet_name="NMD", index=False)
+    print(f"  nmd_profiles.xlsx ({len(nmd_df)} rows: {nmd_df['tier'].nunique()} tiers)")
+
+    # alert_thresholds.xlsx
+    at_df = pd.DataFrame(ALERT_THRESHOLDS_DATA)
+    with pd.ExcelWriter(output_dir / "alert_thresholds.xlsx", engine="openpyxl") as w:
+        at_df.to_excel(w, sheet_name="Thresholds", index=False)
+    print(f"  alert_thresholds.xlsx ({len(at_df)} rows: {at_df['currency'].nunique()} currencies)")
 
 
 if __name__ == "__main__":

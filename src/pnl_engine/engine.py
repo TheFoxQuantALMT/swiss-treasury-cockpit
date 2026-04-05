@@ -394,11 +394,43 @@ def compute_book2_mtm(
         mtm = stockSwapMTM(irs_stock, calc_date, shock)
         return mtm
     except (ImportError, Exception):
-        # Deterministic fallback: zero MTM for all positions
+        # Analytical MTM fallback: PV of rate differential
+        # MTM ≈ Notional × (fixed_rate - OIS_fwd) × remaining_years
+        # First-order approximation — adequate for dashboard, not regulatory
         if irs_stock.empty:
             return pd.DataFrame(columns=["Deal", "Currency", "MTM"])
         result = irs_stock.copy()
-        result["MTM"] = 0.0
+
+        calc_ts = pd.Timestamp(calc_date)
+        notional = pd.to_numeric(
+            result.get("Notional", result.get("notional", pd.Series(dtype=float))),
+            errors="coerce",
+        ).fillna(0)
+        rate = pd.to_numeric(
+            result.get("Rate", result.get("Clientrate", result.get("rate", pd.Series(dtype=float)))),
+            errors="coerce",
+        ).fillna(0)
+        maturity = pd.to_datetime(
+            result.get("Maturity Date", result.get("Maturitydate", pd.Series(dtype="datetime64[ns]"))),
+            errors="coerce",
+        )
+        remaining_years = ((maturity - calc_ts).dt.days / 365.25).clip(lower=0).fillna(0)
+
+        # Assume OIS fwd ≈ 1% (conservative mid for CHF/EUR/USD)
+        # Shock adjusts: +50bp → 1.50%, etc.
+        ois_proxy = 0.01
+        if shock and shock not in ("0", "wirp"):
+            try:
+                ois_proxy += int(shock) / 10000
+            except (ValueError, TypeError):
+                pass
+
+        # Pay fixed → MTM positive when OIS rises above fixed rate
+        # Receive fixed → MTM positive when OIS falls below fixed rate
+        pay_receive = result.get("Pay/Receive", result.get("pay_receive", pd.Series(["PAY"] * len(result))))
+        sign = np.where(pay_receive.str.upper().str.contains("REC", na=False), 1.0, -1.0)
+
+        result["MTM"] = sign * notional * (rate - ois_proxy) * remaining_years
         return result
 
 

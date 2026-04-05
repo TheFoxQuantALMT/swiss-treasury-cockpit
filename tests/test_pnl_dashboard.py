@@ -115,7 +115,7 @@ class TestEmptyData:
         expected_keys = {
             "summary", "coc", "pnl_series", "sensitivity", "strategy", "book2", "curves",
             "currency_mismatch", "repricing_gap", "counterparty_pnl", "pnl_alerts",
-            "budget", "hedge", "nii_at_risk", "forecast_tracking", "attribution",
+            "budget", "hedge", "nii_at_risk", "forecast_tracking", "attribution", "eve", "limits",
         }
         assert set(result.keys()) == expected_keys
 
@@ -376,6 +376,26 @@ class TestCounterpartyPnl:
         assert result["hhi"] > 0
         assert "IAM/LD" in result["by_product"]
 
+    def test_with_pnl_by_deal(self):
+        """Test counterparty tab using pnl_by_deal (the new pipeline)."""
+        pnl_by_deal = pd.DataFrame({
+            "Counterparty": ["BankA", "BankA", "BankB", "BankC"],
+            "Dealid": [100001, 100002, 100003, 200001],
+            "Currency": ["CHF", "EUR", "CHF", "CHF"],
+            "Product": ["IAM/LD", "IAM/LD", "BND", "FXS"],
+            "Product2BuyBack": ["IAM/LD", "IAM/LD", "BND", "FXS"],
+            "Direction": ["D", "D", "L", "B"],
+            "PnL": [150, 250, -75, 120],
+            "Nominal": [50e6, 30e6, 80e6, 20e6],
+            "Shock": ["0", "0", "0", "0"],
+            "Month": [pd.Period("2026-04", "M")] * 4,
+        })
+        result = _build_counterparty_pnl(pd.DataFrame(), pnl_by_deal)
+        assert result["has_data"] is True
+        assert len(result["top_10"]) == 3
+        assert result["top_10"][0]["counterparty"] == "BankA"  # highest |PnL|
+        assert result["hhi"] > 0
+
 
 # ---------------------------------------------------------------------------
 # Tests: ALM Enhancement — P&L Alerts (F7)
@@ -459,15 +479,64 @@ class TestHedgeEffectiveness:
         result = _build_hedge_effectiveness(sample_stacked, hedge_pairs)
         assert result["has_data"] is False  # no Dealid in sample_stacked
 
+    def test_with_pnl_by_deal(self):
+        """Test hedge effectiveness using pnl_by_deal pipeline."""
+        months = [pd.Period("2026-04", "M"), pd.Period("2026-05", "M"), pd.Period("2026-06", "M")]
+        pnl_by_deal = pd.DataFrame({
+            "Dealid": ["100001"] * 3 + ["400001"] * 3,
+            "Counterparty": ["BankA"] * 6,
+            "Currency": ["CHF"] * 6,
+            "Product": ["IAM/LD"] * 3 + ["IRS"] * 3,
+            "Direction": ["D"] * 3 + ["D"] * 3,
+            "PnL": [100, 120, 110, -95, -115, -105],  # roughly opposite
+            "Nominal": [50e6] * 6,
+            "Shock": ["0"] * 6,
+            "Month": months * 2,
+        })
+        hedge_pairs = pd.DataFrame({
+            "pair_id": [1],
+            "pair_name": ["CHF Hedge"],
+            "hedged_item_deal_ids": ["100001"],
+            "hedging_instrument_deal_ids": ["400001"],
+            "hedge_type": ["cash_flow"],
+            "ias_standard": ["IFRS9"],
+        })
+        result = _build_hedge_effectiveness(pd.DataFrame(), hedge_pairs, pnl_by_deal)
+        assert result["has_data"] is True
+        assert len(result["pairs"]) == 1
+        pair = result["pairs"][0]
+        assert pair["pair_name"] == "CHF Hedge"
+        assert pair["r_squared"] > 0.8  # good hedge
+
 
 # ---------------------------------------------------------------------------
 # Tests: ALM Enhancement — Stubs (F2, F4, F6)
 # ---------------------------------------------------------------------------
 
-class TestStubs:
+class TestNiiAtRiskAndStubs:
     def test_nii_at_risk_empty(self, empty_df):
         result = _build_nii_at_risk(empty_df, None)
         assert result["has_data"] is False
+
+    def test_nii_at_risk_with_scenarios(self, sample_stacked):
+        """Test NII-at-Risk with scenario results DataFrame."""
+        scenarios_data = pd.DataFrame({
+            "Périmètre TOTAL": ["CC"] * 4,
+            "Deal currency": ["CHF", "EUR", "CHF", "EUR"],
+            "Product2BuyBack": ["IAM/LD"] * 4,
+            "Direction": ["D"] * 4,
+            "Indice": ["PnL"] * 4,
+            "PnL_Type": ["Total"] * 4,
+            "Month": [pd.Period("2026-04", "M")] * 4,
+            "Shock": ["parallel_up", "parallel_up", "steepener", "steepener"],
+            "Value": [500, 300, -200, -100],
+        })
+        result = _build_nii_at_risk(sample_stacked, scenarios_data)
+        assert result["has_data"] is True
+        assert len(result["scenarios"]) == 2
+        assert len(result["heatmap"]) == 2
+        assert len(result["tornado"]) == 2
+        assert result["worst_case"]["scenario"] == "steepener"
 
     def test_forecast_tracking_empty(self):
         result = _build_forecast_tracking(None)
@@ -487,3 +556,51 @@ class TestStubs:
     def test_attribution_empty(self, empty_df):
         result = _build_attribution(empty_df, None)
         assert result["has_data"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: Scenario engine (pnl_engine.scenarios)
+# ---------------------------------------------------------------------------
+
+class TestScenarioEngine:
+    def test_interpolate_parallel_up(self):
+        from pnl_engine.scenarios import interpolate_scenario_shifts
+        from cockpit.data.parsers.scenarios import get_default_scenarios
+        scenarios = get_default_scenarios()
+        days = pd.date_range("2026-04-05", periods=365, freq="D")
+        shifts = interpolate_scenario_shifts(scenarios, "parallel_up", "CHF", days, datetime(2026, 4, 5))
+        # parallel_up = +200bp = 0.02 for all tenors
+        assert len(shifts) == 365
+        np.testing.assert_allclose(shifts, 0.02, atol=1e-6)
+
+    def test_interpolate_short_up(self):
+        from pnl_engine.scenarios import interpolate_scenario_shifts
+        from cockpit.data.parsers.scenarios import get_default_scenarios
+        scenarios = get_default_scenarios()
+        days = pd.date_range("2026-04-05", periods=365, freq="D")
+        shifts = interpolate_scenario_shifts(scenarios, "short_up", "CHF", days, datetime(2026, 4, 5))
+        # short_up: +300bp at O/N tapering to 0 at 20Y
+        assert shifts[0] > shifts[-1]  # front-loaded
+        assert shifts[0] > 0.01  # should be high at short end
+
+    def test_interpolate_steepener(self):
+        from pnl_engine.scenarios import interpolate_scenario_shifts
+        from cockpit.data.parsers.scenarios import get_default_scenarios
+        scenarios = get_default_scenarios()
+        # Need 20+ years to see positive end
+        days = pd.date_range("2026-04-05", periods=365 * 25, freq="D")
+        shifts = interpolate_scenario_shifts(scenarios, "steepener", "CHF", days, datetime(2026, 4, 5))
+        # steepener: -100bp at short end, +100bp at long end
+        assert shifts[0] < 0  # negative at short end
+        assert shifts[-1] > 0  # positive at long end (beyond 20Y)
+
+    def test_apply_to_curves(self):
+        from pnl_engine.scenarios import apply_scenario_to_curves
+        curves = pd.DataFrame({
+            "Date": pd.date_range("2026-04-05", periods=10, freq="D"),
+            "Indice": ["CHFSON"] * 10,
+            "value": [0.01] * 10,
+        })
+        shifts = np.full(10, 0.02)  # +200bp
+        result = apply_scenario_to_curves(curves, shifts, "CHFSON")
+        np.testing.assert_allclose(result["value"].values, 0.03, atol=1e-10)

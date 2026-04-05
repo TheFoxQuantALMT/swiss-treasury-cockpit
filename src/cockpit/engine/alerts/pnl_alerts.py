@@ -82,12 +82,16 @@ def check_pnl_alerts(
                             "recommendation": "Investigate rate or volume drivers for this swing",
                         })
 
-    # 3. Single currency concentration
+    # 3. Single currency concentration (supports per-currency thresholds)
     if "Deal currency" in pnl.columns and abs(total_nii) > 0:
         ccy_pnl = pnl.groupby("Deal currency")["Value"].sum()
         for ccy, val in ccy_pnl.items():
             pct = abs(val / total_nii) * 100
-            if pct > t["ccy_concentration_pct"]:
+            # Per-currency threshold override
+            ccy_limit = t["ccy_concentration_pct"]
+            if isinstance(t.get("_per_currency"), dict):
+                ccy_limit = t["_per_currency"].get(ccy, {}).get("ccy_concentration_pct", ccy_limit)
+            if pct > ccy_limit:
                 alerts.append({
                     "type": "ccy_concentration",
                     "severity": "medium",

@@ -86,6 +86,7 @@ class PnlEngine:
         date_rates: Optional[datetime] = None,
         *,
         funding_source: str = FUNDING_SOURCE,
+        nmd_profiles: Optional[pd.DataFrame] = None,
     ):
         self.deals = deals
         self.schedule = schedule
@@ -95,6 +96,7 @@ class PnlEngine:
         self.dateRates = date_rates if date_rates is not None else date_run
 
         self._funding_source = funding_source
+        self._nmd_profiles = nmd_profiles
         self._fwd_cache = CurveCache()
 
         # Public result attributes (populated by run)
@@ -102,6 +104,10 @@ class PnlEngine:
         self.fwdWIRP: Optional[pd.DataFrame] = None
         self.pnlAll: Optional[pd.DataFrame] = None
         self.pnlAllS: Optional[pd.DataFrame] = None
+        self.pnl_by_deal: Optional[pd.DataFrame] = None
+        self.eve_results: Optional[pd.DataFrame] = None
+        self.eve_scenarios: Optional[pd.DataFrame] = None
+        self.eve_krd: Optional[pd.DataFrame] = None
 
         # Precomputed matrices (built once, reused across shocks)
         self._deals_use: Optional[pd.DataFrame] = None
@@ -151,6 +157,15 @@ class PnlEngine:
         self._nominal_daily = expand_nominal_to_daily(self._deals_use[self._month_cols], self._days)
         alive = build_alive_mask(self._deals_use, self._days, date_run=pd.Timestamp(self.dateRun))
         self._nominal_daily = self._nominal_daily * alive
+
+        # Apply NMD behavioral decay if profiles provided
+        if self._nmd_profiles is not None and not self._nmd_profiles.empty:
+            from pnl_engine.nmd import apply_nmd_decay
+            self._nominal_daily = apply_nmd_decay(
+                self._deals_use, self._nmd_profiles, self._nominal_daily,
+                self._days, self.dateRun,
+            )
+
         self._mm = build_mm_vector(self._deals_use)
         self._accrual_days = build_accrual_days(self._days)
 
@@ -200,10 +215,16 @@ class PnlEngine:
         self.fwdWIRP = overlay_wirp(self.fwdOIS0, self.wirp)
 
         # Run all shocks
-        self.pnlAll = pd.concat(
-            [self.update_pnl(Shock=shock) for shock in shocks],
-            ignore_index=True,
-        )
+        deal_summaries = []
+        shock_results = []
+        for shock in shocks:
+            result = self.update_pnl(Shock=shock)
+            shock_results.append(result)
+            if hasattr(self, '_last_deal_summary') and not self._last_deal_summary.empty:
+                deal_summaries.append(self._last_deal_summary)
+
+        self.pnlAll = pd.concat(shock_results, ignore_index=True)
+        self.pnl_by_deal = pd.concat(deal_summaries, ignore_index=True) if deal_summaries else None
 
         self.pnlAllS = self.pnl_stack()
 
@@ -274,6 +295,13 @@ class PnlEngine:
         ref_curves = self._load_ref_curves(shock=Shock)
         rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
 
+        # Apply NMD deposit beta if profiles provided
+        if self._nmd_profiles is not None and not self._nmd_profiles.empty:
+            from pnl_engine.nmd import apply_deposit_beta
+            rate_matrix = apply_deposit_beta(
+                rate_matrix, self._deals_use, self._nmd_profiles, ois_matrix,
+            )
+
         n_days = len(self._days)
         mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
         daily_pnl = compute_daily_pnl(
@@ -300,7 +328,8 @@ class PnlEngine:
 
         # Enrich with deal metadata
         meta_cols = ["Product", "Currency", "Direction", "Strategy IAS",
-                     "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate", "Amount"]
+                     "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate", "Amount",
+                     "Counterparty", "Dealid", "Maturitydate", "is_floating"]
         for col in meta_cols:
             if col in self._deals_use.columns:
                 monthly[col] = monthly["deal_idx"].map(self._deals_use[col])
@@ -312,6 +341,27 @@ class PnlEngine:
         # Rename to pnl.py column names
         monthly["Deal currency"] = monthly["Currency"]
         monthly["Product2BuyBack"] = monthly["Product"]
+
+        # --- Deal-level summary (extracted BEFORE aggregation drops deal columns) ---
+        deal_summary_cols = [
+            c for c in ["deal_idx", "Counterparty", "Dealid", "Currency", "Product",
+                        "Direction", "Périmètre TOTAL", "Month"]
+            if c in monthly.columns
+        ]
+        total_rows = monthly[monthly["PnL_Type"] == "Total"]
+        if not total_rows.empty and deal_summary_cols:
+            deal_summary = total_rows.groupby(deal_summary_cols).agg(
+                PnL=("PnL", "sum"), Nominal=("Nominal", "mean"),
+            ).reset_index()
+            deal_summary["Shock"] = Shock
+            # Rename for consistency with pnlAllS
+            if "Currency" in deal_summary.columns:
+                deal_summary["Deal currency"] = deal_summary["Currency"]
+            if "Product" in deal_summary.columns:
+                deal_summary["Product2BuyBack"] = deal_summary["Product"]
+        else:
+            deal_summary = pd.DataFrame()
+        self._last_deal_summary = deal_summary
 
         # --- 1. Non-strategy (§9): filter + aggregate + pivot to wide ---
         non_strat_mask = (
@@ -540,6 +590,147 @@ class PnlEngine:
             month: total_mtm,
         }
         return pd.DataFrame([row])
+
+    def run_eve(
+        self,
+        scenarios: Optional[pd.DataFrame] = None,
+    ) -> pd.DataFrame:
+        """Compute EVE (Economic Value of Equity) and optionally ΔEVE scenarios.
+
+        Must be called after run() so that static matrices and curves are ready.
+
+        Args:
+            scenarios: Optional BCBS 368 scenario definitions for ΔEVE.
+
+        Returns:
+            Base EVE DataFrame per deal.
+        """
+        from pnl_engine.eve import compute_eve, compute_eve_scenarios, compute_key_rate_durations
+
+        if self._deals_use is None:
+            self._build_static_matrices()
+        if self.fwdOIS0 is None:
+            self.fwdOIS0 = self._load_ois_curves(shock="0")
+
+        ois_matrix = _build_ois_matrix(self._deals_use, self.fwdOIS0, self._days)
+        ref_curves = self._load_ref_curves(shock="0")
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+
+        # Base EVE
+        self.eve_results = compute_eve(
+            self._nominal_daily, ois_matrix, rate_matrix, self._mm,
+            self._days, self._deals_use, self.dateRun,
+        )
+        logger.info("run_eve: base EVE computed (%d deals, total=%.0f)",
+                     len(self.eve_results), self.eve_results["eve"].sum())
+
+        # Scenario ΔEVE
+        if scenarios is not None and not scenarios.empty:
+            self.eve_scenarios = compute_eve_scenarios(
+                self._nominal_daily, ois_matrix, rate_matrix, self._mm,
+                self._days, self._deals_use, self.dateRun,
+                scenarios, self.fwdOIS0,
+            )
+            logger.info("run_eve: %d scenario results", len(self.eve_scenarios))
+
+            # Key rate durations
+            self.eve_krd = compute_key_rate_durations(
+                self._nominal_daily, ois_matrix, rate_matrix, self._mm,
+                self._days, self._deals_use, self.dateRun,
+                self.fwdOIS0,
+            )
+            logger.info("run_eve: KRD computed (%d points)", len(self.eve_krd))
+
+        return self.eve_results
+
+    def run_scenarios(
+        self,
+        scenarios: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Run BCBS 368 non-parallel rate shock scenarios.
+
+        Args:
+            scenarios: DataFrame with columns: scenario, tenor, CHF, EUR, USD, GBP
+                       (shift values in basis points).
+
+        Returns:
+            Stacked DataFrame (pnlAllS format) with Shock = scenario name.
+        """
+        from pnl_engine.scenarios import interpolate_scenario_shifts, apply_scenario_to_curves
+
+        if self._deals_use is None:
+            self._build_static_matrices()
+        if self.fwdOIS0 is None:
+            self.fwdOIS0 = self._load_ois_curves(shock="0")
+
+        scenario_names = sorted(scenarios["scenario"].unique())
+        all_results = []
+
+        for sc_name in scenario_names:
+            # Build shifted curves for each currency's OIS indice
+            shifted_curves = self.fwdOIS0.copy()
+            for ccy, ois_indice in CURRENCY_TO_OIS.items():
+                if ccy not in self._deals_use["Currency"].unique():
+                    continue
+                shift_array = interpolate_scenario_shifts(
+                    scenarios, sc_name, ccy, self._days, self.dateRun,
+                )
+                shifted_curves = apply_scenario_to_curves(
+                    shifted_curves, shift_array, ois_indice,
+                )
+
+            # Build OIS matrix from shifted curves
+            ois_matrix = _build_ois_matrix(self._deals_use, shifted_curves, self._days)
+            ref_curves = self._load_ref_curves(shock="0")
+            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+
+            n_days = len(self._days)
+            mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
+            daily_pnl = compute_daily_pnl(
+                self._nominal_daily, ois_matrix, rate_matrix, mm_broadcast,
+            )
+
+            monthly = aggregate_to_monthly(
+                daily_pnl, self._nominal_daily, ois_matrix, rate_matrix, self._days,
+                date_rates=pd.Timestamp(self.dateRates),
+            )
+
+            # Enrich with metadata
+            meta_cols = ["Product", "Currency", "Direction", "Strategy IAS",
+                         "Périmètre TOTAL", "Clientrate", "EqOisRate", "YTM", "CocRate", "Amount"]
+            for col in meta_cols:
+                if col in self._deals_use.columns:
+                    monthly[col] = monthly["deal_idx"].map(self._deals_use[col])
+
+            monthly["Deal currency"] = monthly.get("Currency", "")
+            monthly["Product2BuyBack"] = monthly.get("Product", "")
+
+            # Aggregate non-strategy (simplified — skip strategy decomposition for scenarios)
+            non_strat = monthly.copy()
+            pnl_wide = self._aggregate_and_pivot(non_strat, sc_name)
+            if not pnl_wide.empty:
+                all_results.append(pnl_wide)
+
+            logger.info("run_scenarios: %s done (%d rows)", sc_name, len(pnl_wide))
+
+        if not all_results:
+            return pd.DataFrame()
+
+        combined = pd.concat(all_results, ignore_index=True)
+
+        # Stack to long format (same as pnl_stack but on this subset)
+        idx_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack",
+                     "Direction", "Indice", "PnL_Type", "Shock"]
+        present_idx = [c for c in idx_cols if c in combined.columns]
+        month_cols = [c for c in combined.columns if c not in present_idx]
+        if month_cols:
+            stacked = combined.set_index(present_idx)
+            stacked.columns.name = "Month"
+            result = stacked.stack().rename("Value").reset_index()
+        else:
+            result = combined
+
+        return result
 
     def pnl_stack(self) -> pd.DataFrame:
         """Long stacked view of ``pnlAll`` (Month in index)."""

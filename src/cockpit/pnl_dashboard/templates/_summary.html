@@ -60,6 +60,24 @@
   </div>
   {% endif %}
 
+  <!-- Limit Utilization Bars -->
+  {% if has_limits %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Limit Utilization</h3>
+    {% for item in limits["items"] %}
+    <div style="margin-bottom: 10px;">
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 3px;">
+        <span>{{ item.label }}</span>
+        <span>{{ "{:,.0f}".format(item.actual) }} / {{ "{:,.0f}".format(item.limit) }} ({{ "%.1f"|format(item.utilization_pct) }}%)</span>
+      </div>
+      <div style="background: var(--bg-tertiary); border-radius: 4px; height: 8px; overflow: hidden;">
+        <div style="height: 100%; width: {{ [item.utilization_pct, 100] | min }}%; background: {{ '#3fb950' if item.status == 'green' else '#d29922' if item.status == 'yellow' else '#f85149' }}; border-radius: 4px; transition: width 0.3s;"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <script>
   (function() {
     const kpis = {{ summary.kpis | tojson_safe }};

@@ -110,6 +110,7 @@ class ForecastRatePnL:
         self.fwdWIRP: Optional[pd.DataFrame] = None
         self.pnlAll: Optional[pd.DataFrame] = None
         self.pnlAllS: Optional[pd.DataFrame] = None
+        self.pnl_by_deal: Optional[pd.DataFrame] = None
 
         # Internal engine instance
         self._engine: Optional[PnlEngine] = None
@@ -247,6 +248,7 @@ class ForecastRatePnL:
 
         self.pnlAll = self._engine.run(shocks=shocks)
         self.pnlAllS = self._engine.pnlAllS
+        self.pnl_by_deal = self._engine.pnl_by_deal
         self.fwdOIS0 = self._engine.fwdOIS0
         self.fwdWIRP = self._engine.fwdWIRP
 

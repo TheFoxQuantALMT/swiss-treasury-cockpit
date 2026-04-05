@@ -178,7 +178,79 @@ IRS-MTM deals are valued via WASP `stockSwapMTM` (mark-to-market NPV). Pre-filte
 - Maturity > dateRun
 - Strategy IAS is null (strategy IRS are handled via the strategy path)
 
-Falls back to zero MTM when WASP is unavailable.
+When WASP is unavailable, falls back to an analytical MTM approximation:
+
+```
+MTM ≈ sign × Notional × (ClientRate - OIS_proxy) × remaining_years
+```
+
+Where sign is +1 for RECEIVE, -1 for PAY. This is a first-order PV approximation adequate for dashboard display.
+
+## BCBS 368 Scenarios
+
+The engine supports 6 non-parallel tenor-dependent rate shock scenarios (`pnl_engine/scenarios.py`):
+
+| Scenario | Short End | Long End |
+|----------|-----------|----------|
+| `parallel_up` | +200bp | +200bp |
+| `parallel_down` | -200bp | -200bp |
+| `short_up` | +300bp @ O/N | 0bp @ 20Y |
+| `short_down` | -300bp @ O/N | 0bp @ 20Y |
+| `steepener` | -100bp | +100bp |
+| `flattener` | +100bp | -100bp |
+
+Shifts are interpolated from BCBS standard tenor points (O/N, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y) to the daily date grid using `numpy.interp`. Applied per currency.
+
+```python
+engine.run_scenarios(scenarios_df)  # returns stacked DataFrame with Shock=scenario_name
+```
+
+## EVE (Economic Value of Equity)
+
+BCBS 368 requires both NII (earnings) and EVE (economic value) measures. The EVE module (`pnl_engine/eve.py`) computes:
+
+- **Base EVE**: PV of future cash flows (interest + principal) discounted at OIS forward rates
+- **ΔEVE**: Change in EVE under each BCBS scenario
+- **Modified Duration**: Weighted-average time of discounted cash flows
+- **Key Rate Duration (KRD)**: Sensitivity at each BCBS tenor point (1bp bump)
+
+```python
+engine.run_eve(scenarios=scenarios_df)
+engine.eve_results      # per-deal EVE DataFrame
+engine.eve_scenarios    # ΔEVE by scenario × currency
+engine.eve_krd          # KRD at each tenor point
+```
+
+## NMD Behavioral Model
+
+Non-Maturing Deposits (sight deposits) have no contractual maturity. The NMD module (`pnl_engine/nmd.py`) applies behavioral assumptions:
+
+- **Decay profile**: `nominal(t) = nominal(0) × exp(-decay_rate × t)` — exponential runoff
+- **Deposit beta**: `effective_rate = floor + beta × max(0, OIS - floor)` — partial rate passthrough
+- **Behavioral maturity**: Used for repricing gap analysis instead of contractual maturity
+
+Standard tiers (SNB/EBA convention):
+- **Core**: stable, long behavioral maturity (5-7Y), low beta (0.3-0.5)
+- **Volatile**: rate-sensitive, short maturity (1-2Y), high beta (0.7-0.9)
+- **Term**: contractual maturity, beta=1.0
+
+Profiles are loaded from `nmd_profiles.xlsx` and injected via `PnlEngine(nmd_profiles=...)`.
+
+## P&L Explain
+
+The P&L explain module (`cockpit/engine/pnl/pnl_explain.py`) decomposes ΔNII between two dates into actionable drivers:
+
+| Driver | Formula / Logic |
+|--------|----------------|
+| Time / Roll-down | Residual after other effects (includes passage of time, curve roll) |
+| New Deals | Sum P&L of deals entering the portfolio since prev date |
+| Maturing Deals | Negative of prev P&L for deals that matured |
+| Rate Effect | `Nom_prev × ΔOIS / MM` on existing portfolio |
+| Spread Effect | `Nom_prev × ΔSpread / MM` (change in client-OIS margin) |
+
+The waterfall reads: `Prev NII → +Time → +New → -Matured → +Rate → +Spread → Current NII`
+
+Requires `--prev-date` flag to provide comparison baseline.
 
 ## Output Format
 

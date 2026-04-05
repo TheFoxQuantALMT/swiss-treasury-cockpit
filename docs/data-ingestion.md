@@ -245,3 +245,100 @@ Parses the counterparty reference table.
 **Output columns:** counterparty, rating, hqla_level, country
 
 Used by portfolio snapshot enrichment to classify deals by credit quality and HQLA eligibility.
+
+---
+
+## ALM Enhancement Parsers
+
+These optional parsers support advanced ALM features. All files are auto-discovered by the CLI via glob patterns.
+
+### `parse_budget(path) -> DataFrame`
+
+Parses monthly NII budget per currency.
+
+**Source sheet:** "Budget"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `currency` | str | CHF, EUR, USD, GBP |
+| `month` | str | YYYY-MM |
+| `budget_nii` | float | Budgeted NII for that month |
+| `perimeter` | str | CC, WM, etc. |
+
+### `parse_scenarios(path) -> DataFrame`
+
+Parses BCBS 368 rate shock scenario definitions.
+
+**Source sheet:** "Scenarios"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `scenario` | str | parallel_up, parallel_down, short_up, short_down, steepener, flattener |
+| `tenor` | str | O/N, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y |
+| `CHF` | float | Shift in basis points for CHF |
+| `EUR` | float | Shift in basis points for EUR |
+| `USD` | float | Shift in basis points for USD |
+| `GBP` | float | Shift in basis points for GBP |
+
+If no file is provided, `get_default_scenarios()` returns the standard BCBS 368 definitions.
+
+### `parse_hedge_pairs(path) -> DataFrame`
+
+Parses hedge relationship designations.
+
+**Source sheet:** "HedgePairs"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `pair_id` | int | Unique pair identifier |
+| `pair_name` | str | Descriptive name |
+| `hedged_item_deal_ids` | str | Comma-separated deal IDs |
+| `hedging_instrument_deal_ids` | str | Comma-separated deal IDs |
+| `hedge_type` | str | cash_flow, fair_value |
+| `designation_date` | date | Date of hedge designation |
+| `ias_standard` | str | IAS39, IFRS9 |
+
+### `parse_nmd_profiles(path) -> DataFrame`
+
+Parses Non-Maturing Deposit behavioral profiles.
+
+**Source sheet:** "NMD"
+
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| `product` | str | required | Product type (e.g. IAM/LD) |
+| `currency` | str | required | Currency |
+| `direction` | str | required | D=deposit |
+| `tier` | str | core | core, volatile, term |
+| `behavioral_maturity_years` | float | 5.0 | Assumed repricing horizon |
+| `decay_rate` | float | 0.15 | Annual runoff rate |
+| `deposit_beta` | float | 0.5 | Rate passthrough: Δclient / ΔOIS |
+| `floor_rate` | float | 0.0 | Minimum client rate |
+
+### `parse_limits(path) -> DataFrame`
+
+Parses board-approved NII/EVE limits.
+
+**Source sheet:** "Limits"
+
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| `metric` | str | required | nii_sensitivity_50bp, nii_at_risk_worst, eve_change_200bp, eve_change_worst |
+| `currency` | str | ALL | Currency (or ALL for global) |
+| `limit_value` | float | required | Board-approved limit |
+| `warning_pct` | float | 80.0 | Yellow warning at % utilization |
+| `limit_type` | str | absolute | absolute or relative |
+
+### `parse_alert_thresholds(path) -> DataFrame`
+
+Parses per-currency alert threshold overrides.
+
+**Source sheet:** "Thresholds"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `currency` | str | Currency (or ALL for global defaults) |
+| `annual_nii_floor` | float | NII floor alert threshold |
+| `mom_delta_pct` | float | Month-on-month change % trigger |
+| `ccy_concentration_pct` | float | Concentration % trigger |
+| `shock_sensitivity_limit` | float | +50bp NII delta limit |

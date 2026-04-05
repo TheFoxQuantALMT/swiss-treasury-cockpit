@@ -59,12 +59,17 @@ render → output/{date}_cockpit.html
   - `reviewer.py`: Programmatic fact-checker + LLM reviewer with retry loop
   - `reporter.py`: Converts brief text to styled HTML
 
+- **`pnl_dashboard/`** — Dedicated P&L dashboard (17 tabs): Summary, CoC, P&L Series, Sensitivity, EVE, NII-at-Risk, Repricing Gap, FX Mismatch, Budget vs Actual, Attribution/P&L Explain, Forecast Tracking, Strategy IAS, Counterparty, Hedge Effectiveness, BOOK2 MTM, Rate Curves, Alerts. Uses Jinja2 + Chart.js.
 - **`render/`** — Jinja2 HTML renderer with 5 tab templates (macro, FX/energy, P&L, portfolio, brief) + Plotly charts
 - **`config.py`** — All constants: OIS mappings, shock levels, FX alert bands, scoring thresholds, liquidity buckets, counterparty perimeters
 
 ### P&L Engine Concepts
 
 - **Shocks**: `["0", "50", "wirp"]` — basis point parallel shifts of the yield curve. "wirp" uses market-implied rate expectations.
+- **BCBS 368 Scenarios**: 6 non-parallel rate shocks (parallel ±200bp, short ±300bp, steepener, flattener) with tenor-dependent interpolation via `numpy.interp`. Defined in `pnl_engine/scenarios.py`.
+- **EVE (Economic Value of Equity)**: PV of all future cash flows discounted at OIS. Computed per deal in `pnl_engine/eve.py`. Includes ΔEVE scenarios and Key Rate Duration (KRD) at BCBS tenor points.
+- **NMD (Non-Maturing Deposits)**: Behavioral decay model for sight deposits in `pnl_engine/nmd.py`. Applies exponential decay (`exp(-decay × t)`) and deposit beta (partial rate passthrough) for deposits without contractual maturity.
+- **P&L Explain**: Waterfall decomposition of ΔNII between two dates in `cockpit/engine/pnl/pnl_explain.py`. Drivers: time/roll-down, new deals, maturing deals, rate effect, spread effect.
 - **dateRun** vs **dateRates**: dateRun controls which deal data loads; dateRates controls where realized rates end and forwards begin.
 - **Strategy IAS**: Deals with IAS hedge designation get decomposed into 4 legs (IAM/LD-NHCD, IAM/LD-HCD, BND-NHCD, BND-HCD) with direction filtering.
 - **WASP**: External rate curve library. When unavailable, the engine builds mock curves from WIRP data (graceful degradation).
@@ -72,3 +77,16 @@ render → output/{date}_cockpit.html
 ### Data Flow
 
 Input Excel files (MTD, echeancier, reference_table, WIRP, IRS stock) are parsed by `data/parsers/`. The P&L engine joins deals to echeancier by `(Dealid, Direction, Currency)`, expands nominal schedules to daily arrays, and runs vectorized computation across a 60-month date grid.
+
+### Optional ALM Input Files
+
+All optional — auto-discovered by `cmd_render_pnl()` via glob patterns:
+
+| File | Parser | Description |
+|------|--------|-------------|
+| `budget.xlsx` | `parse_budget()` | Monthly NII budget per currency |
+| `scenarios.xlsx` | `parse_scenarios()` | BCBS 368 tenor-dependent rate shocks |
+| `hedge_pairs.xlsx` | `parse_hedge_pairs()` | Hedge relationship designations |
+| `nmd_profiles.xlsx` | `parse_nmd_profiles()` | NMD behavioral decay profiles |
+| `limits.xlsx` | `parse_limits()` | Board-approved NII/EVE limits |
+| `alert_thresholds.xlsx` | `parse_alert_thresholds()` | Per-currency alert threshold overrides |

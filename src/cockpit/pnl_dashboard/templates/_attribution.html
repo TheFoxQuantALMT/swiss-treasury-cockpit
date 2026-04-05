@@ -1,68 +1,232 @@
 <div id="tab-attribution" class="tab-content">
-  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">P&amp;L Attribution &mdash; Rate vs Volume vs Mix</h3>
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">P&amp;L Explain &mdash; NII Change Decomposition</h3>
 
   {% if has_attribution %}
-  <div class="card">
-    <div class="chart-container">
-      <canvas id="chart-attribution"></canvas>
+
+  <!-- KPI summary -->
+  {% if attribution.summary %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="kpi-label">Previous NII</div>
+      <div class="kpi-value">{{ "{:,.0f}".format(attribution.summary.prev_nii) }}</div>
+      {% if attribution.summary.prev_date %}<div class="kpi-sub" style="font-size:0.7rem;color:var(--text-secondary)">{{ attribution.summary.prev_date }}</div>{% endif %}
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Current NII</div>
+      <div class="kpi-value">{{ "{:,.0f}".format(attribution.summary.curr_nii) }}</div>
+      {% if attribution.summary.curr_date %}<div class="kpi-sub" style="font-size:0.7rem;color:var(--text-secondary)">{{ attribution.summary.curr_date }}</div>{% endif %}
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">&Delta; NII</div>
+      <div class="kpi-value {{ 'positive' if attribution.summary.delta > 0 else 'negative' if attribution.summary.delta < 0 else '' }}">
+        {{ "{:+,.0f}".format(attribution.summary.delta) }}
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Deal Activity</div>
+      <div class="kpi-value" style="font-size: 0.9rem;">
+        +{{ attribution.summary.n_new }} new / -{{ attribution.summary.n_matured }} matured
+      </div>
     </div>
   </div>
+  {% endif %}
 
+  <!-- Waterfall chart -->
+  {% if attribution.waterfall %}
   <div class="card">
-    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Attribution Detail</h3>
-    <div style="overflow-x: auto;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">NII Waterfall</h3>
+    <canvas id="chart-attribution-waterfall" height="300"></canvas>
+  </div>
+  {% endif %}
+
+  <!-- Effect breakdown table -->
+  {% if attribution.summary %}
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Effect Decomposition</h3>
+      <table>
+        <thead><tr><th>Driver</th><th>Impact</th><th>% of &Delta;</th></tr></thead>
+        <tbody>
+          {% set s = attribution.summary %}
+          {% set effects = [
+            ("Time / Roll-down", s.time_effect),
+            ("New Deals (+" ~ s.n_new ~ ")", s.new_deal_effect),
+            ("Maturing Deals (-" ~ s.n_matured ~ ")", s.matured_deal_effect),
+            ("Rate Effect", s.rate_effect),
+            ("Spread Effect", s.spread_effect),
+          ] %}
+          {% for name, val in effects %}
+          <tr>
+            <td>{{ name }}</td>
+            <td class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">{{ "{:+,.0f}".format(val) }}</td>
+            <td>{% if s.delta != 0 %}{{ "%.1f%%"|format(val / s.delta * 100) }}{% else %}&mdash;{% endif %}</td>
+          </tr>
+          {% endfor %}
+          <tr style="font-weight: bold; border-top: 2px solid var(--border);">
+            <td>Total &Delta;NII</td>
+            <td class="{{ 'positive' if s.delta > 0 else 'negative' if s.delta < 0 else '' }}">{{ "{:+,.0f}".format(s.delta) }}</td>
+            <td>100%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Currency rate/spread table -->
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Rate &amp; Spread by Currency</h3>
+      <table>
+        <thead><tr><th>CCY</th><th>OIS prev</th><th>OIS curr</th><th>&Delta;OIS</th><th>Spread prev</th><th>Spread curr</th></tr></thead>
+        <tbody>
+        {% for ccy, vals in attribution.by_currency.items() %}
+          <tr>
+            <td>{{ ccy }}</td>
+            <td>{{ "%.1f"|format(vals.ois_prev) }}bp</td>
+            <td>{{ "%.1f"|format(vals.ois_curr) }}bp</td>
+            <td class="{{ 'positive' if vals.ois_curr > vals.ois_prev else 'negative' if vals.ois_curr < vals.ois_prev else '' }}">
+              {{ "%+.1f"|format(vals.ois_curr - vals.ois_prev) }}bp
+            </td>
+            {% if vals.spread_prev is defined %}
+            <td>{{ "%.1f"|format(vals.spread_prev) }}bp</td>
+            <td>{{ "%.1f"|format(vals.spread_curr) }}bp</td>
+            {% else %}
+            <td>&mdash;</td><td>&mdash;</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- New deals detail -->
+  {% if attribution.new_deals %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">New Deal Detail</h3>
     <table>
-      <thead><tr><th>Currency</th><th>Rate Effect</th><th>Volume Effect</th><th>Mix Effect</th><th>Total &Delta;</th></tr></thead>
+      <thead><tr><th>Deal ID</th><th>Counterparty</th><th>CCY</th><th>Product</th><th>Nominal</th><th>P&amp;L</th></tr></thead>
       <tbody>
-      {% for ccy, vals in attribution.by_currency.items() %}
+      {% for d in attribution.new_deals[:10] %}
         <tr>
-          <td>{{ ccy }}</td>
-          <td class="{{ 'positive' if vals.rate_effect > 0 else 'negative' if vals.rate_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.rate_effect) }}</td>
-          <td class="{{ 'positive' if vals.volume_effect > 0 else 'negative' if vals.volume_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.volume_effect) }}</td>
-          <td class="{{ 'positive' if vals.mix_effect > 0 else 'negative' if vals.mix_effect < 0 else 'neutral' }}">{{ "{:,.0f}".format(vals.mix_effect) }}</td>
-          <td class="{{ 'positive' if vals.total_delta > 0 else 'negative' if vals.total_delta < 0 else 'neutral' }}"><strong>{{ "{:,.0f}".format(vals.total_delta) }}</strong></td>
+          <td>{{ d.deal_id }}</td>
+          <td>{{ d.counterparty }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.product }}</td>
+          <td>{{ "{:,.0f}".format(d.nominal) }}</td>
+          <td class="{{ 'positive' if d.pnl > 0 else 'negative' }}">{{ "{:,.0f}".format(d.pnl) }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    </div>
   </div>
+  {% endif %}
 
+  <!-- Matured deals detail -->
+  {% if attribution.matured_deals %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Matured Deal Detail</h3>
+    <table>
+      <thead><tr><th>Deal ID</th><th>Counterparty</th><th>CCY</th><th>Product</th><th>Nominal</th><th>P&amp;L Lost</th></tr></thead>
+      <tbody>
+      {% for d in attribution.matured_deals[:10] %}
+        <tr>
+          <td>{{ d.deal_id }}</td>
+          <td>{{ d.counterparty }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.product }}</td>
+          <td>{{ "{:,.0f}".format(d.nominal) }}</td>
+          <td class="negative">{{ "{:,.0f}".format(d.pnl_lost) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Waterfall Chart JS -->
+  {% if attribution.waterfall %}
   <script>
   (function() {
-    const data = {{ attribution.by_currency | tojson_safe }};
-    const ccys = Object.keys(data);
-    const ctx = document.getElementById('chart-attribution');
-    if (!ctx || typeof Chart === 'undefined') return;
+    const wf = {{ attribution.waterfall | tojson_safe }};
+    const ctx = document.getElementById('chart-attribution-waterfall');
+    if (!ctx || typeof Chart === 'undefined' || !wf.length) return;
+
+    // Build floating bar waterfall
+    const labels = wf.map(s => s.label);
+    const bgColors = [];
+    const data = [];
+    let running = 0;
+
+    for (let i = 0; i < wf.length; i++) {
+      const step = wf[i];
+      if (step.type === 'base') {
+        data.push([0, step.value]);
+        running = step.value;
+        bgColors.push('#58a6ff');
+      } else if (step.type === 'total') {
+        data.push([0, step.value]);
+        bgColors.push('#58a6ff');
+      } else {
+        const start = running;
+        running += step.value;
+        if (step.value >= 0) {
+          data.push([start, running]);
+          bgColors.push('#3fb950');
+        } else {
+          data.push([running, start]);
+          bgColors.push('#f85149');
+        }
+      }
+    }
 
     new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: ccys,
-        datasets: [
-          { label: 'Rate Effect', data: ccys.map(c => data[c].rate_effect), backgroundColor: 'rgba(88,166,255,0.8)' },
-          { label: 'Volume Effect', data: ccys.map(c => data[c].volume_effect), backgroundColor: 'rgba(63,185,80,0.8)' },
-          { label: 'Mix Effect', data: ccys.map(c => data[c].mix_effect), backgroundColor: 'rgba(210,153,34,0.8)' },
-        ]
+        labels: labels,
+        datasets: [{
+          data: data,
+          backgroundColor: bgColors,
+          borderWidth: 0,
+          borderRadius: 4,
+          borderSkipped: false,
+        }]
       },
       options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'x',
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                const step = wf[ctx.dataIndex];
+                if (step.type === 'base' || step.type === 'total') return fmt(step.value);
+                return (step.value >= 0 ? '+' : '') + fmt(step.value);
+              }
+            }
+          }
+        },
         scales: {
-          x: { stacked: true, ticks: { color: '#8b949e' } },
-          y: { stacked: true, ticks: { color: '#8b949e' } }
+          x: {
+            grid: { display: false },
+            ticks: { color: '#e6edf3', font: { size: 10 }, maxRotation: 35 }
+          },
+          y: {
+            grid: { color: '#30363d' },
+            ticks: { color: '#8b949e', callback: function(v) { return fmt(v); } }
+          }
         }
       }
     });
   })();
   </script>
-
-  <p class="footnote">&Delta;P&amp;L = Nom<sub>old</sub> &times; &Delta;Rate / MM (rate) + &Delta;Nom &times; Rate<sub>old</sub> / MM (volume) + &Delta;Nom &times; &Delta;Rate / MM (mix). Requires consecutive-day snapshots.</p>
+  {% endif %}
 
   {% else %}
   <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
-    <p>No P&amp;L attribution data available.</p>
-    <p style="font-size: 0.85rem;">Requires previous day's P&amp;L snapshot for comparison.</p>
+    <p>No P&amp;L explain data available.</p>
+    <p style="font-size: 0.85rem;">Use <code>--prev-date</code> to compare against a previous run, or accumulate daily snapshots.</p>
   </div>
   {% endif %}
 </div>
