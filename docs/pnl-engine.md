@@ -339,3 +339,109 @@ loaded = load_pnl(path)
 delta = compare_pnl(new_pnl, prev_pnl)
 # Returns wide format with Level (Value_new, Value_prev, Delta)
 ```
+
+## Standalone Analytics Modules
+
+The following modules under `src/pnl_engine/` provide specialized analytics wired into the dashboard orchestrator.
+
+### Basis Risk
+
+**Module:** `pnl_engine/basis_risk.py`
+
+NII sensitivity to spread compression per product and currency. Applies ±50bp shocks to funding spreads and measures the impact on net interest income. Useful for identifying products or currencies where a tightening of lending-funding spreads would materially erode NII.
+
+### Prepayment / CPR
+
+**Module:** `pnl_engine/prepayment.py`
+
+Conditional Prepayment Rate model for fixed-rate mortgages. Applies a monthly survival factor to adjust nominal schedules for early repayment:
+
+```
+survival_monthly = (1 - CPR) ^ (1/12)
+nominal(t) = nominal(t) × survival_monthly ^ t
+```
+
+Higher CPR assumptions reduce the expected life of fixed-rate assets, lowering future NII from those positions.
+
+### Reverse Stress Test
+
+**Module:** `pnl_engine/reverse_stress.py`
+
+Bisection search for the shock level (in basis points) that breaches a given threshold — either an NII limit or a ΔEVE/Tier1 capital ratio. Answers the question "how bad can it get before we breach limits?" by iteratively narrowing the shock range until the breach point is found.
+
+### Replication Portfolio
+
+**Module:** `pnl_engine/replication.py`
+
+Least-squares fit of NMD behavioral cashflows to bullet bonds at standard tenors (1Y, 2Y, 3Y, 5Y, 7Y, 10Y). Transforms uncertain NMD runoff profiles into a replicable fixed-income portfolio with known duration and repricing characteristics. The output weights indicate how much notional to allocate at each tenor to best match the modeled NMD decay.
+
+### SARON Compounding
+
+**Module:** `pnl_engine/saron.py`
+
+ISDA 2021 compounded-in-arrears calculation with 2-day lookback per SNB convention. Used for CHF floating-rate instruments where the coupon is determined by compounding daily SARON fixings over the interest period. The lookback shift aligns the observation period to settle T-2 before payment.
+
+### SNB Reserves
+
+**Module:** `pnl_engine/snb_reserves.py`
+
+SNB minimum reserve requirement: 2.5% of CHF sight liabilities with HQLA (High Quality Liquid Assets) deduction. Reports:
+
+- Required reserve amount
+- Current HQLA holdings
+- Compliance status (pass/fail)
+- Shortfall amount if non-compliant
+
+### Hedge Optimizer
+
+**Module:** `pnl_engine/hedge_optimizer.py`
+
+DV01-based IRS notional recommendation per currency. Calculates the optimal hedge notional needed to neutralize rate sensitivity by matching the portfolio DV01 with an offsetting IRS position. Output includes recommended notional, direction (pay/receive), and residual DV01 after hedging.
+
+### Locked-in NII
+
+**Module:** `pnl_engine/locked_in_nii.py`
+
+Fixed-rate deal NII as a percentage of total NII. A higher locked-in ratio means more certainty in the earnings forecast since fixed-rate income is insensitive to rate movements. Useful as a KPI for ALM committees to gauge how much of projected NII is already secured.
+
+### Sensitivity Explain
+
+**Module:** `pnl_engine/sensitivity_explain.py`
+
+Waterfall decomposition of sensitivity change between two dates into drivers:
+
+| Driver | Description |
+|--------|-------------|
+| New Deals | Sensitivity contribution from deals entering the portfolio |
+| Maturing Deals | Sensitivity removed by deals that matured |
+| Rate Moves | Change in sensitivity due to yield curve movements |
+| Spread Changes | Change in sensitivity due to client-OIS spread shifts |
+
+Reads: `Prev Sensitivity → +New → -Matured → +Rate → +Spread → Current Sensitivity`
+
+### What-If Simulator
+
+**Module:** `pnl_engine/what_if.py`
+
+Incremental NII + EVE impact of a hypothetical deal. Takes deal parameters (product, currency, amount, rate, direction, maturity) and returns:
+
+- Spread vs OIS
+- ΔNII (12-month and full life)
+- ΔEVE
+- DV01 of the hypothetical deal
+
+Invoked via `cockpit what-if` CLI command.
+
+### NMD Backtest
+
+**Module:** `pnl_engine/nmd_backtest.py`
+
+Compares modeled NMD runoff against actual observed runoff to validate behavioral model calibration. Metrics:
+
+| Metric | Description |
+|--------|-------------|
+| R² | Coefficient of determination (goodness of fit) |
+| RMSE | Root Mean Square Error (average magnitude of prediction errors) |
+| MAE | Mean Absolute Error (average absolute deviation) |
+
+A well-calibrated model should show R² > 0.90 and low RMSE/MAE relative to deposit volumes.

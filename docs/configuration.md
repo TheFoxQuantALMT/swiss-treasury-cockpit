@@ -2,6 +2,116 @@
 
 All constants, thresholds, and mappings live in `src/cockpit/config.py`. No magic numbers in computation code.
 
+## YAML Configuration System
+
+Runtime-tunable values are loaded from a YAML file so you can change thresholds, scenarios, and model settings without editing Python code.
+
+### How It Works
+
+| Item | Detail |
+|------|--------|
+| Config file | `config/cockpit.config.yaml` |
+| Loader | `src/cockpit/config_loader.py` |
+| Entry point | `load_config()` (with caching) |
+| Cache reset | `reset_cache()` (useful in tests) |
+| Merge strategy | Deep-merge — user values override built-in defaults recursively |
+| All keys optional | Missing keys fall back to built-in defaults in `config_loader.DEFAULTS` |
+
+At startup, `src/cockpit/config.py` calls `load_config()` once and assigns the merged values to module-level constants (e.g., `FX_ALERT_BANDS`, `SCENARIOS`, `ANALYST_MODEL`). The rest of the codebase imports from `config.py` as before.
+
+### Supported Keys
+
+Every key below is optional. Shown values are the built-in defaults.
+
+```yaml
+# --- FX Alert Bands ---
+fx_alert_bands:
+  EUR_CHF: { low: 0.90, high: 0.96 }
+  USD_CHF: { low: 0.78, high: 0.85 }
+  GBP_CHF: { low: 1.08, high: 1.16 }
+
+# --- Energy Thresholds ---
+energy_thresholds:
+  brent_high: 120.0
+  brent_low: 65.0
+  eu_gas_high: 80.0
+
+# --- Deposit Thresholds ---
+deposit_thresholds:
+  weekly_change_threshold_bln: 2.0
+
+# --- Daily Move Thresholds ---
+daily_move_thresholds:
+  brent_pct: 5.0
+  eu_gas_pct: 5.0
+  fx_pct: 1.0
+  vix_pct: 10.0
+
+# --- Scoring Labels (0-100 scale) ---
+scoring_labels:
+  calm_max: 45
+  watch_max: 70
+
+# --- CDS Alert ---
+cds_alert_threshold_bps: 200
+
+# --- Geopolitical Scenarios ---
+scenarios:
+  ceasefire_rapid:
+    probability: 0.30
+    brent_target: 65
+    usd_chf_range: [0.82, 0.84]
+    eur_chf_range: [0.92, 0.94]
+  conflict_contained:
+    probability: 0.45
+    brent_target: [100, 120]
+    usd_chf_range: [0.79, 0.82]
+    eur_chf_range: [0.90, 0.93]
+  escalation_major:
+    probability: 0.25
+    brent_target: [130, 150]
+    usd_chf_range: [0.75, 0.78]
+    eur_chf_range: [0.88, 0.91]
+
+# --- LLM Models ---
+analyst_model: "deepseek-r1:14b"
+reviewer_model: "qwen3.5:9b"
+ollama_host: "http://localhost:11434"
+max_review_retries: 3
+
+# --- P&L Engine Overrides ---
+shocks: ["0", "50", "wirp"]
+```
+
+### Deep-Merge Behavior
+
+The loader uses recursive dictionary merging. You only need to specify the keys you want to override. For example, to widen the EUR/CHF alert band without touching other pairs:
+
+```yaml
+fx_alert_bands:
+  EUR_CHF: { low: 0.92, high: 0.98 }
+```
+
+USD_CHF and GBP_CHF keep their defaults.
+
+### Malformed YAML
+
+If the YAML file is malformed, the loader logs a warning and falls back entirely to built-in defaults. The pipeline does not crash.
+
+### Usage in Code
+
+```python
+from cockpit.config_loader import load_config
+
+cfg = load_config()                          # cached after first call
+cfg["fx_alert_bands"]["EUR_CHF"]["low"]      # -> 0.90 (or overridden value)
+
+# Force re-read (e.g., after modifying the YAML in a test):
+from cockpit.config_loader import reset_cache
+reset_cache()
+cfg = load_config()
+```
+
 ## Paths
 
 | Constant | Default | Description |

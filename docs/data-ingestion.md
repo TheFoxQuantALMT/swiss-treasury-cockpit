@@ -342,3 +342,66 @@ Parses per-currency alert threshold overrides.
 | `mom_delta_pct` | float | Month-on-month change % trigger |
 | `ccy_concentration_pct` | float | Concentration % trigger |
 | `shock_sensitivity_limit` | float | +50bp NII delta limit |
+
+### `parse_liquidity_schedule(path) -> DataFrame`
+
+Parses daily (90d) and monthly cash flow projections per deal. Same wide format as `schedule.xlsx` (echeancier). Powers the Liquidity Forecast dashboard tab.
+
+**Source sheet:** "LiquiditySchedule"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `deal_id` | int | Deal identifier (join key) |
+| `direction` | str | B, L, D, S |
+| `currency` | str | CHF, EUR, USD, GBP |
+| `YYYY-MM-DD` / `YYYY/MM` | float | Daily columns for the first 90 days, then monthly columns |
+
+The daily columns cover the near-term liquidity horizon (inflows/outflows), while monthly columns extend the projection. Used to compute cumulative gap, survival horizon, and top maturing deals.
+
+### `parse_custom_scenarios(path) -> DataFrame`
+
+Parses user-defined stress tests with a tenor x scenario grid. Located in `data/parsers/custom_scenarios.py`.
+
+**CLI flag:** `--custom-scenarios path/to/custom_scenarios.xlsx`
+
+**Source sheet:** "Scenarios"
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `Tenor` | str | Tenor point (e.g. O/N, 3M, 6M, 1Y, 2Y, 5Y, 10Y, 20Y, 30Y) |
+| *(scenario columns)* | float | One column per scenario name; values are basis point shocks at each tenor point |
+
+Example layout:
+
+| Tenor | mild_flattener | severe_inversion | stagflation |
+|-------|---------------|-----------------|-------------|
+| O/N   | 0             | 50              | 100         |
+| 1Y    | -25           | 100             | 150         |
+| 5Y    | -50           | -50             | 75          |
+| 10Y   | -75           | -150            | 50          |
+
+Custom scenarios are merged with any BCBS 368 scenarios and appear in the Scenario Studio dashboard tab for NII + ΔEVE ranking, reverse stress testing, and the decision matrix.
+
+---
+
+## Data Quality
+
+The `src/cockpit/data/quality.py` module provides automated validation of input data.
+
+### Checks
+
+| Check | Threshold | Result |
+|-------|-----------|--------|
+| Deal-rate match rate | >= 95% = pass, < 95% = warn/fail | Percentage of deals successfully joined to rate data |
+| Orphan deals | 0 = pass | Deals present in schedule but missing from deals file (or vice versa) |
+| Rate staleness | <= 3 days = pass, > 3 days = fail | Age of the most recent rate observation |
+| Field coverage | Per column | Percentage of non-null values for each required column |
+
+### Output
+
+Returns a `DataQualityReport` with:
+- Per-check status (`pass`, `warn`, `fail`)
+- Overall status (worst of individual checks)
+- Detail records for each finding
+
+Integrated into the **Data Quality** dashboard tab, which displays match rates, orphan counts, staleness indicators, and field coverage heatmaps.

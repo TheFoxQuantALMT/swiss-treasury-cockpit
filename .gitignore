@@ -11,3 +11,16 @@ output/*.xlsx
 output/*.pkl
 .env
 *.pkl
+
+# IDE and editor files
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+
+# Generated exports
+output/*.pdf

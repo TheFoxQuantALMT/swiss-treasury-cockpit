@@ -103,7 +103,7 @@ The rendered HTML file is self-contained:
 
 ---
 
-## P&L Dashboard (21-Tab ALM Dashboard)
+## P&L Dashboard (37-Tab ALM Dashboard)
 
 A dedicated P&L dashboard is rendered via `cockpit render-pnl`, separate from the macro cockpit. It targets treasury/ALM teams and ALCO meetings.
 
@@ -140,35 +140,125 @@ render_pnl_dashboard(
 
 All optional inputs default to `None` -- tabs render placeholders when data is absent.
 
-### Dashboard Tabs (21)
+### Dashboard Tabs (37)
+
+The 37 tabs are organized into 7 chart builder categories:
+
+#### Core (7)
 
 | # | Tab | Key Content |
 |---|-----|-------------|
-| 1 | **ALCO Risk Summary** | Consolidated metrics table, limit utilization bars, breach log |
-| 2 | **Summary** | NII KPIs by currency, DoD bridge, CoC YTD, liquidity snapshot |
-| 3 | **CoC Decomposition** | GrossCarry, FundingCost, CoC Simple/Compound monthly |
-| 4 | **P&L Series** | Monthly NII time series by currency and shock |
-| 5 | **Shock Sensitivity** | NII delta matrix (shock × currency) |
-| 6 | **EVE** | Economic Value of Equity, IRRBB outlier test, tenor ladder, convexity/gamma, KRD |
-| 7 | **NII-at-Risk** | BCBS scenario heatmap, tornado chart, parametric EaR (95%/99%) |
-| 8 | **Repricing Gap** | Time-bucket repricing exposure by currency |
-| 9 | **FX Mismatch** | Cross-currency NII exposure |
-| 10 | **NMD Audit Trail** | Deal-level NMD profile matching (tier, decay, beta), coverage stats |
-| 11 | **Budget vs Actual** | NII vs budget comparison by currency |
-| 12 | **P&L Attribution** | Waterfall: time, new deals, matured, rate effect, spread effect |
-| 13 | **Forecast Tracking** | Historical NII forecast evolution over time |
-| 14 | **Strategy IAS** | IAS hedge decomposition into 4 synthetic legs |
-| 15 | **Counterparty** | P&L concentration by counterparty |
-| 16 | **Hedge Effectiveness** | IAS 39 dollar-offset / IFRS 9 R², scenario cross-reference |
-| 17 | **FTP & Business Unit** | 3-way margin split (client/ALM/total) by perimeter and currency |
-| 18 | **Liquidity Forecast** | Daily (90d) + monthly cash flows, survival horizon, top maturities |
-| 19 | **BOOK2 MTM** | IRS mark-to-market P&L |
-| 20 | **Rate Curves** | OIS forward curves and WIRP overlay |
-| 21 | **Alerts** | Threshold-based P&L, liquidity, and FTP alerts |
+| 1 | **Summary** | NII KPIs by currency, DoD bridge, CoC YTD, Locked-in NII KPI, liquidity snapshot |
+| 2 | **CoC Decomposition** | GrossCarry, FundingCost, CoC Simple/Compound monthly |
+| 3 | **P&L Series** | Monthly NII time series by currency and shock |
+| 4 | **Shock Sensitivity** | NII delta matrix (shock x currency), sensitivity explain waterfall |
+| 5 | **Strategy IAS** | IAS hedge decomposition into 4 synthetic legs |
+| 6 | **BOOK2 MTM** | IRS mark-to-market P&L |
+| 7 | **Rate Curves** | OIS forward curves and WIRP overlay |
+
+#### Risk (6)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 8 | **FX Mismatch** | Cross-currency NII exposure |
+| 9 | **Repricing Gap** | Time-bucket repricing exposure by currency |
+| 10 | **Counterparty** | P&L concentration by counterparty |
+| 11 | **Alerts** | Threshold-based P&L, liquidity, and FTP alerts |
+| 12 | **EVE** | Economic Value of Equity, IRRBB outlier test, tenor ladder, convexity/gamma, KRD |
+| 13 | **Limit Utilization** | Board-approved limit utilization bars, breach log |
+
+#### Attribution (7)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 14 | **FTP & Business Unit** | 3-way margin split (client/ALM/total) by perimeter and currency |
+| 15 | **Liquidity Forecast** | Daily (90d) + monthly cash flows, survival horizon, top maturities |
+| 16 | **NMD Audit Trail** | Deal-level NMD profile matching (tier, decay, beta), replication portfolio, coverage stats |
+| 17 | **ALCO Decision Pack** | Exec summary, consolidated metrics, decisions required |
+| 18 | **Budget vs Actual** | NII vs budget comparison by currency |
+| 19 | **P&L Attribution** | Waterfall: time, new deals, matured, rate effect, spread effect |
+| 20 | **Forecast Tracking** | Historical NII forecast evolution, revision analytics |
+
+#### Profitability (5)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 21 | **Hedge Effectiveness** | IAS 39 dollar-offset / IFRS 9 R-squared, scenario cross-reference |
+| 22 | **NII-at-Risk** | BCBS scenario heatmap, tornado chart, parametric EaR (95%/99%) |
+| 23 | **Deal Explorer** | Deal-level P&L drill-down |
+| 24 | **Fixed/Float Mix** | Fixed vs floating rate composition by currency |
+| 25 | **NIM & Profitability** | Net interest margin trends, Jaws ratio |
+
+#### Structure (3)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 26 | **Maturity Wall** | Reinvestment risk visualization, cliff detection |
+| 27 | **Historical Trends** | KPI sparklines over time |
+| 28 | **Regulatory Scorecard** | Regulatory compliance metrics |
+
+#### Scenarios (4)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 29 | **Risk Cube** | NII/EVE heatmaps across shock combinations |
+| 30 | **Deposit Behavior Intelligence** | Beta validation, beta sensitivity +/-0.1, concentration analysis |
+| 31 | **Scenario Studio** | NII+DEVE ranking, reverse stress test, decision matrix |
+| 32 | **Hedge Strategy Optimizer** | DV01-based IRS hedge recommendations |
+
+#### Monitoring (6)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 33 | **ALCO Decision Pack** | Decision audit trail, action items |
+| 34 | **Data Quality** | Match rates, orphan deals, field coverage, rate staleness |
+| 35 | **Basis Risk** | Spread compression sensitivity by product/currency (+/-50bp) |
+| 36 | **SNB Reserves** | 2.5% minimum reserve compliance, HQLA deduction |
+| 37 | **Peer Benchmark** | FINMA aggregate IRRBB statistics comparison |
+| -- | **NMD Backtest** | Modeled vs actual runoff comparison (R-squared/RMSE/MAE) -- placeholder |
+
+### Charts Architecture
+
+The chart builder code has been split from a monolithic `charts.py` into 8 submodules under the `pnl_dashboard/charts/` package:
+
+```
+pnl_dashboard/charts/
+  __init__.py
+  orchestrator.py    Main entry point + enrichment wiring
+  constants.py       Shared constants (colors, formats)
+  helpers.py         Shared utility functions
+  core.py            Summary, CoC, P&L Series, Sensitivity, Strategy, Book2, Curves
+  risk.py            FX Mismatch, Repricing Gap, Counterparty, Alerts, EVE, Limits
+  attribution.py     FTP, Liquidity, NMD Audit, ALCO, Budget, Attribution, Forecast Tracking
+  profitability.py   Hedge Effectiveness, NII-at-Risk, Deal Explorer, Fixed/Float, NIM
+  structure.py       Maturity Wall, Trends, Regulatory
+  scenarios.py       Risk Cube, Deposit Behavior, Scenario Studio, Hedge Strategy
+  monitoring.py      ALCO Decision Pack, Data Quality, Basis Risk, SNB Reserves, Peer Benchmark, NMD Backtest
+```
+
+The orchestrator wires all submodules together and handles enrichment data (EVE results, NMD profiles, limits, etc.) routing to the appropriate builders.
+
+### Export Formats
+
+The P&L dashboard supports multiple output formats via the `--format` CLI flag:
+
+| Format | Flag | Description |
+|--------|------|-------------|
+| **HTML** (default) | `--format html` | Self-contained dashboard with inline Chart.js |
+| **Excel** | `--format xlsx` | Multi-sheet workbook (Summary, Sensitivity, EVE, Alerts, Limits, FTP, Metadata) |
+| **PDF** | `--format pdf` | Rendered via weasyprint or pdfkit |
+| **All** | `--format all` | Generates HTML + Excel + PDF together |
+
+```bash
+# Examples
+uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels
+uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --format xlsx
+uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --format all
+```
 
 ### Chart Library
 
-Uses [Chart.js 4.x](https://www.chartjs.org/) loaded via CDN. Chart data is built by `pnl_dashboard/charts.py` and embedded as inline JSON via the `tojson_safe` Jinja2 filter.
+Uses [Chart.js 4.x](https://www.chartjs.org/) loaded via CDN. Chart data is built by the `pnl_dashboard/charts/` package and embedded as inline JSON via the `tojson_safe` Jinja2 filter.
 
 ### Optional ALM Input Files
 
@@ -183,5 +273,6 @@ All auto-discovered via glob patterns from the input directory:
 | `*limit*` | `parse_limits()` | Board-approved NII/EVE limits |
 | `*alert*threshold*` | `parse_alert_thresholds()` | Per-currency alert threshold overrides |
 | `*liquidity*` | `parse_liquidity_schedule()` | Daily/monthly cash flow projections |
+| `*custom_scenarios*` | `parse_custom_scenarios()` | User-defined stress tests (tenor x scenario grid) |
 
 FTP is a column (`FTP`) in `deals.xlsx`, not a separate file.

@@ -25,13 +25,24 @@ uv run pytest --cov=cockpit
 tests/
   test_agents.py                    Agent instantiation, LLM integration
   test_alerts.py                    Threshold alert system
+  test_calendar.py                  Swiss business day calendar (holidays, Easter, next/prev business day)
   test_charts.py                    Chart data builders
   test_cli.py                       CLI command parsing and execution
   test_config.py                    Configuration constants
+  test_config_loader.py             YAML config loading, deep merge, cache reset
   test_data_manager.py              DataManager initialization
+  test_data_quality.py              Data quality report (match rates, orphan deals, staleness, field coverage)
   test_integration.py               End-to-end pipeline integration
   test_renderer.py                  HTML cockpit rendering
+  test_repricing.py                 Repricing gap analysis
   test_scoring.py                   Risk scoring (normalize, compute_scores)
+
+  test_phase3_advanced.py           Wave 2 features (FTP, liquidity, NMD audit, ALCO, budget, attribution, forecast tracking)
+  test_phase3_risk.py               Wave 1 risk features (FX mismatch, repricing gap, counterparty, alerts, EVE, limits)
+  test_phase4_builders.py           Wave 3 chart builders (hedge effectiveness, NII-at-Risk, deal explorer, fixed/float, NIM, maturity wall, trends, regulatory, risk cube, deposit behavior, scenario studio, hedge strategy)
+  test_phase4_swiss.py              Swiss-specific features (SNB reserves, peer benchmark, basis risk, NMD backtest, data quality)
+  test_phase5_decisions.py          ALCO decision tracking (record, list, update, summary)
+  test_phase6_integration.py        Multi-wave integration (full pipeline, export, cross-tab consistency)
 
   test_engine/
     conftest.py                     Shared fixtures (sample data paths)
@@ -267,7 +278,7 @@ Tests that require external dependencies skip gracefully:
 
 After code changes, verify:
 
-1. `uv run pytest` -- all tests pass (257+ tests)
+1. `uv run pytest` -- all tests pass (400+ tests)
 2. **Tier 1 (known-answer):** hand-calculated P&L matches engine output to 0.01 tolerance
 3. **Tier 2 (invariants):** `Total = Realized + Forecast` holds for all deals and months
 4. `CoC_Simple == GrossCarry - FundingCost` exactly (per month)
@@ -284,4 +295,13 @@ After code changes, verify:
 15. NMD decay reduces nominal over time, deposit beta reduces rate passthrough
 16. P&L explain waterfall reconciles: `Prev + effects = Current`
 17. Limit utilization bars render green/yellow/red based on % of limit
-18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 21 tabs render
+18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 35 tabs render
+19. Swiss business day calendar: 10 holidays recognized, Easter algorithm correct
+20. YAML config deep merge: overrides applied correctly, cache reset works
+21. Data quality: match rates, orphan deal detection, field coverage, rate staleness
+22. Wave 1 risk tabs: FX mismatch, repricing gap, counterparty, alerts, EVE, limits
+23. Wave 2 advanced tabs: FTP, liquidity, NMD audit, ALCO, budget, attribution, forecast tracking
+24. Wave 3 chart builders: hedge effectiveness, NII-at-Risk, deal explorer, fixed/float, NIM, maturity wall, trends, regulatory, risk cube, deposit behavior, scenario studio, hedge strategy
+25. Swiss-specific features: SNB reserves 2.5% compliance, peer benchmark, basis risk, NMD backtest
+26. ALCO decision tracking: record/list/update lifecycle, monthly summary
+27. Multi-wave integration: full pipeline end-to-end, export formats, cross-tab consistency
