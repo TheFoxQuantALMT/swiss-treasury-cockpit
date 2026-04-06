@@ -170,6 +170,13 @@ def render_pnl_dashboard(
         "has_maturity_wall": data["maturity_wall"].get("has_data", False),
         "trends": data["trends"],
         "has_trends": data["trends"].get("has_data", False),
+        # Phase 3 tabs
+        "regulatory": data["regulatory"],
+        "has_regulatory": data["regulatory"].get("has_data", False),
+        "risk_cube": data["risk_cube"],
+        "has_risk_cube": data["risk_cube"].get("has_data", False),
+        "deposit_behavior": data["deposit_behavior"],
+        "has_deposit_behavior": data["deposit_behavior"].get("has_data", False),
     }
 
     template = env.get_template("pnl_dashboard.html")

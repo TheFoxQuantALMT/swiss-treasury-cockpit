@@ -1939,6 +1939,9 @@ def build_pnl_dashboard_data(
         # Phase 2: Maturity Wall, Trends
         "maturity_wall": _build_maturity_wall(deals, df),
         "trends": _build_trends(kpi_history),
+        # Phase 3: Risk Cube, Deposit Behavior
+        "risk_cube": _build_risk_cube(df, pnl_by_deal),
+        "deposit_behavior": _build_deposit_behavior(deals, nmd_profiles, df),
     }
 
     # Limit utilization (needs eve + nii_at_risk computed first)
@@ -1995,6 +1998,9 @@ def build_pnl_dashboard_data(
 
     # ALCO risk summary (reads from all other computed results)
     result["alco"] = _build_alco(result)
+
+    # Regulatory scorecard (reads from all other computed results)
+    result["regulatory"] = _build_regulatory(result)
 
     return result
 
@@ -3033,4 +3039,442 @@ def _build_trends(
         "has_data": len(dates) > 1 and len(metrics) > 0,
         "dates": dates,
         "metrics": metrics,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Regulatory, Risk Cube, Deposit Behavior
+# ---------------------------------------------------------------------------
+
+
+def _build_regulatory(result: dict) -> dict:
+    """Regulatory compliance scorecard consolidating IRRBB, LCR/NSFR proxies, limits.
+
+    Runs AFTER all other tab builders, reading from the result dict (like _build_alco).
+    """
+    checks = []
+
+    # 1. IRRBB Outlier Test (BCBS 368: ΔEVE/Tier1 > 15% = outlier)
+    eve = result.get("eve", {})
+    if eve.get("has_data"):
+        outlier = eve.get("outlier_test", {})
+        if outlier:
+            checks.append({
+                "regulation": "IRRBB Outlier Test (BCBS 368)",
+                "metric": "Worst ΔEVE / Tier 1 Capital",
+                "value": outlier.get("worst_pct", 0),
+                "threshold": 15.0,
+                "unit": "%",
+                "status": outlier.get("status", "N/A"),
+                "detail": f"Worst scenario: {outlier.get('worst_scenario', 'N/A')}",
+            })
+        else:
+            # Derive from scenario data
+            sc = eve.get("scenarios", {})
+            if sc and sc.get("worst_delta"):
+                checks.append({
+                    "regulation": "IRRBB Outlier Test (BCBS 368)",
+                    "metric": "Worst ΔEVE",
+                    "value": sc.get("worst_delta", 0),
+                    "threshold": None,
+                    "unit": "abs",
+                    "status": "INFO",
+                    "detail": f"Scenario: {sc.get('worst_scenario', '')}. Tier 1 capital not provided.",
+                })
+
+    # 2. NII Floor (supervisory: NII should not drop below floor under stress)
+    nii_risk = result.get("nii_at_risk", {})
+    summary = result.get("summary", {})
+    base_nii = summary.get("kpis", {}).get("shock_0", {}).get("total", 0)
+    if nii_risk.get("has_data"):
+        wc = nii_risk.get("worst_case", {})
+        worst_nii = base_nii + wc.get("delta", 0)
+        checks.append({
+            "regulation": "NII Floor (FINMA 2019/2)",
+            "metric": "Worst-case NII",
+            "value": round(float(worst_nii), 0),
+            "threshold": 0,
+            "unit": "abs",
+            "status": "PASS" if worst_nii > 0 else "FAIL",
+            "detail": f"Base NII {base_nii:,.0f} + ΔNII {wc.get('delta', 0):,.0f} ({wc.get('scenario', '')})",
+        })
+
+    # 3. EVE Sensitivity (supervisory: ΔEVE under ±200bp parallel shock)
+    if eve.get("has_data"):
+        sc = eve.get("scenarios", {})
+        heatmap = sc.get("heatmap", []) if sc else []
+        for row in heatmap:
+            if row.get("scenario") in ("parallel_up", "parallel_down"):
+                checks.append({
+                    "regulation": f"EVE Sensitivity ({row['scenario']})",
+                    "metric": "ΔEVE",
+                    "value": row.get("total", 0),
+                    "threshold": None,
+                    "unit": "abs",
+                    "status": "INFO",
+                    "detail": "BCBS 368 standard shock ±200bp",
+                })
+
+    # 4. Duration Gap
+    conv = eve.get("convexity", {}) if eve.get("has_data") else {}
+    if conv:
+        eff_dur = conv.get("effective_duration", 0)
+        checks.append({
+            "regulation": "Duration Risk",
+            "metric": "Effective Duration",
+            "value": round(float(eff_dur), 2),
+            "threshold": 5.0,
+            "unit": "Y",
+            "status": "PASS" if abs(eff_dur) < 5 else "WATCH" if abs(eff_dur) < 7 else "FAIL",
+            "detail": "Portfolio weighted effective duration",
+        })
+
+    # 5. LCR Proxy (HQLA / Net outflows 30d)
+    liq = result.get("liquidity", {})
+    if liq.get("has_data"):
+        liq_sum = liq.get("summary", {})
+        net_30d = liq_sum.get("net_30d", 0)
+        # LCR = HQLA / max(net_outflows_30d, 0). We don't have HQLA here but
+        # can show the net outflow coverage
+        if net_30d < 0:
+            checks.append({
+                "regulation": "LCR Proxy (Liquidity Coverage)",
+                "metric": "Net 30d Outflow",
+                "value": round(float(net_30d), 0),
+                "threshold": 0,
+                "unit": "abs",
+                "status": "FAIL",
+                "detail": f"Net cash outflow of {net_30d:,.0f} in 30 days. Full LCR requires HQLA buffer.",
+            })
+        else:
+            checks.append({
+                "regulation": "LCR Proxy (Liquidity Coverage)",
+                "metric": "Net 30d Position",
+                "value": round(float(net_30d), 0),
+                "threshold": 0,
+                "unit": "abs",
+                "status": "PASS",
+                "detail": "Positive net cash position over 30 days",
+            })
+
+        # Survival horizon
+        surv = liq_sum.get("survival_days")
+        if surv is not None:
+            checks.append({
+                "regulation": "Liquidity Survival",
+                "metric": "Days to deficit",
+                "value": surv,
+                "threshold": 30,
+                "unit": "days",
+                "status": "FAIL" if surv < 30 else "WATCH" if surv < 90 else "PASS",
+                "detail": f"Cumulative gap turns negative at day {surv}",
+            })
+
+    # 6. Limit utilization summary
+    limits_data = result.get("limits", {})
+    if limits_data.get("has_data"):
+        breaches = [i for i in limits_data.get("limit_items", []) if i.get("status") == "red"]
+        warnings = [i for i in limits_data.get("limit_items", []) if i.get("status") == "yellow"]
+        checks.append({
+            "regulation": "Board-Approved Limits",
+            "metric": "Limit Status",
+            "value": len(breaches),
+            "threshold": 0,
+            "unit": "breaches",
+            "status": "FAIL" if breaches else "WATCH" if warnings else "PASS",
+            "detail": f"{len(breaches)} breach(es), {len(warnings)} warning(s) of "
+                      f"{len(limits_data.get('limit_items', []))} limits",
+        })
+
+    # 7. Concentration
+    cpty = result.get("counterparty_pnl", {})
+    if cpty.get("has_data"):
+        hhi = cpty.get("hhi", 0)
+        checks.append({
+            "regulation": "Concentration Risk",
+            "metric": "P&L HHI",
+            "value": round(float(hhi), 0),
+            "threshold": 2500,
+            "unit": "idx",
+            "status": "PASS" if hhi < 1500 else "WATCH" if hhi < 2500 else "FAIL",
+            "detail": "HHI < 1500 = low, 1500-2500 = moderate, >2500 = high concentration",
+        })
+
+    # Summary counts
+    pass_count = sum(1 for c in checks if c["status"] == "PASS")
+    watch_count = sum(1 for c in checks if c["status"] in ("WATCH", "INFO"))
+    fail_count = sum(1 for c in checks if c["status"] in ("FAIL", "OUTLIER"))
+
+    return {
+        "has_data": len(checks) > 0,
+        "checks": checks,
+        "summary": {
+            "pass": pass_count,
+            "watch": watch_count,
+            "fail": fail_count,
+            "total": len(checks),
+        },
+    }
+
+
+def _build_risk_cube(
+    df: pd.DataFrame,
+    pnl_by_deal: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Cross-dimensional risk analytics: Product×Currency, Counterparty×Product, Direction×Currency."""
+    source = None
+    if pnl_by_deal is not None and not pnl_by_deal.empty:
+        source = pnl_by_deal.copy()
+        if "Shock" in source.columns:
+            source = source[source["Shock"] == "0"]
+    elif not df.empty:
+        source = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+
+    if source is None or source.empty:
+        return {"has_data": False, "product_currency": {}, "counterparty_product": {},
+                "direction_currency": {}}
+
+    # Standardize column names
+    ccy_col = None
+    for c in ["Currency", "Deal currency"]:
+        if c in source.columns:
+            ccy_col = c
+            break
+    prod_col = None
+    for c in ["Product", "Product2BuyBack"]:
+        if c in source.columns:
+            prod_col = c
+            break
+    pnl_col = "PnL" if "PnL" in source.columns else "Value" if "Value" in source.columns else None
+
+    if pnl_col is None:
+        return {"has_data": False, "product_currency": {}, "counterparty_product": {},
+                "direction_currency": {}}
+
+    # 1. Product × Currency heatmap
+    product_currency = {"products": [], "currencies": [], "matrix": [], "totals_by_prod": {}, "totals_by_ccy": {}}
+    if prod_col and ccy_col:
+        pivot = source.groupby([prod_col, ccy_col])[pnl_col].sum().unstack(fill_value=0)
+        products = sorted(pivot.index.tolist())
+        currencies = sorted(pivot.columns.tolist())
+        matrix = []
+        for prod in products:
+            row = []
+            for ccy in currencies:
+                val = float(pivot.loc[prod, ccy]) if ccy in pivot.columns else 0
+                row.append(round(val, 0))
+            matrix.append(row)
+        product_currency = {
+            "products": [str(p) for p in products],
+            "currencies": [str(c) for c in currencies],
+            "matrix": matrix,
+            "totals_by_prod": {str(p): round(float(pivot.loc[p].sum()), 0) for p in products},
+            "totals_by_ccy": {str(c): round(float(pivot[c].sum()), 0) for c in currencies},
+        }
+
+    # 2. Counterparty × Product (top 10 counterparties)
+    counterparty_product = {"counterparties": [], "products": [], "matrix": []}
+    cpty_col = "Counterparty" if "Counterparty" in source.columns else None
+    if cpty_col and prod_col:
+        # Top 10 counterparties by absolute P&L
+        cpty_totals = source.groupby(cpty_col)[pnl_col].sum().abs().sort_values(ascending=False)
+        top_cptys = cpty_totals.head(10).index.tolist()
+        filtered = source[source[cpty_col].isin(top_cptys)]
+        if not filtered.empty:
+            pivot2 = filtered.groupby([cpty_col, prod_col])[pnl_col].sum().unstack(fill_value=0)
+            cptys = [str(c) for c in top_cptys if c in pivot2.index]
+            prods2 = sorted([str(p) for p in pivot2.columns.tolist()])
+            matrix2 = []
+            for cp in cptys:
+                row = []
+                for p in prods2:
+                    val = float(pivot2.loc[cp, p]) if p in pivot2.columns else 0
+                    row.append(round(val, 0))
+                matrix2.append(row)
+            counterparty_product = {
+                "counterparties": cptys,
+                "products": prods2,
+                "matrix": matrix2,
+            }
+
+    # 3. Direction × Currency
+    direction_currency = {"directions": [], "currencies": [], "matrix": []}
+    dir_col = "Direction" if "Direction" in source.columns else None
+    if dir_col and ccy_col:
+        pivot3 = source.groupby([dir_col, ccy_col])[pnl_col].sum().unstack(fill_value=0)
+        dirs = sorted(pivot3.index.tolist())
+        ccys3 = sorted(pivot3.columns.tolist())
+        matrix3 = []
+        for d in dirs:
+            row = [round(float(pivot3.loc[d, c]), 0) if c in pivot3.columns else 0 for c in ccys3]
+            matrix3.append(row)
+        direction_currency = {
+            "directions": [str(d) for d in dirs],
+            "currencies": [str(c) for c in ccys3],
+            "matrix": matrix3,
+        }
+
+    return {
+        "has_data": True,
+        "product_currency": product_currency,
+        "counterparty_product": counterparty_product,
+        "direction_currency": direction_currency,
+    }
+
+
+def _build_deposit_behavior(
+    deals: Optional[pd.DataFrame] = None,
+    nmd_profiles: Optional[pd.DataFrame] = None,
+    df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Deposit behavior intelligence: volume trends, beta validation, concentration."""
+    if deals is None or deals.empty:
+        return {"has_data": False, "volume_by_ccy": {}, "volume_by_product": {},
+                "beta_analysis": {}, "concentration": {}, "kpis": {}}
+
+    d = deals.copy()
+
+    # Filter to deposits (Direction = D or S)
+    dir_col = "Direction" if "Direction" in d.columns else None
+    if dir_col:
+        deposits = d[d[dir_col].isin(["D", "S"])].copy()
+    else:
+        return {"has_data": False, "volume_by_ccy": {}, "volume_by_product": {},
+                "beta_analysis": {}, "concentration": {}, "kpis": {}}
+
+    if deposits.empty:
+        return {"has_data": False, "volume_by_ccy": {}, "volume_by_product": {},
+                "beta_analysis": {}, "concentration": {}, "kpis": {}}
+
+    # Nominal
+    nom_col = "Amount" if "Amount" in deposits.columns else "Nominal" if "Nominal" in deposits.columns else None
+    if nom_col:
+        deposits["_nom"] = pd.to_numeric(deposits[nom_col], errors="coerce").fillna(0).abs()
+    else:
+        deposits["_nom"] = 0.0
+
+    ccy_col = "Currency" if "Currency" in deposits.columns else "Deal currency" if "Deal currency" in deposits.columns else None
+    prod_col = "Product" if "Product" in deposits.columns else "Product2BuyBack" if "Product2BuyBack" in deposits.columns else None
+
+    total_deposits = float(deposits["_nom"].sum())
+
+    # Volume by currency
+    volume_by_ccy = {}
+    if ccy_col:
+        for ccy in sorted(deposits[ccy_col].dropna().unique()):
+            subset = deposits[deposits[ccy_col] == ccy]
+            vol = float(subset["_nom"].sum())
+            volume_by_ccy[str(ccy)] = {
+                "volume": round(vol, 0),
+                "pct": round(vol / total_deposits * 100, 1) if total_deposits > 0 else 0,
+                "count": len(subset),
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            }
+
+    # Volume by product
+    volume_by_product = {}
+    if prod_col:
+        for prod in sorted(deposits[prod_col].dropna().unique()):
+            subset = deposits[deposits[prod_col] == prod]
+            vol = float(subset["_nom"].sum())
+            volume_by_product[str(prod)] = {
+                "volume": round(vol, 0),
+                "pct": round(vol / total_deposits * 100, 1) if total_deposits > 0 else 0,
+                "count": len(subset),
+                "color": PRODUCT_COLORS.get(str(prod), "#8b949e"),
+            }
+
+    # Beta analysis: compare modeled beta from NMD profiles with implied rate passthrough
+    beta_analysis = {"by_tier": {}, "by_currency": {}}
+    if nmd_profiles is not None and not nmd_profiles.empty:
+        profiles = nmd_profiles.copy()
+        # Summarize NMD profiles
+        if "tier" in profiles.columns:
+            for tier in sorted(profiles["tier"].unique()):
+                t_data = profiles[profiles["tier"] == tier]
+                beta_col = "deposit_beta" if "deposit_beta" in t_data.columns else None
+                decay_col = "decay_rate" if "decay_rate" in t_data.columns else None
+                bm_col = "behavioral_maturity_years" if "behavioral_maturity_years" in t_data.columns else \
+                         "behavioral_maturity" if "behavioral_maturity" in t_data.columns else None
+                beta_analysis["by_tier"][str(tier)] = {
+                    "count": len(t_data),
+                    "avg_beta": round(float(t_data[beta_col].mean()), 3) if beta_col else None,
+                    "avg_decay": round(float(t_data[decay_col].mean()), 4) if decay_col else None,
+                    "avg_bm_years": round(float(t_data[bm_col].mean()), 1) if bm_col else None,
+                }
+
+        # By currency
+        if "currency" in profiles.columns:
+            beta_col = "deposit_beta" if "deposit_beta" in profiles.columns else None
+            for ccy in sorted(profiles["currency"].unique()):
+                c_data = profiles[profiles["currency"] == ccy]
+                beta_analysis["by_currency"][str(ccy)] = {
+                    "count": len(c_data),
+                    "avg_beta": round(float(c_data[beta_col].mean()), 3) if beta_col else None,
+                    "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+                }
+
+    # Implied beta from OIS vs deposit rates
+    implied_beta = {}
+    if df is not None and not df.empty and ccy_col:
+        ois_rows = df[(df["Indice"] == "OISfwd") & (df["Shock"] == "0")]
+        ref_rows = df[(df["Indice"] == "RateRef") & (df["Shock"] == "0")]
+        if not ois_rows.empty and not ref_rows.empty:
+            # Filter to deposit direction
+            dep_ref = ref_rows[ref_rows["Direction"].isin(["D", "S"])] if "Direction" in ref_rows.columns else ref_rows
+            for ccy_val in dep_ref["Deal currency"].unique() if "Deal currency" in dep_ref.columns else []:
+                ccy_ois = float(ois_rows[ois_rows["Deal currency"] == ccy_val]["Value"].mean()) if "Deal currency" in ois_rows.columns else 0
+                ccy_ref = float(dep_ref[dep_ref["Deal currency"] == ccy_val]["Value"].mean())
+                # Implied beta = deposit_rate / OIS_rate (simplified)
+                if ccy_ois != 0:
+                    implied = ccy_ref / ccy_ois
+                    implied_beta[str(ccy_val)] = round(float(implied), 3)
+    beta_analysis["implied_beta"] = implied_beta
+
+    # Deposit concentration: top 10 depositors
+    concentration = {"top_10": [], "hhi": 0}
+    cpty_col = "Counterparty" if "Counterparty" in deposits.columns else None
+    if cpty_col:
+        by_cpty = deposits.groupby(cpty_col)["_nom"].sum().sort_values(ascending=False)
+        total = by_cpty.sum()
+        top10 = by_cpty.head(10)
+        concentration["top_10"] = [
+            {
+                "counterparty": str(cp),
+                "volume": round(float(vol), 0),
+                "pct": round(float(vol) / total * 100, 1) if total > 0 else 0,
+            }
+            for cp, vol in top10.items()
+        ]
+        if total > 0:
+            shares = (by_cpty / total * 100)
+            concentration["hhi"] = round(float((shares ** 2).sum()), 0)
+        concentration["top10_pct"] = round(float(top10.sum()) / total * 100, 1) if total > 0 else 0
+
+    # KPIs
+    avg_rate = 0
+    rate_col = None
+    for c in ["RateRef", "EqOisRate", "Clientrate"]:
+        if c in deposits.columns:
+            rate_col = c
+            break
+    if rate_col:
+        deposits["_rate"] = pd.to_numeric(deposits[rate_col], errors="coerce").fillna(0)
+        avg_rate = float((deposits["_rate"] * deposits["_nom"]).sum()) / total_deposits if total_deposits > 0 else 0
+
+    kpis = {
+        "total_deposits": round(total_deposits, 0),
+        "deal_count": len(deposits),
+        "avg_rate_pct": round(avg_rate * 100, 4),
+        "n_currencies": len(volume_by_ccy),
+        "hhi": concentration.get("hhi", 0),
+    }
+
+    return {
+        "has_data": True,
+        "volume_by_ccy": volume_by_ccy,
+        "volume_by_product": volume_by_product,
+        "beta_analysis": beta_analysis,
+        "concentration": concentration,
+        "kpis": kpis,
     }

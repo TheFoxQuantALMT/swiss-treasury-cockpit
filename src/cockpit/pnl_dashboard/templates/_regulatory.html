@@ -1,0 +1,86 @@
+<div id="tab-regulatory" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Regulatory Compliance Scorecard</h3>
+
+  {% if has_regulatory %}
+  <!-- Traffic Light Summary -->
+  <div class="grid-3" style="margin-bottom: 16px;">
+    <div class="kpi-card" style="border-left: 3px solid #3fb950;">
+      <div class="label">PASS</div>
+      <div class="value positive">{{ regulatory.summary.pass }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #d29922;">
+      <div class="label">WATCH / INFO</div>
+      <div class="value" style="color: #d29922;">{{ regulatory.summary.watch }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #f85149;">
+      <div class="label">FAIL</div>
+      <div class="value negative">{{ regulatory.summary.fail }}</div>
+    </div>
+  </div>
+
+  <!-- Compliance checks table -->
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Regulation</th>
+          <th>Metric</th>
+          <th>Value</th>
+          <th>Threshold</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in regulatory.checks %}
+        <tr>
+          <td>
+            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+              {% if c.status == 'PASS' %}background: #3fb950;
+              {% elif c.status in ['WATCH', 'INFO'] %}background: #d29922;
+              {% elif c.status in ['FAIL', 'OUTLIER'] %}background: #f85149;
+              {% else %}background: #8b949e;{% endif %}
+              margin-right: 6px; vertical-align: middle;"></span>
+            <span style="font-size: 0.75rem; font-weight: 600;
+              {% if c.status == 'PASS' %}color: #3fb950;
+              {% elif c.status in ['WATCH', 'INFO'] %}color: #d29922;
+              {% elif c.status in ['FAIL', 'OUTLIER'] %}color: #f85149;
+              {% else %}color: #8b949e;{% endif %}">{{ c.status }}</span>
+          </td>
+          <td style="font-weight: 500;">{{ c.regulation }}</td>
+          <td>{{ c.metric }}</td>
+          <td style="text-align: right;">
+            {% if c.unit == '%' %}{{ "%.2f"|format(c.value) }}%
+            {% elif c.unit == 'Y' %}{{ "%.2f"|format(c.value) }}Y
+            {% elif c.unit == 'days' %}{{ c.value }}d
+            {% elif c.unit == 'breaches' %}{{ c.value }}
+            {% elif c.unit == 'idx' %}{{ "{:,.0f}".format(c.value) }}
+            {% else %}{{ "{:,.0f}".format(c.value) }}{% endif %}
+          </td>
+          <td style="text-align: right;">
+            {% if c.threshold is not none %}
+              {% if c.unit == '%' %}{{ "%.1f"|format(c.threshold) }}%
+              {% elif c.unit == 'Y' %}{{ "%.1f"|format(c.threshold) }}Y
+              {% elif c.unit == 'days' %}{{ c.threshold }}d
+              {% else %}{{ "{:,.0f}".format(c.threshold) }}{% endif %}
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td style="font-size: 0.8rem; color: var(--text-secondary);">{{ c.detail }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="footnote">
+    Regulatory checks derived from computed dashboard data. IRRBB Outlier Test per BCBS 368 (&Delta;EVE / Tier 1 &gt; 15%).
+    LCR/NSFR are indicative proxies &mdash; full calculation requires HQLA and stable funding classification.
+  </p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No regulatory data available.</p>
+    <p style="font-size: 0.85rem;">Provide EVE scenarios, limits, and liquidity data for regulatory checks.</p>
+  </div>
+  {% endif %}
+</div>

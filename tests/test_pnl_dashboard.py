@@ -119,6 +119,7 @@ class TestEmptyData:
             "ftp", "liquidity", "nmd_audit", "alco",
             "deal_explorer", "fixed_float", "nim",
             "maturity_wall", "trends",
+            "regulatory", "risk_cube", "deposit_behavior",
         }
         assert set(result.keys()) == expected_keys
 

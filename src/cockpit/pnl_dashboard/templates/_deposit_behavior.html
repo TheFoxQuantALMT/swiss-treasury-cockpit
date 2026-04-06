@@ -1,0 +1,186 @@
+<div id="tab-deposit-behavior" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Deposit Behavior Intelligence</h3>
+
+  {% if has_deposit_behavior %}
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Total Deposits</div>
+      <div class="value">{{ "{:,.0f}".format(deposit_behavior.kpis.total_deposits) }}</div>
+      <div class="sub">{{ deposit_behavior.kpis.deal_count }} deals</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Avg Deposit Rate</div>
+      <div class="value">{{ "%.4f"|format(deposit_behavior.kpis.avg_rate_pct) }}%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Currencies</div>
+      <div class="value">{{ deposit_behavior.kpis.n_currencies }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Depositor HHI</div>
+      <div class="value {{ 'positive' if deposit_behavior.kpis.hhi < 1500 else 'negative' if deposit_behavior.kpis.hhi > 2500 else '' }}">{{ "{:,.0f}".format(deposit_behavior.kpis.hhi) }}</div>
+      <div class="sub">{% if deposit_behavior.kpis.hhi < 1500 %}Low{% elif deposit_behavior.kpis.hhi < 2500 %}Moderate{% else %}High{% endif %} concentration</div>
+    </div>
+  </div>
+
+  <!-- Volume breakdown charts -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Deposits by Currency</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-dep-ccy"></canvas></div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Deposits by Product</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-dep-product"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Beta Analysis -->
+  {% if deposit_behavior.beta_analysis and (deposit_behavior.beta_analysis.by_tier or deposit_behavior.beta_analysis.implied_beta) %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Deposit Beta Analysis</h4>
+
+    {% if deposit_behavior.beta_analysis.by_tier %}
+    <h5 style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">Modeled Beta by Tier (from NMD profiles)</h5>
+    <table style="margin-bottom: 12px;">
+      <thead>
+        <tr><th>Tier</th><th>Profiles</th><th>Avg Beta</th><th>Avg Decay Rate</th><th>Avg Behavioral Maturity</th></tr>
+      </thead>
+      <tbody>
+      {% for tier, t in deposit_behavior.beta_analysis.by_tier.items() %}
+        <tr>
+          <td style="text-transform: uppercase;">{{ tier }}</td>
+          <td style="text-align: right;">{{ t.count }}</td>
+          <td style="text-align: right;">{% if t.avg_beta is not none %}{{ "%.3f"|format(t.avg_beta) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align: right;">{% if t.avg_decay is not none %}{{ "%.4f"|format(t.avg_decay) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align: right;">{% if t.avg_bm_years is not none %}{{ "%.1f"|format(t.avg_bm_years) }}Y{% else %}&mdash;{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if deposit_behavior.beta_analysis.by_currency %}
+    <h5 style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">Modeled Beta by Currency</h5>
+    <div class="grid-4" style="margin-bottom: 12px;">
+      {% for ccy, c in deposit_behavior.beta_analysis.by_currency.items() %}
+      <div class="kpi-card" style="padding: 10px;">
+        <div class="label">{{ ccy }}</div>
+        <div class="value" style="font-size: 1.2rem;">{% if c.avg_beta is not none %}{{ "%.3f"|format(c.avg_beta) }}{% else %}&mdash;{% endif %}</div>
+        <div class="sub">{{ c.count }} profiles</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if deposit_behavior.beta_analysis.implied_beta %}
+    <h5 style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">Implied Beta (Deposit Rate / OIS)</h5>
+    <div class="grid-4" style="margin-bottom: 12px;">
+      {% for ccy, beta in deposit_behavior.beta_analysis.implied_beta.items() %}
+      <div class="kpi-card" style="padding: 10px;">
+        <div class="label">{{ ccy }} implied</div>
+        <div class="value" style="font-size: 1.2rem;">{{ "%.3f"|format(beta) }}</div>
+        {% if deposit_behavior.beta_analysis.by_currency and ccy in deposit_behavior.beta_analysis.by_currency %}
+          {% set modeled = deposit_behavior.beta_analysis.by_currency[ccy].avg_beta %}
+          {% if modeled is not none %}
+          <div class="sub {{ 'positive' if (beta - modeled)|abs < 0.1 else 'negative' }}">
+            vs modeled {{ "%.3f"|format(modeled) }}
+            ({{ "{:+.3f}".format(beta - modeled) }})
+          </div>
+          {% endif %}
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Deposit Concentration -->
+  {% if deposit_behavior.concentration and deposit_behavior.concentration.top_10 %}
+  <div class="card">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Top 10 Depositors</h4>
+    {% if deposit_behavior.concentration.top10_pct is defined %}
+    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px;">
+      Top 10 hold {{ "%.1f"|format(deposit_behavior.concentration.top10_pct) }}% of total deposits &middot;
+      HHI: {{ "{:,.0f}".format(deposit_behavior.kpis.hhi) }}
+    </p>
+    {% endif %}
+    <table>
+      <thead><tr><th>Counterparty</th><th>Volume</th><th>% of Total</th></tr></thead>
+      <tbody>
+      {% for d in deposit_behavior.concentration.top_10 %}
+        <tr>
+          <td>{{ d.counterparty }}</td>
+          <td style="text-align: right;">{{ "{:,.0f}".format(d.volume) }}</td>
+          <td style="text-align: right;">{{ "%.1f"|format(d.pct) }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <p class="footnote">
+    Deposit Beta = rate passthrough from OIS to deposit rates (0 = fully sticky, 1 = full passthrough).
+    Implied Beta = current avg deposit rate / OIS. Compare with modeled NMD beta for model risk assessment.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ deposit_behavior | tojson_safe }};
+
+    // Currency donut
+    if (typeof Chart !== 'undefined' && data.volume_by_ccy) {
+      const ccys = Object.keys(data.volume_by_ccy);
+      if (ccys.length) {
+        new Chart(document.getElementById('chart-dep-ccy'), {
+          type: 'doughnut',
+          data: {
+            labels: ccys,
+            datasets: [{
+              data: ccys.map(c => data.volume_by_ccy[c].volume),
+              backgroundColor: ccys.map(c => data.volume_by_ccy[c].color),
+              borderColor: '#0d1117', borderWidth: 2,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 11 } } } }
+          }
+        });
+      }
+    }
+
+    // Product donut
+    if (typeof Chart !== 'undefined' && data.volume_by_product) {
+      const prods = Object.keys(data.volume_by_product);
+      if (prods.length) {
+        new Chart(document.getElementById('chart-dep-product'), {
+          type: 'doughnut',
+          data: {
+            labels: prods,
+            datasets: [{
+              data: prods.map(p => data.volume_by_product[p].volume),
+              backgroundColor: prods.map(p => data.volume_by_product[p].color),
+              borderColor: '#0d1117', borderWidth: 2,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 11 } } } }
+          }
+        });
+      }
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No deposit data available.</p>
+    <p style="font-size: 0.85rem;">Provide deals with Direction=D/S to enable deposit behavior analysis.</p>
+  </div>
+  {% endif %}
+</div>

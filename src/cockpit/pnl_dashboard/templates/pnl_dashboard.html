@@ -141,6 +141,9 @@ canvas { max-width: 100%; }
   <button class="tab-btn" onclick="switchTab('repricing-gap', event)">Repricing Gap</button>
   <button class="tab-btn" onclick="switchTab('currency-mismatch', event)">FX Mismatch</button>
   <button class="tab-btn" onclick="switchTab('nmd-audit', event)">NMD Audit</button>
+  <button class="tab-btn" onclick="switchTab('deposit-behavior', event)">Deposits</button>
+  <button class="tab-btn" onclick="switchTab('risk-cube', event)">Risk Cube</button>
+  <button class="tab-btn" onclick="switchTab('regulatory', event)">Regulatory</button>
   <!-- Attribution -->
   <button class="tab-btn" onclick="switchTab('budget', event)">Budget vs Actual</button>
   <button class="tab-btn" onclick="switchTab('attribution', event)">P&amp;L Attribution</button>
@@ -178,6 +181,9 @@ canvas { max-width: 100%; }
 {% include '_repricing_gap.html' %}
 {% include '_currency_mismatch.html' %}
 {% include '_nmd_audit.html' %}
+{% include '_deposit_behavior.html' %}
+{% include '_risk_cube.html' %}
+{% include '_regulatory.html' %}
 <!-- Attribution -->
 {% include '_budget.html' %}
 {% include '_attribution.html' %}
