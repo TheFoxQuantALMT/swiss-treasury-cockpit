@@ -230,6 +230,35 @@
 })();
 </script>
 
+<!-- Replication Portfolio (enrichment from pnl_engine) -->
+{% if nmd_audit.replication is defined and nmd_audit.replication.has_data %}
+<div class="card" style="margin-top: 16px; border-left: 3px solid var(--accent-blue);">
+  <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Replication Portfolio &mdash; Bullet Bond Approximation</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Tenor</th>
+        <th style="text-align:right;">Weight</th>
+        <th style="text-align:right;">Notional</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for tranche in nmd_audit.replication.portfolio %}
+      <tr>
+        <td>{{ tranche.tenor_label }}</td>
+        <td style="text-align:right;">{{ "%.1f"|format(tranche.weight * 100) }}%</td>
+        <td style="text-align:right;">{{ "{:,.0f}".format(tranche.notional) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="footnote">
+    Least-squares fit of NMD behavioral cashflows to standard bullet tenors.
+    R&sup2; = {{ "%.3f"|format(nmd_audit.replication.r_squared) }}
+  </p>
+</div>
+{% endif %}
+
 {% else %}
 <div class="card" style="text-align: center; padding: 48px;">
   <p style="color: var(--text-secondary);">No NMD profiles loaded. Place an <code>nmd_profiles.xlsx</code> file in the input directory.</p>

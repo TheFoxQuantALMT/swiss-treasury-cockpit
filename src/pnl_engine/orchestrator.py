@@ -756,3 +756,52 @@ class PnlEngine:
         result = result.set_index(present_mi)
 
         return result
+
+    def compute_enrichment_data(self) -> dict:
+        """Compute pre-built enrichment data for dashboard (locked-in NII + beta sensitivity).
+
+        These require engine-internal matrices not available in the chart orchestrator.
+        Returns dict with 'locked_in_nii' and 'beta_sensitivity' keys.
+        """
+        enrichment = {"locked_in_nii": {"has_data": False}, "beta_sensitivity": {}}
+
+        if self._deals_use is None or self._nominal_daily is None:
+            return enrichment
+
+        # Build base-shock matrices (shock=0)
+        try:
+            ois_curves = self._load_ois_curves(shock="0")
+            ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
+            ref_curves = self._load_ref_curves(shock="0")
+            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+
+            if self._nmd_profiles is not None and not self._nmd_profiles.empty:
+                from pnl_engine.nmd import apply_deposit_beta
+                rate_matrix = apply_deposit_beta(
+                    rate_matrix, self._deals_use, self._nmd_profiles, ois_matrix,
+                )
+        except Exception as exc:
+            logger.warning("Enrichment: failed to build base matrices: %s", exc)
+            return enrichment
+
+        # Locked-in NII
+        try:
+            from pnl_engine.locked_in_nii import compute_locked_in_nii
+            enrichment["locked_in_nii"] = compute_locked_in_nii(
+                self._deals_use, self._nominal_daily, rate_matrix, ois_matrix, self._mm,
+            )
+        except Exception as exc:
+            logger.warning("Enrichment: locked_in_nii failed: %s", exc)
+
+        # NMD beta sensitivity
+        try:
+            from pnl_engine.nmd import compute_nmd_beta_sensitivity
+            if self._nmd_profiles is not None and not self._nmd_profiles.empty:
+                enrichment["beta_sensitivity"] = compute_nmd_beta_sensitivity(
+                    self._deals_use, self._nmd_profiles,
+                    rate_matrix, ois_matrix, self._nominal_daily, self._mm,
+                )
+        except Exception as exc:
+            logger.warning("Enrichment: beta_sensitivity failed: %s", exc)
+
+        return enrichment

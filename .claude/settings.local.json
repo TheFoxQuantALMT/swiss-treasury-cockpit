@@ -1,20 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:github.com)",
-      "WebSearch",
-      "WebFetch(domain:www.opensourcerisk.org)",
-      "WebFetch(domain:rkapl123.github.io)",
-      "Bash(uv run:*)",
-      "Bash(grep:*)",
-      "Bash(wc -l /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit/src/cockpit/**/*.py)",
-      "Bash(xargs wc:*)",
-      "Bash(find:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
+      "Bash(git merge:*)",
+      "Bash(git clean:*)",
+      "Bash(git stash:*)",
       "Bash(git push:*)",
-      "Bash(start:*)",
-      "Bash(python -c ':*)"
+      "Bash(git add:*)"
     ]
   }
 }

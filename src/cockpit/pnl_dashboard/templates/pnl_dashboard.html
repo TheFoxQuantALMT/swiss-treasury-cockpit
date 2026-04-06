@@ -172,7 +172,12 @@ canvas { max-width: 100%; }
   <button class="tab-btn" onclick="switchTab('curves', event)">Rate Curves</button>
   <!-- Monitoring -->
   <button class="tab-btn" onclick="switchTab('trends', event)">Trends</button>
+  <button class="tab-btn" onclick="switchTab('basis-risk', event)">Basis Risk</button>
+  <button class="tab-btn" onclick="switchTab('snb-reserves', event)">SNB Reserves</button>
+  <button class="tab-btn" onclick="switchTab('peer-benchmark', event)">Peer Benchmark</button>
+  <button class="tab-btn" onclick="switchTab('nmd-backtest', event)">NMD Backtest</button>
   <button class="tab-btn" onclick="switchTab('pnl-alerts', event)">Alerts</button>
+  <button class="tab-btn" onclick="switchTab('data-quality', event)">Data Quality</button>
 </div>
 
 <!-- ALCO -->
@@ -215,7 +220,12 @@ canvas { max-width: 100%; }
 {% include '_curves.html' %}
 <!-- Monitoring -->
 {% include '_trends.html' %}
+{% include '_basis_risk.html' %}
+{% include '_snb_reserves.html' %}
+{% include '_peer_benchmark.html' %}
+{% include '_nmd_backtest.html' %}
 {% include '_pnl_alerts.html' %}
+{% include '_data_quality.html' %}
 
 <script>
 function switchTab(id, evt) {

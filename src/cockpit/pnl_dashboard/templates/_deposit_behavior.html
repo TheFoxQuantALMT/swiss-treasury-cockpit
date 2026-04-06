@@ -177,6 +177,38 @@
   })();
   </script>
 
+  <!-- NMD Beta Sensitivity (enrichment from pnl_engine) -->
+  {% if deposit_behavior.beta_sensitivity is defined and deposit_behavior.beta_sensitivity.has_data %}
+  <div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--accent-yellow);">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Beta Sensitivity Analysis (&pm;0.1 perturbation)</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Base NII</th>
+          <th style="text-align:right;">Beta &minus;0.1</th>
+          <th style="text-align:right;">&Delta; NII</th>
+          <th style="text-align:right;">Beta +0.1</th>
+          <th style="text-align:right;">&Delta; NII</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for ccy, row in deposit_behavior.beta_sensitivity.by_currency.items() %}
+        <tr>
+          <td>{{ ccy }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(row.base_nii) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(row.beta_down_nii) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if row.delta_down > 0 else 'negative' }}">{{ "{:+,.0f}".format(row.delta_down) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(row.beta_up_nii) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if row.delta_up > 0 else 'negative' }}">{{ "{:+,.0f}".format(row.delta_up) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="footnote">Impact of ±0.1 change in deposit beta on NII. Higher beta = faster rate passthrough = lower NII in rising rate environments.</p>
+  </div>
+  {% endif %}
+
   {% else %}
   <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
     <p>No deposit data available.</p>

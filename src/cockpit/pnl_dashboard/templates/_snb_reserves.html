@@ -1,0 +1,75 @@
+{% from "_macros.html" import kpi_card, empty_state %}
+<div id="tab-snb-reserves" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">SNB Minimum Reserve Compliance</h3>
+
+  {% if has_snb_reserves %}
+
+  <div class="grid-4" style="margin-bottom: 16px;">
+    {{ kpi_card("Reserve Requirement", "{:,.0f}".format(snb_reserves.reserve_requirement), "", "2.5% of sight liabilities") }}
+    {{ kpi_card("Eligible HQLA", "{:,.0f}".format(snb_reserves.eligible_hqla), "positive" if snb_reserves.eligible_hqla >= snb_reserves.reserve_requirement else "negative") }}
+    {{ kpi_card("Coverage Ratio", "{:.1f}%".format(snb_reserves.coverage_pct), "positive" if snb_reserves.coverage_pct >= 100 else "negative") }}
+    {{ kpi_card("Opportunity Cost", "{:,.0f}".format(snb_reserves.opportunity_cost), "negative" if snb_reserves.opportunity_cost > 0 else "neutral", "OIS × reserve excess") }}
+  </div>
+
+  {% if snb_reserves.by_product %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Sight Liabilities by Product</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th style="text-align:right;">Balance</th>
+          <th style="text-align:right;">Reserve (2.5%)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in snb_reserves.by_product %}
+        <tr>
+          <td>{{ item.product }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(item.balance) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(item.reserve) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Reserve Waterfall</h3>
+    <canvas id="snbReservesChart" height="280"></canvas>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ snb_reserves | tojson_safe }};
+    if (!data) return;
+    const labels = ['Sight Liabilities', 'Reserve Req (2.5%)', 'HQLA', 'Surplus/Deficit'];
+    const vals = [
+      data.total_sight_liabilities || 0,
+      data.reserve_requirement || 0,
+      data.eligible_hqla || 0,
+      (data.eligible_hqla || 0) - (data.reserve_requirement || 0)
+    ];
+    const colors = vals.map((v, i) => i === 3 ? (v >= 0 ? '#3fb950' : '#f85149') : '#58a6ff');
+    new Chart(document.getElementById('snbReservesChart'), {
+      type: 'bar',
+      data: { labels: labels, datasets: [{ data: vals, backgroundColor: colors, borderWidth: 0, borderRadius: 3 }] },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#e6edf3' } },
+          y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  <p class="footnote">SNB minimum reserve per LiqV Art. 13: 2.5% of relevant CHF sight liabilities, computed on 20th of reporting month.</p>
+
+  {% else %}
+  {{ empty_state("No SNB reserve data available.", "Requires deal data with CHF sight deposit liabilities.") }}
+  {% endif %}
+</div>

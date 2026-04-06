@@ -1,29 +1,37 @@
+{% from "_macros.html" import kpi_card, chart_container %}
 <div id="tab-summary" class="tab-content active">
   <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Executive Summary</h3>
 
-  <!-- KPI Cards -->
+  <!-- KPI Cards (JS-hydrated) -->
   <div class="grid-4" style="margin-bottom: 16px;">
-    <div class="kpi-card">
-      <div class="label">Base (0bp)</div>
-      <div class="value" id="kpi-base">—</div>
-      <div class="sub" id="kpi-base-sub"></div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">Shock +50bp</div>
-      <div class="value" id="kpi-50">—</div>
-      <div class="sub" id="kpi-50-sub"></div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">WIRP (Market)</div>
-      <div class="value" id="kpi-wirp">—</div>
-      <div class="sub" id="kpi-wirp-sub"></div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">&Delta; (+50bp vs Base)</div>
-      <div class="value" id="kpi-delta">—</div>
-      <div class="sub">NII Sensitivity</div>
-    </div>
+    {{ kpi_card("Base (0bp)", id="kpi-base", sub_id="kpi-base-sub") }}
+    {{ kpi_card("Shock +50bp", id="kpi-50", sub_id="kpi-50-sub") }}
+    {{ kpi_card("WIRP (Market)", id="kpi-wirp", sub_id="kpi-wirp-sub") }}
+    {{ kpi_card("&Delta; (+50bp vs Base)", id="kpi-delta", sub="NII Sensitivity") }}
   </div>
+
+  <!-- Locked-in NII (from pnl_engine) -->
+  {% if summary.locked_in_nii is defined and summary.locked_in_nii.has_data %}
+  <div class="grid-3" style="margin-bottom: 16px;">
+    {{ kpi_card("Locked-in NII (12M)", "{:,.0f}".format(summary.locked_in_nii.locked_nii),
+                css_class="positive", sub="{:.1f}% of total NII contractually locked".format(summary.locked_in_nii.locked_pct)) }}
+    {{ kpi_card("Total NII (12M)", "{:,.0f}".format(summary.locked_in_nii.total_nii)) }}
+    {{ kpi_card("At-Risk NII", "{:,.0f}".format(summary.locked_in_nii.total_nii - summary.locked_in_nii.locked_nii),
+                css_class="negative" if (summary.locked_in_nii.total_nii - summary.locked_in_nii.locked_nii) > summary.locked_in_nii.locked_nii else "neutral",
+                sub="Exposed to rate movements") }}
+  </div>
+  {% endif %}
+
+  <!-- Locked-in NII KPI -->
+  {% if summary.locked_in_nii is defined and summary.locked_in_nii.has_data %}
+  <div class="grid-3" style="margin-bottom: 16px;">
+    {{ kpi_card("Locked-in NII (12M)", "{:,.0f}".format(summary.locked_in_nii.locked_nii),
+                css_class="positive", sub="Fixed-rate deals only") }}
+    {{ kpi_card("% of Total NII Locked", "{:.1f}%".format(summary.locked_in_nii.locked_pct),
+                css_class="positive" if summary.locked_in_nii.locked_pct > 50 else "neutral") }}
+    {{ kpi_card("Total NII (12M)", "{:,.0f}".format(summary.locked_in_nii.total_nii)) }}
+  </div>
+  {% endif %}
 
   <!-- Day-over-Day P&L Bridge -->
   {% if summary.dod_bridge is defined and summary.dod_bridge %}
@@ -48,22 +56,14 @@
   <!-- CoC & Liquidity KPIs (conditional) -->
   {% if summary.coc_ytd is defined and summary.coc_ytd %}
   <div class="grid-4" style="margin-bottom: 16px;">
-    <div class="kpi-card">
-      <div class="label">YTD Gross Carry</div>
-      <div class="value {{ 'positive' if summary.coc_ytd.gross_carry >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.gross_carry) }}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">YTD Funding Cost</div>
-      <div class="value {{ 'positive' if summary.coc_ytd.funding_cost <= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.funding_cost) }}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">YTD CoC (Simple)</div>
-      <div class="value {{ 'positive' if summary.coc_ytd.coc_simple >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.coc_simple) }}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="label">YTD CoC (Compound)</div>
-      <div class="value {{ 'positive' if summary.coc_ytd.coc_compound >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.coc_compound) }}</div>
-    </div>
+    {{ kpi_card("YTD Gross Carry", "{:,.0f}".format(summary.coc_ytd.gross_carry),
+                css_class="positive" if summary.coc_ytd.gross_carry >= 0 else "negative") }}
+    {{ kpi_card("YTD Funding Cost", "{:,.0f}".format(summary.coc_ytd.funding_cost),
+                css_class="positive" if summary.coc_ytd.funding_cost <= 0 else "negative") }}
+    {{ kpi_card("YTD CoC (Simple)", "{:,.0f}".format(summary.coc_ytd.coc_simple),
+                css_class="positive" if summary.coc_ytd.coc_simple >= 0 else "negative") }}
+    {{ kpi_card("YTD CoC (Compound)", "{:,.0f}".format(summary.coc_ytd.coc_compound),
+                css_class="positive" if summary.coc_ytd.coc_compound >= 0 else "negative") }}
   </div>
   {% endif %}
 
@@ -150,7 +150,7 @@
       if (!kpis[shockKey]) return;
       const v = kpis[shockKey].total;
       el.textContent = fmt(v);
-      el.className = 'value ' + valClass(v);
+      el.className = 'kpi-value ' + valClass(v);
       if (sub && kpis[shockKey].realized != null) {
         sub.innerHTML = 'R: ' + fmt(kpis[shockKey].realized) + ' / F: ' + fmt(kpis[shockKey].forecast);
       }

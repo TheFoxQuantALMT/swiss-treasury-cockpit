@@ -66,9 +66,13 @@ def compute_eve(
     day_years = np.array([(d - date_run_ts).days / 365.25 for d in days])
     day_years = np.maximum(day_years, 0.0)  # no negative time
 
-    # Discount factors: exp(-OIS × t)
-    # Use cumulative average OIS for discounting (term rate approximation)
-    discount_factors = np.exp(-ois_matrix * day_years[np.newaxis, :])
+    # Discount factors: exp(-∫OIS dt) using cumulative forward rates
+    # Build cumulative zero rates from instantaneous forwards:
+    #   Z(t) = (1/t) × ∫₀ᵗ f(s) ds  ≈  cumsum(f × Δt) / t
+    # DF(t) = exp(-Z(t) × t) = exp(-cumsum(f × Δt))
+    dt = np.diff(day_years, prepend=0.0)  # time step per day
+    cum_integral = np.cumsum(ois_matrix * dt[np.newaxis, :], axis=1)
+    discount_factors = np.exp(-cum_integral)
 
     # Daily cash flow: Nominal × Rate / MM (the interest income stream)
     mm_broadcast = mm_vector[:, np.newaxis] * np.ones((1, n_days))

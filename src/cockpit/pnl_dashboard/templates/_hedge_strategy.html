@@ -149,6 +149,35 @@
   </div>
   {% endif %}
 
+  <!-- Hedge Optimizer Recommendations -->
+  {% if hedge_strategy.has_recommendations is defined and hedge_strategy.has_recommendations %}
+  <div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--accent-blue);">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">&#x1f4a1; Recommended Hedges (DV01-Based)</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Recommended Notional</th>
+          <th>Instrument</th>
+          <th>Tenor</th>
+          <th>Rationale</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for rec in hedge_strategy.recommendations %}
+        <tr>
+          <td>{{ rec.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(rec.notional) }}</td>
+          <td>{{ rec.instrument }}</td>
+          <td>{{ rec.tenor }}</td>
+          <td style="font-size: 0.8rem; color: var(--text-secondary);">{{ rec.rationale }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   <p class="footnote">
     Hedge Ratio = IRS/Swap notional &divide; Total notional per currency.
     Naked Exposure = sensitivity not offset by hedging instruments.

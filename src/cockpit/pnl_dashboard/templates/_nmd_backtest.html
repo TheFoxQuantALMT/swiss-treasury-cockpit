@@ -1,0 +1,55 @@
+{% from "_macros.html" import kpi_card, empty_state %}
+<div id="tab-nmd-backtest" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">NMD Back-Test &mdash; Modeled vs Actual Runoff</h3>
+
+  {% if has_nmd_backtest %}
+
+  <div class="grid-3" style="margin-bottom: 16px;">
+    {{ kpi_card("R²", "{:.3f}".format(nmd_backtest.r_squared), "positive" if nmd_backtest.r_squared > 0.8 else "negative" if nmd_backtest.r_squared < 0.5 else "neutral") }}
+    {{ kpi_card("RMSE", "{:,.0f}".format(nmd_backtest.rmse), "") }}
+    {{ kpi_card("MAE", "{:,.0f}".format(nmd_backtest.mae), "") }}
+  </div>
+
+  {% if nmd_backtest.by_product %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Back-Test by Product</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th style="text-align:right;">R²</th>
+          <th style="text-align:right;">RMSE</th>
+          <th style="text-align:right;">MAE</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in nmd_backtest.by_product %}
+        <tr>
+          <td>{{ item.product }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if item.r_squared > 0.8 else 'negative' if item.r_squared < 0.5 else 'neutral' }}">{{ "{:.3f}".format(item.r_squared) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(item.rmse) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(item.mae) }}</td>
+          <td>
+            {% if item.r_squared > 0.8 %}
+            <span style="color: var(--accent-green);">● Good</span>
+            {% elif item.r_squared > 0.5 %}
+            <span style="color: var(--accent-yellow);">● Review</span>
+            {% else %}
+            <span style="color: var(--accent-red);">● Recalibrate</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <p class="footnote">NMD back-test compares modeled behavioral decay against actual deposit balance changes. R² &gt; 0.80 = good fit. Provide actual_balances.xlsx for full analysis.</p>
+
+  {% else %}
+  {% set msg = nmd_backtest.message if nmd_backtest.message is defined else "Requires actual_balances.xlsx history file." %}
+  {{ empty_state("No NMD back-test data available.", msg) }}
+  {% endif %}
+</div>

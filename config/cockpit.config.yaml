@@ -1,0 +1,70 @@
+# Swiss Treasury Cockpit — Runtime Configuration
+# Override defaults from src/cockpit/config.py without code changes.
+# All values here are optional — missing keys use built-in defaults.
+
+# --- FX Alert Bands ---
+fx_alert_bands:
+  EUR_CHF: { low: 0.90, high: 0.96 }
+  USD_CHF: { low: 0.78, high: 0.85 }
+  GBP_CHF: { low: 1.08, high: 1.16 }
+
+# --- Energy Thresholds ---
+energy_thresholds:
+  brent_high: 120.0
+  brent_low: 65.0
+  eu_gas_high: 80.0
+
+# --- Deposit Thresholds ---
+deposit_thresholds:
+  weekly_change_threshold_bln: 2.0
+
+# --- Daily Move Thresholds ---
+daily_move_thresholds:
+  brent_pct: 5.0
+  eu_gas_pct: 5.0
+  fx_pct: 1.0
+  vix_pct: 10.0
+
+# --- Scoring Labels (0-100 scale) ---
+scoring_labels:
+  calm_max: 45
+  watch_max: 70
+
+# --- CDS Alert ---
+cds_alert_threshold_bps: 200
+
+# --- Geopolitical Scenarios ---
+scenarios:
+  ceasefire_rapid:
+    probability: 0.30
+    brent_target: 65
+    usd_chf_range: [0.82, 0.84]
+    eur_chf_range: [0.92, 0.94]
+  conflict_contained:
+    probability: 0.45
+    brent_target: [100, 120]
+    usd_chf_range: [0.79, 0.82]
+    eur_chf_range: [0.90, 0.93]
+  escalation_major:
+    probability: 0.25
+    brent_target: [130, 150]
+    usd_chf_range: [0.75, 0.78]
+    eur_chf_range: [0.88, 0.91]
+
+# --- LLM Models ---
+analyst_model: "deepseek-r1:14b"
+reviewer_model: "qwen3.5:9b"
+ollama_host: "http://localhost:11434"
+max_review_retries: 3
+
+# --- P&L Engine Overrides ---
+shocks: ["0", "50", "wirp"]
+# extended_shocks: ["-200", "-100", "-50", "0", "50", "100", "200", "wirp"]
+
+# Funding spread by product (bps below OIS, for Pfandbriefbank etc.)
+# funding_spread_by_product:
+#   IAM/LD: -15  # Mortgage: Pfandbrief rate = OIS - 15bp
+
+# SNB reserves
+# snb_reserve_ratio: 0.025
+# hqla_deduction: 0.20

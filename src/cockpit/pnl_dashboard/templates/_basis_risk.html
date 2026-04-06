@@ -1,0 +1,106 @@
+{% from "_macros.html" import kpi_card, empty_state %}
+<div id="tab-basis-risk" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Basis Risk &mdash; Spread Compression Sensitivity</h3>
+
+  {% if has_basis_risk %}
+
+  <!-- By Currency Chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">&Delta;NII by Currency (Spread Shock)</h3>
+    <canvas id="basisRiskCcyChart" height="280"></canvas>
+  </div>
+
+  <!-- By Product Table -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Spread Sensitivity by Product</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th style="text-align:right;">Base NII</th>
+          {% for s in basis_risk.shocks %}
+          <th style="text-align:right;">{{ s }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for prod, data in basis_risk.by_product.items() %}
+        <tr>
+          <td>{{ prod }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(data.base_nii) }}</td>
+          {% for s in basis_risk.shocks %}
+          {% set v = data.get(s, 0) %}
+          <td style="text-align:right;" class="{{ 'positive' if v > 0 else 'negative' if v < 0 else '' }}">{{ "{:+,.0f}".format(v) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- By Currency Table -->
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Spread Sensitivity by Currency</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Base NII</th>
+          {% for s in basis_risk.shocks %}
+          <th style="text-align:right;">{{ s }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for ccy, data in basis_risk.by_currency.items() %}
+        <tr>
+          <td>{{ ccy }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(data.base_nii) }}</td>
+          {% for s in basis_risk.shocks %}
+          {% set v = data.get(s, 0) %}
+          <td style="text-align:right;" class="{{ 'positive' if v > 0 else 'negative' if v < 0 else '' }}">{{ "{:+,.0f}".format(v) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="footnote" style="margin-top: 8px; color: var(--text-secondary); font-size: 0.75rem;">
+      Spread shock = uniform shift in client-rate-to-OIS spread. Negative shock = spread compression (NII decreases for lenders).
+    </p>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ basis_risk | tojson_safe }};
+    if (!data || !data.by_currency) return;
+
+    const shocks = data.shocks;
+    const ccys = Object.keys(data.by_currency);
+    const colors = ['#3fb950', '#58a6ff', '#d29922', '#f85149', '#bc8cff', '#8b949e'];
+    const datasets = ccys.map((ccy, i) => ({
+      label: ccy,
+      data: shocks.map(s => data.by_currency[ccy][s] || 0),
+      backgroundColor: colors[i % colors.length],
+      borderWidth: 0,
+      borderRadius: 3,
+    }));
+
+    new Chart(document.getElementById('basisRiskCcyChart'), {
+      type: 'bar',
+      data: { labels: shocks, datasets: datasets },
+      options: {
+        responsive: true,
+        plugins: { legend: { labels: { color: '#e6edf3' } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#e6edf3' } },
+          y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' }, title: { display: true, text: 'ΔNII', color: '#8b949e' } },
+        }
+      }
+    });
+  })();
+  </script>
+
+  {% else %}
+  {{ empty_state("No basis risk data available.", "Requires deal-level data with product and rate information.") }}
+  {% endif %}
+</div>

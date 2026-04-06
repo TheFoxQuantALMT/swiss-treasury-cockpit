@@ -1,3 +1,4 @@
+{% from "_macros.html" import kpi_card, chart_container, empty_state %}
 <!-- Tab 17: EVE (Economic Value of Equity) -->
 <div id="tab-eve" class="tab-content">
 {% if has_eve %}
@@ -5,31 +6,14 @@
 
 <!-- KPI Cards -->
 <div class="grid-4" style="margin-bottom: 16px;">
-  <div class="kpi-card">
-    <div class="kpi-label">Total EVE</div>
-    <div class="kpi-value">{{ "{:,.0f}".format(eve.total_eve) }}</div>
-  </div>
+  {{ kpi_card("Total EVE", "{:,.0f}".format(eve.total_eve)) }}
   {% if eve.scenarios and eve.scenarios.worst_scenario %}
-  <div class="kpi-card">
-    <div class="kpi-label">Worst Scenario</div>
-    <div class="kpi-value" style="font-size: 0.9rem;">{{ eve.scenarios.worst_scenario }}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">Worst &Delta;EVE</div>
-    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
-      {{ "{:,.0f}".format(eve.scenarios.worst_delta) }}
-    </div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">Worst &Delta;EVE %</div>
-    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
-      {% if eve.total_eve != 0 %}
-        {{ "{:.1f}%".format(eve.scenarios.worst_delta / eve.total_eve * 100) }}
-      {% else %}
-        &mdash;
-      {% endif %}
-    </div>
-  </div>
+  {{ kpi_card("Worst Scenario", eve.scenarios.worst_scenario) }}
+  {{ kpi_card("Worst &Delta;EVE", "{:,.0f}".format(eve.scenarios.worst_delta),
+              css_class="negative" if eve.scenarios.worst_delta < 0 else "positive") }}
+  {{ kpi_card("Worst &Delta;EVE %",
+              "{:.1f}%".format(eve.scenarios.worst_delta / eve.total_eve * 100) if eve.total_eve != 0 else "&mdash;",
+              css_class="negative" if eve.scenarios.worst_delta < 0 else "positive") }}
   {% endif %}
 </div>
 
@@ -114,20 +98,13 @@
 <div class="card" style="margin-top: 16px;">
   <h3>IRRBB Outlier Test &mdash; &Delta;EVE / Tier 1 Capital</h3>
   <div class="grid-3" style="margin-bottom: 12px;">
-    <div class="kpi-card">
-      <div class="kpi-label">Tier 1 Capital</div>
-      <div class="kpi-value">{{ "{:,.0f}".format(eve.outlier_test.tier1_capital) }}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Worst &Delta;EVE / Tier 1</div>
-      <div class="kpi-value {{ 'negative' if eve.outlier_test.worst_pct > 15 else 'positive' }}">{{ "%.2f"|format(eve.outlier_test.worst_pct) }}%</div>
-    </div>
-    <div class="kpi-card" style="border-left: 3px solid {{ '#f85149' if eve.outlier_test.is_outlier else '#3fb950' }};">
-      <div class="kpi-label">Outlier Status</div>
-      <div class="kpi-value {{ 'negative' if eve.outlier_test.is_outlier else 'positive' }}">
-        {% if eve.outlier_test.is_outlier %}OUTLIER{% else %}PASS{% endif %}
-      </div>
-    </div>
+    {{ kpi_card("Tier 1 Capital", "{:,.0f}".format(eve.outlier_test.tier1_capital)) }}
+    {{ kpi_card("Worst &Delta;EVE / Tier 1", "%.2f"|format(eve.outlier_test.worst_pct) ~ "%",
+                css_class="negative" if eve.outlier_test.worst_pct > 15 else "positive") }}
+    {{ kpi_card("Outlier Status",
+                "OUTLIER" if eve.outlier_test.is_outlier else "PASS",
+                css_class="negative" if eve.outlier_test.is_outlier else "positive",
+                border_color="#f85149" if eve.outlier_test.is_outlier else "#3fb950") }}
   </div>
   <table>
     <thead>
@@ -151,31 +128,25 @@
 </div>
 {% endif %}
 
+{% if eve.outlier_warning %}
+<div class="card" style="margin-top: 16px; border-left: 3px solid var(--accent-yellow);">
+  <h3 style="font-size: 0.85rem; color: var(--accent-yellow);">IRRBB Outlier Test &mdash; Missing Data</h3>
+  <p style="font-size: 0.85rem;">{{ eve.outlier_warning }}</p>
+  <p style="font-size: 0.8rem; color: var(--text-secondary);">Add a <code>tier1_capital</code> row to <code>limits.xlsx</code> to enable the BCBS 368 outlier test.</p>
+</div>
+{% endif %}
+
 <!-- Convexity / Gamma -->
 {% if eve.convexity %}
 <div class="card" style="margin-top: 16px;">
   <h3>Convexity / Gamma Analysis</h3>
   <div class="grid-4" style="margin-bottom: 12px;">
-    <div class="kpi-card">
-      <div class="kpi-label">&Delta;EVE (Parallel Up)</div>
-      <div class="kpi-value {{ 'negative' if eve.convexity.delta_eve_up < 0 else 'positive' }}">
-        {{ "{:,.0f}".format(eve.convexity.delta_eve_up) }}
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">&Delta;EVE (Parallel Down)</div>
-      <div class="kpi-value {{ 'negative' if eve.convexity.delta_eve_down < 0 else 'positive' }}">
-        {{ "{:,.0f}".format(eve.convexity.delta_eve_down) }}
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Effective Duration</div>
-      <div class="kpi-value">{{ "%.2f"|format(eve.convexity.effective_duration) }}Y</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Convexity (&gamma;)</div>
-      <div class="kpi-value">{{ "%.2f"|format(eve.convexity.convexity) }}</div>
-    </div>
+    {{ kpi_card("&Delta;EVE (Parallel Up)", "{:,.0f}".format(eve.convexity.delta_eve_up),
+                css_class="negative" if eve.convexity.delta_eve_up < 0 else "positive") }}
+    {{ kpi_card("&Delta;EVE (Parallel Down)", "{:,.0f}".format(eve.convexity.delta_eve_down),
+                css_class="negative" if eve.convexity.delta_eve_down < 0 else "positive") }}
+    {{ kpi_card("Effective Duration", "%.2f"|format(eve.convexity.effective_duration) ~ "Y") }}
+    {{ kpi_card("Convexity (&gamma;)", "%.2f"|format(eve.convexity.convexity)) }}
   </div>
   {% if eve.convexity.by_currency %}
   <table>
@@ -359,8 +330,6 @@
 </script>
 
 {% else %}
-<div class="card" style="text-align: center; padding: 48px;">
-  <p style="color: var(--text-secondary);">No EVE data available. Run the engine with <code>scenarios</code> input to compute EVE.</p>
-</div>
+{{ empty_state("No EVE data available. Run the engine with scenarios input to compute EVE.") }}
 {% endif %}
 </div>

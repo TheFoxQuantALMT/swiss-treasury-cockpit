@@ -1,0 +1,89 @@
+{% from "_macros.html" import kpi_card, empty_state, metric_badge %}
+<div id="tab-peer-benchmark" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Peer Benchmark &mdash; FINMA IRRBB Aggregate Comparison</h3>
+
+  {% if has_peer_benchmark %}
+
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Your Position vs Swiss Banking Sector</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th style="text-align:right;">Your Value</th>
+          <th style="text-align:right;">Sector Median</th>
+          <th style="text-align:right;">25th Pctl</th>
+          <th style="text-align:right;">75th Pctl</th>
+          <th style="text-align:right;">Your Pctl</th>
+          <th>Assessment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for comp in peer_benchmark.comparisons %}
+        <tr>
+          <td>{{ comp.metric }}</td>
+          <td style="text-align:right;">{{ "{:.2f}".format(comp.bank_value) }}{{ comp.unit }}</td>
+          <td style="text-align:right;">{{ "{:.2f}".format(comp.median) }}{{ comp.unit }}</td>
+          <td style="text-align:right;">{{ "{:.2f}".format(comp.p25) }}{{ comp.unit }}</td>
+          <td style="text-align:right;">{{ "{:.2f}".format(comp.p75) }}{{ comp.unit }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if comp.percentile < 50 else 'negative' if comp.percentile > 75 else 'neutral' }}">
+            {{ "{:.0f}".format(comp.percentile) }}%
+          </td>
+          <td>{{ metric_badge(comp.assessment, comp.severity) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Percentile Position</h3>
+    <canvas id="peerBenchmarkChart" height="250"></canvas>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ peer_benchmark | tojson_safe }};
+    if (!data || !data.comparisons) return;
+
+    const labels = data.comparisons.map(c => c.metric);
+    const bankVals = data.comparisons.map(c => c.percentile);
+
+    new Chart(document.getElementById('peerBenchmarkChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Your Percentile',
+          data: bankVals,
+          backgroundColor: bankVals.map(v => v > 75 ? '#f85149' : v > 50 ? '#d29922' : '#3fb950'),
+          borderWidth: 0,
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          annotation: {
+            annotations: {
+              median: { type: 'line', xMin: 50, xMax: 50, borderColor: '#8b949e', borderDash: [5, 5], label: { display: true, content: 'Median', color: '#8b949e' } }
+            }
+          }
+        },
+        scales: {
+          x: { min: 0, max: 100, grid: { color: '#30363d' }, ticks: { color: '#8b949e', callback: v => v + '%' } },
+          y: { grid: { display: false }, ticks: { color: '#e6edf3' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  <p class="footnote">Peer data: FINMA IRRBB aggregate statistics (Category 3-5 banks). Lower percentile = less risk exposure relative to peers.</p>
+
+  {% else %}
+  {{ empty_state("No peer benchmark data available.", "Requires EVE or NII-at-Risk computation to compare against FINMA aggregates.") }}
+  {% endif %}
+</div>

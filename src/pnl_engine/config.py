@@ -79,6 +79,9 @@ FLOAT_NAME_TO_WASP: dict[str, str] = {
 
 SHOCKS: list[str] = ["0", "50", "wirp"]
 
+# Extended shocks for full sensitivity grid (activate via --shocks CLI flag)
+EXTENDED_SHOCKS: list[str] = ["-200", "-100", "-50", "0", "50", "100", "200", "wirp"]
+
 # ---------------------------------------------------------------------------
 # Cost of Carry / Funding
 # ---------------------------------------------------------------------------
@@ -98,3 +101,18 @@ LOOKBACK_DAYS: dict[str, int] = {
     "CHF": 2,
     "GBP": 5,
 }
+
+# ---------------------------------------------------------------------------
+# Pfandbriefbank funding spread by product (bps below OIS)
+# ---------------------------------------------------------------------------
+
+FUNDING_SPREAD_BY_PRODUCT: dict[str, float] = {
+    "IAM/LD": -0.0015,  # Mortgage: Pfandbrief rate = OIS - 15bp
+}
+
+# ---------------------------------------------------------------------------
+# SNB reserve parameters
+# ---------------------------------------------------------------------------
+
+SNB_RESERVE_RATIO: float = 0.025       # 2.5% on sight liabilities
+HQLA_DEDUCTION: float = 0.20           # 20% of HQLA offsets requirement

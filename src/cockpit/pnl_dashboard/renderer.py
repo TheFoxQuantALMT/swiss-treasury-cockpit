@@ -49,6 +49,9 @@ def render_pnl_dashboard(
     liquidity_schedule: Optional[pd.DataFrame] = None,
     nmd_profiles: Optional[pd.DataFrame] = None,
     kpi_history: Optional[pd.DataFrame] = None,
+    echeancier: Optional[pd.DataFrame] = None,
+    locked_in_nii_data: Optional[dict] = None,
+    beta_sensitivity_data: Optional[dict] = None,
 ) -> Path:
     """Render the P&L dashboard HTML from engine output.
 
@@ -105,6 +108,9 @@ def render_pnl_dashboard(
         liquidity_schedule=liquidity_schedule,
         nmd_profiles=nmd_profiles,
         kpi_history=kpi_history,
+        echeancier=echeancier,
+        locked_in_nii_data=locked_in_nii_data,
+        beta_sensitivity_data=beta_sensitivity_data,
     )
 
     context = {
@@ -184,6 +190,21 @@ def render_pnl_dashboard(
         "has_hedge_strategy": data["hedge_strategy"].get("has_data", False),
         "alco_decision_pack": data["alco_decision_pack"],
         "has_alco_decision_pack": data["alco_decision_pack"].get("has_data", False),
+        # Data Quality
+        "data_quality": data["data_quality"],
+        "has_data_quality": data["data_quality"].get("has_data", False),
+        # Basis Risk
+        "basis_risk": data["basis_risk"],
+        "has_basis_risk": data["basis_risk"].get("has_data", False),
+        # SNB Reserves
+        "snb_reserves": data["snb_reserves"],
+        "has_snb_reserves": data["snb_reserves"].get("has_data", False),
+        # Peer Benchmark
+        "peer_benchmark": data["peer_benchmark"],
+        "has_peer_benchmark": data["peer_benchmark"].get("has_data", False),
+        # NMD Backtest
+        "nmd_backtest": data["nmd_backtest"],
+        "has_nmd_backtest": data["nmd_backtest"].get("has_data", False),
     }
 
     template = env.get_template("pnl_dashboard.html")

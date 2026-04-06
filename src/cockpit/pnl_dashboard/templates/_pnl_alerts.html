@@ -1,27 +1,19 @@
+{% from "_macros.html" import kpi_card, metric_badge, empty_state %}
 <div id="tab-pnl-alerts" class="tab-content">
   <h3 style="font-size: 0.9rem; margin-bottom: 12px;">P&amp;L Alerts &amp; Recommendations</h3>
 
   {% if has_pnl_alerts %}
   <div class="grid-3" style="margin-bottom: 16px;">
-    <div class="kpi-card" style="border-left: 3px solid var(--accent-red);">
-      <div class="label">Critical</div>
-      <div class="value negative">{{ pnl_alerts.summary.critical }}</div>
-    </div>
-    <div class="kpi-card" style="border-left: 3px solid var(--accent-yellow);">
-      <div class="label">High</div>
-      <div class="value" style="color: var(--accent-yellow);">{{ pnl_alerts.summary.high }}</div>
-    </div>
-    <div class="kpi-card" style="border-left: 3px solid var(--accent-blue);">
-      <div class="label">Medium</div>
-      <div class="value" style="color: var(--accent-blue);">{{ pnl_alerts.summary.medium }}</div>
-    </div>
+    {{ kpi_card("Critical", pnl_alerts.summary.critical, css_class="negative", border_color="var(--accent-red)") }}
+    {{ kpi_card("High", pnl_alerts.summary.high, css_class="", border_color="var(--accent-yellow)") }}
+    {{ kpi_card("Medium", pnl_alerts.summary.medium, css_class="", border_color="var(--accent-blue)") }}
   </div>
 
   {% for alert in pnl_alerts.alerts %}
   <div class="card" style="border-left: 3px solid {% if alert.severity == 'critical' %}var(--accent-red){% elif alert.severity == 'high' %}var(--accent-yellow){% else %}var(--accent-blue){% endif %}; margin-bottom: 12px;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
       <span style="font-weight: 600; font-size: 0.85rem;">{{ alert.metric }}</span>
-      <span style="font-size: 0.7rem; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; background: {% if alert.severity == 'critical' %}rgba(248,81,73,0.2){% elif alert.severity == 'high' %}rgba(210,153,34,0.2){% else %}rgba(88,166,255,0.2){% endif %}; color: {% if alert.severity == 'critical' %}var(--accent-red){% elif alert.severity == 'high' %}var(--accent-yellow){% else %}var(--accent-blue){% endif %};">{{ alert.severity }}</span>
+      {{ metric_badge(alert.severity, severity=alert.severity) }}
     </div>
     <p style="font-size: 0.85rem; color: var(--text-primary); margin-bottom: 6px;">{{ alert.message }}</p>
     {% if alert.recommendation %}

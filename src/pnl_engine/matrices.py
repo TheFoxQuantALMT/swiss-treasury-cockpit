@@ -13,6 +13,7 @@ import pandas as pd
 
 from pnl_engine.config import MM_BY_CURRENCY, LOOKBACK_DAYS
 from pnl_engine.models import get_day_count
+from pnl_engine.saron import apply_lookback_shift
 
 
 def build_date_grid(start: pd.Timestamp, months: int = 60) -> pd.DatetimeIndex:
@@ -127,16 +128,17 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
                 curve_dates = idx_data.index.values.astype("datetime64[D]")
                 curve_vals = idx_data.values
 
-                # Apply lookback shift for SARON/SONIA
+                # Map daily rates from curve
+                sorter = np.searchsorted(curve_dates, day_dates, side="right") - 1
+                sorter = np.clip(sorter, 0, len(curve_vals) - 1)
+                daily_rates = curve_vals[sorter]
+
+                # Apply SARON/SONIA lookback shift (ISDA 2021 observation shift)
                 lookback = LOOKBACK_DAYS.get(ccy, 0)
                 if lookback > 0:
-                    # Shift observation: rate on accrual day T uses fixing from T-N BD
-                    shifted_dates = day_dates - np.timedelta64(lookback, "D")
-                    sorter = np.searchsorted(curve_dates, shifted_dates, side="right") - 1
-                else:
-                    sorter = np.searchsorted(curve_dates, day_dates, side="right") - 1
-                sorter = np.clip(sorter, 0, len(curve_vals) - 1)
-                result[i] = curve_vals[sorter] + spread
+                    daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+
+                result[i] = daily_rates + spread
             except KeyError:
                 pass
     return result

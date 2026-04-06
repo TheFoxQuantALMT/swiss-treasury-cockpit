@@ -121,6 +121,7 @@ class TestEmptyData:
             "maturity_wall", "trends",
             "regulatory", "risk_cube", "deposit_behavior",
             "scenario_studio", "hedge_strategy", "alco_decision_pack",
+            "data_quality", "basis_risk", "snb_reserves", "peer_benchmark", "nmd_backtest",
         }
         assert set(result.keys()) == expected_keys
 

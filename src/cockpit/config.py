@@ -2,6 +2,8 @@
 
 Merges constants from pnl_engine (P&L engine) and macro-cbwatch (CB monitoring).
 P&L-specific constants are re-exported from the standalone pnl_engine package.
+Runtime-tunable values are loaded from ``config/cockpit.config.yaml`` via
+:func:`cockpit.config_loader.load_config`.
 """
 
 from pathlib import Path
@@ -23,6 +25,10 @@ from pnl_engine.config import (  # noqa: F401
     SHOCKS,
     SUPPORTED_CURRENCIES,
 )
+
+from cockpit.config_loader import load_config
+
+_CFG = load_config()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -75,8 +81,6 @@ HQLA_LEVELS: list[str] = ["L1", "L2A", "L2B", "Non-HQLA"]
 
 CURRENCY_CLASSES: list[str] = ["Total", "CHF", "USD", "EUR", "GBP", "Others"]
 
-CDS_ALERT_THRESHOLD_BPS: int = 200
-
 # ---------------------------------------------------------------------------
 # Counterparty perimeters (from economic-pnl config.py)
 # ---------------------------------------------------------------------------
@@ -90,63 +94,22 @@ _CIB_COUNTERPARTIES: set[str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Macro monitoring constants (from cbwatch config.yaml)
+# Macro monitoring constants — loaded from config/cockpit.config.yaml
 # ---------------------------------------------------------------------------
 
-FX_ALERT_BANDS: dict[str, dict[str, float]] = {
-    "EUR_CHF": {"low": 0.90, "high": 0.96},
-    "USD_CHF": {"low": 0.78, "high": 0.85},
-    "GBP_CHF": {"low": 1.08, "high": 1.16},
-}
-
-ENERGY_THRESHOLDS: dict[str, float] = {
-    "brent_high": 120.0,
-    "brent_low": 65.0,
-    "eu_gas_high": 80.0,
-}
-
-DEPOSIT_THRESHOLDS: dict[str, float] = {
-    "weekly_change_threshold_bln": 2.0,
-}
-
-DAILY_MOVE_THRESHOLDS: dict[str, float] = {
-    "brent_pct": 5.0,
-    "eu_gas_pct": 5.0,
-    "fx_pct": 1.0,
-    "vix_pct": 10.0,
-}
-
-SCORING_LABELS: dict[str, int] = {
-    "calm_max": 45,
-    "watch_max": 70,
-}
-
-SCENARIOS: dict[str, dict] = {
-    "ceasefire_rapid": {
-        "probability": 0.30,
-        "brent_target": 65,
-        "usd_chf_range": [0.82, 0.84],
-        "eur_chf_range": [0.92, 0.94],
-    },
-    "conflict_contained": {
-        "probability": 0.45,
-        "brent_target": [100, 120],
-        "usd_chf_range": [0.79, 0.82],
-        "eur_chf_range": [0.90, 0.93],
-    },
-    "escalation_major": {
-        "probability": 0.25,
-        "brent_target": [130, 150],
-        "usd_chf_range": [0.75, 0.78],
-        "eur_chf_range": [0.88, 0.91],
-    },
-}
+FX_ALERT_BANDS: dict[str, dict[str, float]] = _CFG["fx_alert_bands"]
+ENERGY_THRESHOLDS: dict[str, float] = _CFG["energy_thresholds"]
+DEPOSIT_THRESHOLDS: dict[str, float] = _CFG["deposit_thresholds"]
+DAILY_MOVE_THRESHOLDS: dict[str, float] = _CFG["daily_move_thresholds"]
+SCORING_LABELS: dict[str, int] = _CFG["scoring_labels"]
+CDS_ALERT_THRESHOLD_BPS: int = _CFG["cds_alert_threshold_bps"]
+SCENARIOS: dict[str, dict] = _CFG["scenarios"]
 
 # ---------------------------------------------------------------------------
-# LLM models (from cbwatch config.yaml)
+# LLM models — loaded from config/cockpit.config.yaml
 # ---------------------------------------------------------------------------
 
-ANALYST_MODEL: str = "deepseek-r1:14b"
-REVIEWER_MODEL: str = "qwen3.5:9b"
-OLLAMA_HOST: str = "http://localhost:11434"
-MAX_REVIEW_RETRIES: int = 3
+ANALYST_MODEL: str = _CFG["analyst_model"]
+REVIEWER_MODEL: str = _CFG["reviewer_model"]
+OLLAMA_HOST: str = _CFG["ollama_host"]
+MAX_REVIEW_RETRIES: int = _CFG["max_review_retries"]

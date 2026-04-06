@@ -129,6 +129,9 @@ def compute_pnl_explain(
     currencies = sorted(set(curr_rates.keys()) | set(prev_rates.keys()))
     by_currency = {}
 
+    # Actual calendar days between runs (not hardcoded 30)
+    days_elapsed = max((pd.Timestamp(date_run) - pd.Timestamp(prev_date_run)).days, 1)
+
     for ccy in currencies:
         nom_p = prev_nom.get(ccy, 0)
         nom_c = curr_nom.get(ccy, 0)
@@ -141,12 +144,12 @@ def compute_pnl_explain(
         spread_p = ois_p - ref_p
         spread_c = ois_c - ref_c
 
-        # Rate effect on existing portfolio: Nom_prev × ΔOIS / MM (approx)
-        ccy_rate_eff = nom_p * (ois_c - ois_p) / 360 * 30  # ~1 month approx
+        # Rate effect on existing portfolio: Nom_prev × ΔOIS × (days / 360)
+        ccy_rate_eff = nom_p * (ois_c - ois_p) / 360 * days_elapsed
         rate_effect += ccy_rate_eff
 
-        # Spread effect: Nom_prev × ΔSpread / MM
-        ccy_spread_eff = nom_p * ((spread_c) - (spread_p)) / 360 * 30
+        # Spread effect: Nom_prev × ΔSpread × (days / 360)
+        ccy_spread_eff = nom_p * (spread_c - spread_p) / 360 * days_elapsed
         spread_effect += ccy_spread_eff
 
         by_currency[ccy] = {

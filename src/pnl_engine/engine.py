@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from pnl_engine.config import CURRENCY_TO_OIS, PRODUCT_RATE_COLUMN, ECHEANCIER_INDEX_TO_WASP, SHOCKS, FLOAT_NAME_TO_WASP
+from pnl_engine.config import CURRENCY_TO_OIS, PRODUCT_RATE_COLUMN, ECHEANCIER_INDEX_TO_WASP, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
 from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
     build_date_grid,
@@ -16,6 +16,7 @@ from pnl_engine.matrices import (
     build_mm_vector,
     build_rate_matrix,
 )
+from pnl_engine.saron import apply_lookback_shift
 
 logger = logging.getLogger(__name__)
 
@@ -538,6 +539,12 @@ def _build_ois_matrix(
         sub = sub.set_index("Date")["value"]
         sub = sub[~sub.index.duplicated(keep="first")]
         aligned = sub.reindex(days, method="ffill").bfill().fillna(0.0).values
+
+        # Apply SARON/SONIA lookback shift for currencies with observation delay
+        lookback = LOOKBACK_DAYS.get(ccy, 0)
+        if lookback > 0:
+            aligned = apply_lookback_shift(aligned, lookback_days=lookback)
+
         result[deal_mask] = aligned[np.newaxis, :]
 
     return result
@@ -643,6 +650,14 @@ def run_all_shocks(
     nominal_daily = expand_nominal_to_daily(deals_use[month_cols], days)
     alive = build_alive_mask(deals_use, days, date_run=start)
     nominal_daily = nominal_daily * alive
+
+    # Apply CPR prepayment to fixed-rate mortgages (reduces nominal schedule)
+    try:
+        from pnl_engine.prepayment import apply_cpr
+        nominal_daily, _cpr_log = apply_cpr(deals_use, nominal_daily, days)
+    except Exception as exc:
+        logger.debug("CPR prepayment skipped: %s", exc)
+
     mm = build_mm_vector(deals_use)
 
     # OIS indices needed

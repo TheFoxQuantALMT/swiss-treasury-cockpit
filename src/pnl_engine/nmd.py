@@ -90,13 +90,25 @@ def apply_nmd_decay(
         if matched.empty:
             continue
 
-        # Use the first matching profile (could be core/volatile — use weighted if multiple)
-        profile = matched.iloc[0]
-        tier = str(profile.get("tier", "unknown"))
-        decay_rate = float(profile.get("decay_rate", 0.0))
-        deposit_beta = float(profile.get("deposit_beta", 1.0))
-        floor_rate = float(profile.get("floor_rate", 0.0))
-        behavioral_maturity = float(profile.get("behavioral_maturity_years", 0.0))
+        # Weighted blend of multiple profiles (e.g., core + volatile tiers)
+        # Weight by share column if present, else equal weight
+        if len(matched) > 1 and "share" in matched.columns:
+            shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
+            total_share = shares.sum()
+            if total_share > 0:
+                weights = shares / total_share
+            else:
+                weights = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+        elif len(matched) > 1:
+            weights = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+        else:
+            weights = pd.Series([1.0], index=matched.index)
+
+        decay_rate = float((pd.to_numeric(matched.get("decay_rate", 0), errors="coerce").fillna(0) * weights).sum())
+        deposit_beta = float((pd.to_numeric(matched.get("deposit_beta", 1), errors="coerce").fillna(1) * weights).sum())
+        floor_rate = float((pd.to_numeric(matched.get("floor_rate", 0), errors="coerce").fillna(0) * weights).sum())
+        behavioral_maturity = float((pd.to_numeric(matched.get("behavioral_maturity_years", 0), errors="coerce").fillna(0) * weights).sum())
+        tier = "+".join(matched["tier"].astype(str).unique()) if "tier" in matched.columns else "blended"
 
         if decay_rate <= 0:
             match_log.append({
@@ -194,9 +206,18 @@ def apply_deposit_beta(
         if matched.empty:
             continue
 
-        profile = matched.iloc[0]
-        beta = float(profile.get("deposit_beta", 1.0))
-        floor_rate = float(profile.get("floor_rate", 0.0))
+        # Weighted blend of multiple profiles
+        if len(matched) > 1 and "share" in matched.columns:
+            shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
+            total_share = shares.sum()
+            w = shares / total_share if total_share > 0 else pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+        elif len(matched) > 1:
+            w = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+        else:
+            w = pd.Series([1.0], index=matched.index)
+
+        beta = float((pd.to_numeric(matched.get("deposit_beta", 1), errors="coerce").fillna(1) * w).sum())
+        floor_rate = float((pd.to_numeric(matched.get("floor_rate", 0), errors="coerce").fillna(0) * w).sum())
 
         if beta >= 1.0:
             continue  # No adjustment needed
@@ -205,6 +226,95 @@ def apply_deposit_beta(
         result[i] = floor_rate + beta * np.maximum(0, ois_matrix[i] - floor_rate)
 
     return result
+
+
+def compute_nmd_beta_sensitivity(
+    deals: pd.DataFrame,
+    nmd_profiles: pd.DataFrame,
+    rate_matrix: np.ndarray,
+    ois_matrix: np.ndarray,
+    nominal_daily: np.ndarray,
+    mm_vector: np.ndarray,
+    delta: float = 0.1,
+) -> dict:
+    """Estimate NII sensitivity to deposit beta perturbation (±delta).
+
+    Re-runs the NII calculation with beta ± delta for each NMD profile group,
+    returning the impact per currency.
+
+    Args:
+        deals: Deal metadata DataFrame.
+        nmd_profiles: NMD profile definitions.
+        rate_matrix: (n_deals, n_days) original rate matrix.
+        ois_matrix: (n_deals, n_days) OIS rates.
+        nominal_daily: (n_deals, n_days) nominal schedule.
+        mm_vector: (n_deals,) day-count divisor per deal.
+        delta: Beta perturbation amount (default 0.1).
+
+    Returns:
+        Dict with per-currency sensitivity: {"CHF": {"beta_up_nii": ..., "beta_down_nii": ..., "delta_nii": ...}, ...}
+    """
+    if nmd_profiles is None or nmd_profiles.empty:
+        return {}
+
+    def _compute_nii(perturbed_rates: np.ndarray) -> float:
+        """Sum daily NII = Nominal × (OIS - Rate) / MM."""
+        mm_2d = mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
+        daily_pnl = nominal_daily * (ois_matrix - perturbed_rates) / mm_2d
+        return float(np.nansum(daily_pnl))
+
+    # Base NII
+    base_rates = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix)
+    base_nii = _compute_nii(base_rates)
+
+    # Create perturbed profiles
+    profiles_up = nmd_profiles.copy()
+    profiles_down = nmd_profiles.copy()
+    if "deposit_beta" in profiles_up.columns:
+        betas = pd.to_numeric(profiles_up["deposit_beta"], errors="coerce").fillna(1.0)
+        profiles_up["deposit_beta"] = np.minimum(betas + delta, 1.0)
+        profiles_down["deposit_beta"] = np.maximum(betas - delta, 0.0)
+
+    up_rates = apply_deposit_beta(rate_matrix, deals, profiles_up, ois_matrix)
+    down_rates = apply_deposit_beta(rate_matrix, deals, profiles_down, ois_matrix)
+
+    up_nii = _compute_nii(up_rates)
+    down_nii = _compute_nii(down_rates)
+
+    # Per-currency breakdown
+    result: dict[str, dict] = {}
+    currencies = deals["Currency"].str.strip().str.upper().unique() if "Currency" in deals.columns else []
+
+    for ccy in currencies:
+        ccy_mask = deals["Currency"].str.strip().str.upper() == ccy
+        idx = np.where(ccy_mask.values)[0]
+        if len(idx) == 0:
+            continue
+        mm_2d = mm_vector[idx, np.newaxis] if mm_vector.ndim == 1 else mm_vector[idx]
+        base_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - base_rates[idx]) / mm_2d))
+        up_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - up_rates[idx]) / mm_2d))
+        down_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - down_rates[idx]) / mm_2d))
+
+        result[ccy] = {
+            "base_nii": round(base_ccy, 0),
+            "beta_up_nii": round(up_ccy, 0),
+            "beta_down_nii": round(down_ccy, 0),
+            "delta_up": round(up_ccy - base_ccy, 0),
+            "delta_down": round(down_ccy - base_ccy, 0),
+        }
+
+    return {
+        "has_data": len(result) > 0,
+        "total": {
+            "base_nii": round(base_nii, 0),
+            "beta_up_nii": round(up_nii, 0),
+            "beta_down_nii": round(down_nii, 0),
+            "delta_up": round(up_nii - base_nii, 0),
+            "delta_down": round(down_nii - base_nii, 0),
+        },
+        "by_currency": result,
+        "delta": delta,
+    }
 
 
 def get_behavioral_maturity(
@@ -241,6 +351,13 @@ def get_behavioral_maturity(
 
         matched = profiles[mask]
         if not matched.empty:
-            result.iloc[i] = float(matched.iloc[0].get("behavioral_maturity_years", np.nan))
+            bm_values = pd.to_numeric(matched.get("behavioral_maturity_years", np.nan), errors="coerce")
+            if len(matched) > 1 and "share" in matched.columns:
+                shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
+                total_share = shares.sum()
+                w = shares / total_share if total_share > 0 else pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+                result.iloc[i] = float((bm_values.fillna(0) * w).sum())
+            else:
+                result.iloc[i] = float(bm_values.iloc[0]) if pd.notna(bm_values.iloc[0]) else np.nan
 
     return result

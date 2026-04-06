@@ -1,0 +1,98 @@
+{#- Shared Jinja2 macro library for the P&L dashboard.
+    Import in any template:  {% from "_macros.html" import kpi_card, chart_container, data_table, metric_badge %}
+-#}
+
+{#- KPI card with optional colored left border and sub-label.
+    Arguments:
+      label       – header text
+      value       – main display value (string or number)
+      css_class   – extra class on the value div ("positive", "negative", "")
+      sub         – optional sub-label text below the value
+      border_color – optional left-border color (hex string, e.g. "#f85149")
+      id          – optional id for the value div (for JS hydration)
+      sub_id      – optional id for the sub div
+-#}
+{% macro kpi_card(label, value="—", css_class="", sub="", border_color="", id="", sub_id="") %}
+<div class="kpi-card"{% if border_color %} style="border-left: 3px solid {{ border_color }};"{% endif %}>
+  <div class="kpi-label">{{ label }}</div>
+  <div class="kpi-value {{ css_class }}"{% if id %} id="{{ id }}"{% endif %}>{{ value }}</div>
+  {% if sub %}<div class="sub"{% if sub_id %} id="{{ sub_id }}"{% endif %}>{{ sub }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{#- Chart container: a .card wrapper with a title and a <canvas>.
+    Arguments:
+      title    – card heading
+      chart_id – canvas element id
+      height   – canvas height attribute (default 250)
+-#}
+{% macro chart_container(title, chart_id, height=250) %}
+<div class="card">
+  <h3>{{ title }}</h3>
+  <canvas id="{{ chart_id }}" height="{{ height }}"></canvas>
+</div>
+{% endmacro %}
+
+{#- Data table with auto-generated <thead> and <tbody>.
+    Arguments:
+      headers    – list of column header strings
+      rows       – list of lists (each inner list = one row's cell values)
+      aligns     – optional list of "left"/"right"/"center" per column
+      footer_row – optional list (rendered bold with top border)
+-#}
+{% macro data_table(headers, rows, aligns=none, footer_row=none) %}
+<table>
+  <thead>
+    <tr>
+      {% for h in headers %}
+      <th{% if aligns and aligns[loop.index0] != "left" %} style="text-align:{{ aligns[loop.index0] }};"{% endif %}>{{ h }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row %}
+      <td{% if aligns and aligns[loop.index0] != "left" %} style="text-align:{{ aligns[loop.index0] }};"{% endif %}>{{ cell }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    {% if footer_row %}
+    <tr style="font-weight: bold; border-top: 2px solid var(--border);">
+      {% for cell in footer_row %}
+      <td{% if aligns and aligns[loop.index0] != "left" %} style="text-align:{{ aligns[loop.index0] }};"{% endif %}>{{ cell }}</td>
+      {% endfor %}
+    </tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endmacro %}
+
+{#- Inline severity / metric badge.
+    Arguments:
+      text      – badge text (e.g. "CRITICAL", "PASS", "FAIL")
+      severity  – "critical", "high", "medium", "success", "info"
+-#}
+{% macro metric_badge(text, severity="info") %}
+{%- set colors = {
+  "critical": {"bg": "rgba(248,81,73,0.2)", "fg": "var(--accent-red)"},
+  "high":     {"bg": "rgba(210,153,34,0.2)", "fg": "var(--accent-yellow)"},
+  "medium":   {"bg": "rgba(88,166,255,0.2)", "fg": "var(--accent-blue)"},
+  "success":  {"bg": "rgba(63,185,80,0.2)",  "fg": "var(--accent-green)"},
+  "info":     {"bg": "rgba(139,148,158,0.2)", "fg": "var(--text-secondary)"},
+} -%}
+{%- set c = colors.get(severity, colors.info) -%}
+<span style="font-size: 0.7rem; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; background: {{ c.bg }}; color: {{ c.fg }};">{{ text }}</span>
+{% endmacro %}
+
+{#- Empty-state placeholder when a tab has no data.
+    Arguments:
+      message – main message text
+      hint    – optional smaller hint text
+-#}
+{% macro empty_state(message, hint="") %}
+<div class="card" style="text-align: center; padding: 48px;">
+  <p style="color: var(--text-secondary);">{{ message }}</p>
+  {% if hint %}<p style="font-size: 0.85rem; color: var(--text-secondary);">{{ hint }}</p>{% endif %}
+</div>
+{% endmacro %}

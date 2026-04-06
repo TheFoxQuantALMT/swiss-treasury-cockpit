@@ -1,0 +1,66 @@
+{% from "_macros.html" import kpi_card, metric_badge, empty_state %}
+<div id="tab-data-quality" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Data Quality Report</h3>
+
+  {% if has_data_quality %}
+  <!-- Overall Status -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    {{ kpi_card("Overall Status",
+                "PASS" if data_quality.overall_status == "pass" else "WARNING" if data_quality.overall_status == "warn" else "FAIL",
+                css_class="positive" if data_quality.overall_status == "pass" else "negative" if data_quality.overall_status == "fail" else "",
+                border_color="#3fb950" if data_quality.overall_status == "pass" else "#f85149" if data_quality.overall_status == "fail" else "#d29922") }}
+    {{ kpi_card("Checks Passed", data_quality.n_pass, css_class="positive") }}
+    {{ kpi_card("Warnings", data_quality.n_warn, border_color="#d29922") }}
+    {{ kpi_card("Failures", data_quality.n_fail, css_class="negative" if data_quality.n_fail > 0 else "", border_color="#f85149" if data_quality.n_fail > 0 else "") }}
+  </div>
+
+  <!-- Individual Checks -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Quality Checks</h3>
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Status</th><th style="text-align:right;">Value</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for check in data_quality.checks %}
+        <tr>
+          <td>{{ check.name }}</td>
+          <td>
+            {% if check.status == "pass" %}
+            {{ metric_badge("PASS", severity="success") }}
+            {% elif check.status == "warn" %}
+            {{ metric_badge("WARN", severity="high") }}
+            {% else %}
+            {{ metric_badge("FAIL", severity="critical") }}
+            {% endif %}
+          </td>
+          <td style="text-align:right;">{{ check.value }}</td>
+          <td style="font-size: 0.8rem; color: var(--text-secondary);">{{ check.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Field Coverage -->
+  {% if data_quality.coverage %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Field Coverage (% non-null)</h3>
+    {% for field_name, pct in data_quality.coverage.items() %}
+    <div style="margin-bottom: 10px;">
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 3px;">
+        <span>{{ field_name }}</span>
+        <span>{{ "%.1f"|format(pct) }}%</span>
+      </div>
+      <div style="background: var(--bg-tertiary); border-radius: 4px; height: 8px; overflow: hidden;">
+        <div style="height: 100%; width: {{ [pct, 100] | min }}%; background: {{ '#3fb950' if pct >= 95 else '#d29922' if pct >= 80 else '#f85149' }}; border-radius: 4px; transition: width 0.3s;"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% else %}
+  {{ empty_state("No data quality report available.", "Run the pipeline with deal data to generate quality checks.") }}
+  {% endif %}
+</div>
