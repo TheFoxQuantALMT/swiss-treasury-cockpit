@@ -1,0 +1,63 @@
+<div id="tab-book2" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">BOOK2 MTM &mdash; IRS Positions</h3>
+
+  {% if has_book2 %}
+  <!-- Summary cards -->
+  <div id="book2-summary" class="grid-4" style="margin-bottom: 16px;"></div>
+
+  <!-- Deal-level table -->
+  {% if book2.deals %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Deal Detail</h3>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr><th>Deal</th><th>Currency</th><th>Direction</th><th>Maturity</th><th>MTM</th></tr>
+      </thead>
+      <tbody>
+      {% for d in book2.deals %}
+        <tr>
+          <td>{{ d.deal }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.direction }}</td>
+          <td>{{ d.maturity }}</td>
+          <td>{{ "{:,.0f}".format(d.mtm) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+  (function() {
+    const summary = {{ book2.summary | tojson_safe }};
+    const container = document.getElementById('book2-summary');
+    if (!container) return;
+
+    let html = '';
+    for (const [ccy, shocks] of Object.entries(summary)) {
+      const base = shocks.shock_0 || 0;
+      const s50 = shocks.shock_50 || 0;
+      const delta = s50 - base;
+      html += '<div class="kpi-card">';
+      html += '<div class="label">' + ccy + '</div>';
+      html += '<div class="value ' + valClass(base) + '">' + fmt(base) + '</div>';
+      if (delta !== 0) {
+        html += '<div class="sub">&Delta;50: <span class="' + valClass(delta) + '">' + (delta >= 0 ? '+' : '') + fmt(delta) + '</span></div>';
+      }
+      html += '</div>';
+    }
+    if (!html) html = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary);">No MTM data</div>';
+    container.innerHTML = html;
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No BOOK2 IRS MTM data available.</p>
+    <p style="font-size: 0.85rem;">IRS stock positions are required for this view.</p>
+  </div>
+  {% endif %}
+</div>

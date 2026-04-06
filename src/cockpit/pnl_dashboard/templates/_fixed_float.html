@@ -1,0 +1,135 @@
+<div id="tab-fixed-float" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Fixed vs Floating Mix</h3>
+
+  {% if has_fixed_float %}
+  <!-- Overall Mix KPIs -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card" style="border-left: 3px solid #58a6ff;">
+      <div class="label">Fixed Nominal</div>
+      <div class="value">{{ "{:,.0f}".format(fixed_float.mix.Fixed.nominal) }}</div>
+      <div class="sub">{{ fixed_float.mix.Fixed.count }} deals ({{ "%.1f"|format(fixed_float.mix.Fixed.pct) }}%)</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #3fb950;">
+      <div class="label">Floating Nominal</div>
+      <div class="value">{{ "{:,.0f}".format(fixed_float.mix.Floating.nominal) }}</div>
+      <div class="sub">{{ fixed_float.mix.Floating.count }} deals ({{ "%.1f"|format(fixed_float.mix.Floating.pct) }}%)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Fixed / Floating Ratio</div>
+      <div class="value">{{ "%.0f"|format(fixed_float.mix.Fixed.pct) }} / {{ "%.0f"|format(fixed_float.mix.Floating.pct) }}</div>
+    </div>
+    {% if fixed_float.sensitivity and fixed_float.sensitivity.total_delta is defined %}
+    <div class="kpi-card">
+      <div class="label">NII &Delta; (+50bp)</div>
+      <div class="value {{ 'positive' if fixed_float.sensitivity.total_delta >= 0 else 'negative' }}">{{ "{:+,.0f}".format(fixed_float.sensitivity.total_delta) }}</div>
+      <div class="sub">Driven by floating book</div>
+    </div>
+    {% else %}
+    <div class="kpi-card">
+      <div class="label">Rate Sensitivity</div>
+      <div class="value neutral">&mdash;</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Charts -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Overall Mix</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-ff-overall"></canvas></div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Mix by Currency</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-ff-currency"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Currency Detail Table -->
+  <div class="card">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Fixed / Floating by Currency</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th>Fixed Nominal</th><th>Fixed %</th><th>Fixed Deals</th>
+          <th>Floating Nominal</th><th>Floating %</th><th>Floating Deals</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for ccy, d in fixed_float.by_currency.items() %}
+        <tr>
+          <td>{{ ccy }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(d.fixed) }}</td>
+          <td style="text-align:right;">{{ "%.1f"|format(d.fixed_pct) }}%</td>
+          <td style="text-align:right;">{{ d.count_fixed }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(d.floating) }}</td>
+          <td style="text-align:right;">{{ "%.1f"|format(d.floating_pct) }}%</td>
+          <td style="text-align:right;">{{ d.count_floating }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if fixed_float.sensitivity and fixed_float.sensitivity.note %}
+  <p class="footnote">{{ fixed_float.sensitivity.note }}</p>
+  {% endif %}
+
+  <script>
+  (function() {
+    const data = {{ fixed_float | tojson_safe }};
+
+    // Overall donut
+    if (typeof Chart !== 'undefined' && data.mix) {
+      new Chart(document.getElementById('chart-ff-overall'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Fixed', 'Floating'],
+          datasets: [{
+            data: [data.mix.Fixed.nominal, data.mix.Floating.nominal],
+            backgroundColor: ['rgba(88,166,255,0.8)', 'rgba(63,185,80,0.8)'],
+            borderColor: '#0d1117', borderWidth: 2,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { color: '#e6edf3', font: { size: 12 } } },
+            tooltip: { callbacks: { label: function(ctx) { return ctx.label + ': ' + fmt(ctx.raw) + ' (' + (ctx.dataIndex === 0 ? data.mix.Fixed.pct : data.mix.Floating.pct) + '%)'; } } }
+          }
+        }
+      });
+    }
+
+    // Currency stacked bar
+    if (typeof Chart !== 'undefined' && data.by_currency) {
+      const ccys = Object.keys(data.by_currency);
+      new Chart(document.getElementById('chart-ff-currency'), {
+        type: 'bar',
+        data: {
+          labels: ccys,
+          datasets: [
+            { label: 'Fixed', data: ccys.map(c => data.by_currency[c].fixed), backgroundColor: 'rgba(88,166,255,0.8)', stack: 's' },
+            { label: 'Floating', data: ccys.map(c => data.by_currency[c].floating), backgroundColor: 'rgba(63,185,80,0.8)', stack: 's' },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e' } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No fixed/floating classification available.</p>
+    <p style="font-size: 0.85rem;">Deals must have a &ldquo;Floating Rates Short Name&rdquo; column to classify fixed vs floating.</p>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,262 @@
+<div id="tab-deal-explorer" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Deal Explorer</h3>
+
+  {% if has_deal_explorer %}
+  <!-- Summary Stats -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Total Deals</div>
+      <div class="value">{{ deal_explorer.summary_stats.total_deals }}</div>
+      <div class="sub">{{ deal_explorer.summary_stats.positive_count }} positive / {{ deal_explorer.summary_stats.negative_count }} negative</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total P&amp;L</div>
+      <div class="value {{ 'positive' if deal_explorer.summary_stats.total_pnl >= 0 else 'negative' }}">{{ "{:,.0f}".format(deal_explorer.summary_stats.total_pnl) }}</div>
+      <div class="sub">Avg {{ "{:,.0f}".format(deal_explorer.summary_stats.avg_pnl) }} / Med {{ "{:,.0f}".format(deal_explorer.summary_stats.median_pnl) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Top 1 Deal %</div>
+      <div class="value">{{ "%.1f"|format(deal_explorer.summary_stats.top1_pct) }}%</div>
+      <div class="sub">Concentration</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Top 10 Deals %</div>
+      <div class="value">{{ "%.1f"|format(deal_explorer.summary_stats.top10_pct) }}%</div>
+      <div class="sub">Concentration</div>
+    </div>
+  </div>
+
+  <!-- Charts: Histogram + Maturity Profile -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">P&amp;L Distribution</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-deal-histogram"></canvas></div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Maturity Profile (Quarterly)</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-deal-maturity"></canvas></div>
+    </div>
+  </div>
+
+  <!-- By Product + By Currency -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">P&amp;L by Product</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-deal-product"></canvas></div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">P&amp;L by Currency</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-deal-currency"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card">
+    <div class="controls" style="margin-bottom: 8px;">
+      <input type="text" id="deal-filter-search" placeholder="Search deal ID, counterparty…"
+        style="background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; width: 250px;">
+      <select id="deal-filter-ccy" class="ctrl-btn" style="appearance: auto;">
+        <option value="">All CCY</option>
+        {% for ccy in deal_explorer.by_currency.keys() %}
+        <option value="{{ ccy }}">{{ ccy }}</option>
+        {% endfor %}
+      </select>
+      <select id="deal-filter-product" class="ctrl-btn" style="appearance: auto;">
+        <option value="">All Products</option>
+        {% for prod in deal_explorer.by_product.keys() %}
+        <option value="{{ prod }}">{{ prod }}</option>
+        {% endfor %}
+      </select>
+      <select id="deal-filter-sign" class="ctrl-btn" style="appearance: auto;">
+        <option value="">All P&amp;L</option>
+        <option value="positive">Positive only</option>
+        <option value="negative">Negative only</option>
+      </select>
+    </div>
+
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Deal Detail (Top 200 by |P&amp;L|)</h4>
+    <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+    <table id="deal-explorer-table">
+      <thead>
+        <tr>
+          <th style="cursor:pointer;" onclick="sortDealTable(0)">Deal ID</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(1)">Counterparty</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(2)">CCY</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(3)">Product</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(4)">Dir</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(5)">P&amp;L &#x25B2;&#x25BC;</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(6)">Nominal</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(7)">OIS %</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(8)">RateRef %</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(9)">Spread (bps)</th>
+          <th style="cursor:pointer;" onclick="sortDealTable(10)">Maturity</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in deal_explorer.deals %}
+        <tr data-ccy="{{ d.currency }}" data-product="{{ d.product }}" data-pnl="{{ d.pnl }}">
+          <td>{{ d.deal_id }}</td>
+          <td>{{ d.counterparty }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.product }}</td>
+          <td>{{ d.direction }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if d.pnl > 0 else 'negative' if d.pnl < 0 else '' }}">{{ "{:,.0f}".format(d.pnl) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(d.nominal) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(d.ois) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(d.rate_ref) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if d.spread_bps > 0 else 'negative' if d.spread_bps < 0 else '' }}">{{ "{:+.1f}".format(d.spread_bps) }}</td>
+          <td>{{ d.maturity }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ deal_explorer | tojson_safe }};
+
+    // P&L Histogram
+    if (typeof Chart !== 'undefined' && data.histogram && data.histogram.bins && data.histogram.bins.length) {
+      new Chart(document.getElementById('chart-deal-histogram'), {
+        type: 'bar',
+        data: {
+          labels: data.histogram.bins.map(b => fmt(b)),
+          datasets: [{
+            label: 'Deal Count',
+            data: data.histogram.counts,
+            backgroundColor: data.histogram.bins.map(b => b >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+            borderWidth: 0,
+            barPercentage: 1.0,
+            categoryPercentage: 1.0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxTicksLimit: 10 }, title: { display: true, text: 'P&L', color: '#8b949e' } },
+            y: { ticks: { color: '#8b949e' }, title: { display: true, text: 'Deals', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // Maturity Profile
+    if (typeof Chart !== 'undefined' && data.maturity_profile && data.maturity_profile.labels && data.maturity_profile.labels.length) {
+      new Chart(document.getElementById('chart-deal-maturity'), {
+        type: 'bar',
+        data: {
+          labels: data.maturity_profile.labels,
+          datasets: [{
+            label: 'Maturing Volume',
+            data: data.maturity_profile.volumes,
+            backgroundColor: 'rgba(88,166,255,0.7)',
+            yAxisID: 'y',
+          }, {
+            label: 'Deal Count',
+            data: data.maturity_profile.counts,
+            type: 'line',
+            borderColor: '#d29922',
+            backgroundColor: 'transparent',
+            yAxisID: 'y1',
+            pointRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45 } },
+            y: { position: 'left', ticks: { color: '#8b949e' }, title: { display: true, text: 'Volume', color: '#8b949e' } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#8b949e' }, title: { display: true, text: 'Count', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // Product donut
+    if (typeof Chart !== 'undefined' && data.by_product) {
+      const prods = Object.keys(data.by_product);
+      new Chart(document.getElementById('chart-deal-product'), {
+        type: 'doughnut',
+        data: {
+          labels: prods,
+          datasets: [{ data: prods.map(p => Math.abs(data.by_product[p].pnl)), backgroundColor: prods.map(p => data.by_product[p].color), borderColor: '#0d1117', borderWidth: 2 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 11 } } } } }
+      });
+    }
+
+    // Currency donut
+    if (typeof Chart !== 'undefined' && data.by_currency) {
+      const ccys = Object.keys(data.by_currency);
+      new Chart(document.getElementById('chart-deal-currency'), {
+        type: 'doughnut',
+        data: {
+          labels: ccys,
+          datasets: [{ data: ccys.map(c => Math.abs(data.by_currency[c].pnl)), backgroundColor: ccys.map(c => data.by_currency[c].color), borderColor: '#0d1117', borderWidth: 2 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#e6edf3', font: { size: 11 } } } } }
+      });
+    }
+
+    // Table filtering
+    const searchEl = document.getElementById('deal-filter-search');
+    const ccyEl = document.getElementById('deal-filter-ccy');
+    const prodEl = document.getElementById('deal-filter-product');
+    const signEl = document.getElementById('deal-filter-sign');
+    const table = document.getElementById('deal-explorer-table');
+
+    function filterTable() {
+      const search = (searchEl.value || '').toLowerCase();
+      const ccy = ccyEl.value;
+      const prod = prodEl.value;
+      const sign = signEl.value;
+      table.querySelectorAll('tbody tr').forEach(function(row) {
+        const text = row.textContent.toLowerCase();
+        const rCcy = row.dataset.ccy;
+        const rProd = row.dataset.product;
+        const rPnl = parseFloat(row.dataset.pnl || 0);
+        let show = true;
+        if (search && text.indexOf(search) === -1) show = false;
+        if (ccy && rCcy !== ccy) show = false;
+        if (prod && rProd !== prod) show = false;
+        if (sign === 'positive' && rPnl <= 0) show = false;
+        if (sign === 'negative' && rPnl > 0) show = false;
+        row.style.display = show ? '' : 'none';
+      });
+    }
+    if (searchEl) searchEl.addEventListener('input', filterTable);
+    if (ccyEl) ccyEl.addEventListener('change', filterTable);
+    if (prodEl) prodEl.addEventListener('change', filterTable);
+    if (signEl) signEl.addEventListener('change', filterTable);
+  })();
+
+  // Column sorting
+  var dealSortDir = {};
+  function sortDealTable(colIdx) {
+    var table = document.getElementById('deal-explorer-table');
+    var rows = Array.from(table.querySelectorAll('tbody tr'));
+    var dir = dealSortDir[colIdx] === 'asc' ? 'desc' : 'asc';
+    dealSortDir[colIdx] = dir;
+    rows.sort(function(a, b) {
+      var av = a.cells[colIdx].textContent.replace(/[,\s+]/g, '');
+      var bv = b.cells[colIdx].textContent.replace(/[,\s+]/g, '');
+      var an = parseFloat(av), bn = parseFloat(bv);
+      if (!isNaN(an) && !isNaN(bn)) return dir === 'asc' ? an - bn : bn - an;
+      return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    var tbody = table.querySelector('tbody');
+    rows.forEach(function(r) { tbody.appendChild(r); });
+  }
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No deal-level data available.</p>
+    <p style="font-size: 0.85rem;">Provide pnl_by_deal from the P&amp;L engine to enable the Deal Explorer.</p>
+  </div>
+  {% endif %}
+</div>

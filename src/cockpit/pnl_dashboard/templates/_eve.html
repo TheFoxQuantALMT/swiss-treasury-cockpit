@@ -1,0 +1,366 @@
+<!-- Tab 17: EVE (Economic Value of Equity) -->
+<div id="tab-eve" class="tab-content">
+{% if has_eve %}
+<h2>Economic Value of Equity (EVE) &mdash; BCBS 368</h2>
+
+<!-- KPI Cards -->
+<div class="grid-4" style="margin-bottom: 16px;">
+  <div class="kpi-card">
+    <div class="kpi-label">Total EVE</div>
+    <div class="kpi-value">{{ "{:,.0f}".format(eve.total_eve) }}</div>
+  </div>
+  {% if eve.scenarios and eve.scenarios.worst_scenario %}
+  <div class="kpi-card">
+    <div class="kpi-label">Worst Scenario</div>
+    <div class="kpi-value" style="font-size: 0.9rem;">{{ eve.scenarios.worst_scenario }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Worst &Delta;EVE</div>
+    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
+      {{ "{:,.0f}".format(eve.scenarios.worst_delta) }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Worst &Delta;EVE %</div>
+    <div class="kpi-value {{ 'negative' if eve.scenarios.worst_delta < 0 else 'positive' }}">
+      {% if eve.total_eve != 0 %}
+        {{ "{:.1f}%".format(eve.scenarios.worst_delta / eve.total_eve * 100) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- EVE by Currency -->
+<div class="grid-2">
+  <div class="card">
+    <h3>EVE by Currency</h3>
+    <table>
+      <thead>
+        <tr><th>Currency</th><th>EVE</th><th>Mod. Duration</th><th>Deals</th></tr>
+      </thead>
+      <tbody>
+        {% for ccy, data in eve.by_currency.items() %}
+        <tr>
+          <td><span style="color: {{ data.color }};">&block;</span> {{ ccy }}</td>
+          <td class="{{ 'positive' if data.eve > 0 else 'negative' }}">{{ "{:,.0f}".format(data.eve) }}</td>
+          <td>{{ "%.2f"|format(data.duration) }}Y</td>
+          <td>{{ data.deal_count }}</td>
+        </tr>
+        {% endfor %}
+        <tr style="font-weight: bold; border-top: 2px solid var(--border);">
+          <td>Total</td>
+          <td>{{ "{:,.0f}".format(eve.total_eve) }}</td>
+          <td>&mdash;</td>
+          <td>&mdash;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Duration Profile Chart -->
+  <div class="card">
+    <h3>Modified Duration Profile</h3>
+    <canvas id="eveDurationChart" height="250"></canvas>
+  </div>
+</div>
+
+<!-- EVE Tenor Ladder -->
+{% if eve.tenor_ladder and eve.tenor_ladder.buckets %}
+<div class="card" style="margin-top: 16px;">
+  <h3>EVE by Tenor Bucket</h3>
+  <canvas id="eveTenorLadderChart" height="280"></canvas>
+</div>
+{% endif %}
+
+<!-- Scenario ΔEVE Heatmap -->
+{% if eve.scenarios and eve.scenarios.heatmap %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Scenario &Delta;EVE Heatmap (BCBS 368)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        {% for ccy in eve.scenarios.currencies %}
+        <th>{{ ccy }}</th>
+        {% endfor %}
+        <th style="font-weight: bold;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in eve.scenarios.heatmap %}
+      <tr>
+        <td>{{ row.scenario }}</td>
+        {% for ccy in eve.scenarios.currencies %}
+        {% set val = row.get(ccy, 0) %}
+        <td class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">
+          {{ "{:,.0f}".format(val) }}
+        </td>
+        {% endfor %}
+        <td class="{{ 'positive' if row.total > 0 else 'negative' if row.total < 0 else '' }}" style="font-weight: bold;">
+          {{ "{:,.0f}".format(row.total) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- IRRBB Outlier Test (BCBS 368) -->
+{% if eve.outlier_test %}
+<div class="card" style="margin-top: 16px;">
+  <h3>IRRBB Outlier Test &mdash; &Delta;EVE / Tier 1 Capital</h3>
+  <div class="grid-3" style="margin-bottom: 12px;">
+    <div class="kpi-card">
+      <div class="kpi-label">Tier 1 Capital</div>
+      <div class="kpi-value">{{ "{:,.0f}".format(eve.outlier_test.tier1_capital) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Worst &Delta;EVE / Tier 1</div>
+      <div class="kpi-value {{ 'negative' if eve.outlier_test.worst_pct > 15 else 'positive' }}">{{ "%.2f"|format(eve.outlier_test.worst_pct) }}%</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid {{ '#f85149' if eve.outlier_test.is_outlier else '#3fb950' }};">
+      <div class="kpi-label">Outlier Status</div>
+      <div class="kpi-value {{ 'negative' if eve.outlier_test.is_outlier else 'positive' }}">
+        {% if eve.outlier_test.is_outlier %}OUTLIER{% else %}PASS{% endif %}
+      </div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Scenario</th><th style="text-align:right;">&Delta;EVE</th><th style="text-align:right;">% of Tier 1</th><th style="text-align:center;">Status</th></tr>
+    </thead>
+    <tbody>
+    {% for s in eve.outlier_test.scenarios %}
+      <tr>
+        <td>{{ s.scenario }}</td>
+        <td style="text-align:right;" class="{{ 'positive' if s.delta_eve > 0 else 'negative' }}">{{ "{:,.0f}".format(s.delta_eve) }}</td>
+        <td style="text-align:right;" class="{{ 'negative' if s.pct_of_tier1 > 15 else '' }}">{{ "%.2f"|format(s.pct_of_tier1) }}%</td>
+        <td style="text-align:center;">
+          {% if s.passed %}<span style="color: #3fb950; font-weight: 600;">PASS</span>
+          {% else %}<span style="color: #f85149; font-weight: 600;">FAIL</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="footnote">BCBS 368: bank is an outlier if |&Delta;EVE| exceeds 15% of Tier 1 capital under any standardized scenario.</p>
+</div>
+{% endif %}
+
+<!-- Convexity / Gamma -->
+{% if eve.convexity %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Convexity / Gamma Analysis</h3>
+  <div class="grid-4" style="margin-bottom: 12px;">
+    <div class="kpi-card">
+      <div class="kpi-label">&Delta;EVE (Parallel Up)</div>
+      <div class="kpi-value {{ 'negative' if eve.convexity.delta_eve_up < 0 else 'positive' }}">
+        {{ "{:,.0f}".format(eve.convexity.delta_eve_up) }}
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">&Delta;EVE (Parallel Down)</div>
+      <div class="kpi-value {{ 'negative' if eve.convexity.delta_eve_down < 0 else 'positive' }}">
+        {{ "{:,.0f}".format(eve.convexity.delta_eve_down) }}
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Effective Duration</div>
+      <div class="kpi-value">{{ "%.2f"|format(eve.convexity.effective_duration) }}Y</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Convexity (&gamma;)</div>
+      <div class="kpi-value">{{ "%.2f"|format(eve.convexity.convexity) }}</div>
+    </div>
+  </div>
+  {% if eve.convexity.by_currency %}
+  <table>
+    <thead>
+      <tr>
+        <th>Currency</th>
+        <th>EVE</th>
+        <th>&Delta;EVE Up</th>
+        <th>&Delta;EVE Down</th>
+        <th>Eff. Duration</th>
+        <th>Convexity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in eve.convexity.by_currency %}
+      <tr>
+        <td><span style="color: {{ c.color }};">&block;</span> {{ c.currency }}</td>
+        <td>{{ "{:,.0f}".format(c.eve) }}</td>
+        <td class="{{ 'positive' if c.delta_eve_up > 0 else 'negative' }}">{{ "{:,.0f}".format(c.delta_eve_up) }}</td>
+        <td class="{{ 'positive' if c.delta_eve_down > 0 else 'negative' }}">{{ "{:,.0f}".format(c.delta_eve_down) }}</td>
+        <td>{{ "%.2f"|format(c.effective_duration) }}Y</td>
+        <td>{{ "%.2f"|format(c.convexity) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="footnote" style="margin-top: 8px; color: var(--text-secondary); font-size: 0.75rem;">
+    Duration = &minus;(&Delta;EVE<sub>up</sub> &minus; &Delta;EVE<sub>down</sub>) / (2 &times; EVE &times; &Delta;r).
+    Convexity = (&Delta;EVE<sub>up</sub> + &Delta;EVE<sub>down</sub>) / (EVE &times; &Delta;r&sup2;).
+    Positive convexity benefits from large rate moves.
+  </p>
+</div>
+{% endif %}
+
+<!-- DV01 / PV01 Ladder -->
+{% if eve.dv01 %}
+<div class="card" style="margin-top: 16px;">
+  <h3>DV01 / PV01 Ladder (1bp Sensitivity)</h3>
+  <div class="grid-2" style="margin-bottom: 12px;">
+    <div class="kpi-card">
+      <div class="kpi-label">Total DV01</div>
+      <div class="kpi-value">{{ "{:,.0f}".format(eve.dv01.total_dv01) }}</div>
+      <div class="sub">P&amp;L impact per 1bp parallel shift</div>
+    </div>
+    <div class="card" style="margin: 0; border: none; padding: 0;">
+      <table>
+        <thead>
+          <tr><th>Currency</th><th style="text-align:right;">EVE</th><th style="text-align:right;">Duration</th><th style="text-align:right;">DV01</th></tr>
+        </thead>
+        <tbody>
+          {% for d in eve.dv01.by_currency %}
+          <tr>
+            <td><span style="color: {{ d.color }};">&block;</span> {{ d.currency }}</td>
+            <td style="text-align:right;">{{ "{:,.0f}".format(d.eve) }}</td>
+            <td style="text-align:right;">{{ "%.2f"|format(d.duration) }}Y</td>
+            <td style="text-align:right; font-weight: 600;">{{ "{:,.0f}".format(d.dv01) }}</td>
+          </tr>
+          {% endfor %}
+          <tr style="font-weight: bold; border-top: 2px solid var(--border);">
+            <td>Total</td>
+            <td style="text-align:right;">{{ "{:,.0f}".format(eve.total_eve) }}</td>
+            <td style="text-align:right;">&mdash;</td>
+            <td style="text-align:right;">{{ "{:,.0f}".format(eve.dv01.total_dv01) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="footnote">DV01 = |Duration| &times; |EVE| &times; 0.0001. Derived from effective duration (parallel &plusmn;200bp).</p>
+</div>
+{% endif %}
+
+<!-- Key Rate Duration Chart -->
+{% if eve.krd and eve.krd.tenors %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Key Rate Durations (KRD)</h3>
+  <canvas id="eveKrdChart" height="300"></canvas>
+</div>
+{% endif %}
+
+<script>
+(function() {
+  // Duration bar chart
+  {% if eve.duration and eve.duration.labels %}
+  new Chart(document.getElementById('eveDurationChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ eve.duration.labels | tojson_safe }},
+      datasets: [{
+        label: 'Modified Duration (years)',
+        data: {{ eve.duration.values | tojson_safe }},
+        backgroundColor: {{ eve.duration.colors | tojson_safe }},
+        borderWidth: 0,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: {
+          title: { display: true, text: 'Duration (years)', color: '#8b949e' },
+          grid: { color: '#30363d' },
+          ticks: { color: '#8b949e' }
+        },
+        x: { grid: { display: false }, ticks: { color: '#e6edf3' } }
+      }
+    }
+  });
+  {% endif %}
+
+  // Tenor Ladder stacked bar
+  {% if eve.tenor_ladder and eve.tenor_ladder.buckets %}
+  var tenorDatasets = [];
+  {% for ds in eve.tenor_ladder.datasets %}
+  tenorDatasets.push({
+    label: {{ ds.label | tojson_safe }},
+    data: {{ ds.data | tojson_safe }},
+    backgroundColor: {{ ds.color | tojson_safe }} + 'cc',
+    borderWidth: 0,
+    borderRadius: 3,
+  });
+  {% endfor %}
+  new Chart(document.getElementById('eveTenorLadderChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ eve.tenor_ladder.buckets | tojson_safe }},
+      datasets: tenorDatasets,
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#e6edf3' } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: '#e6edf3' }, title: { display: true, text: 'Tenor Bucket', color: '#8b949e' } },
+        y: { stacked: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' }, title: { display: true, text: 'EVE', color: '#8b949e' } },
+      }
+    }
+  });
+  {% endif %}
+
+  // KRD grouped bar chart
+  {% if eve.krd and eve.krd.tenors %}
+  var krdDatasets = [];
+  {% for ds in eve.krd.datasets %}
+  krdDatasets.push({
+    label: {{ ds.label | tojson_safe }},
+    data: {{ ds.data | tojson_safe }},
+    backgroundColor: {{ ds.color | tojson_safe }},
+    borderWidth: 0,
+    borderRadius: 3,
+  });
+  {% endfor %}
+  new Chart(document.getElementById('eveKrdChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ eve.krd.tenors | tojson_safe }},
+      datasets: krdDatasets,
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e6edf3' } },
+      },
+      scales: {
+        y: {
+          title: { display: true, text: 'Key Rate Duration', color: '#8b949e' },
+          grid: { color: '#30363d' },
+          ticks: { color: '#8b949e' }
+        },
+        x: {
+          title: { display: true, text: 'Tenor', color: '#8b949e' },
+          grid: { display: false },
+          ticks: { color: '#e6edf3' }
+        }
+      }
+    }
+  });
+  {% endif %}
+})();
+</script>
+
+{% else %}
+<div class="card" style="text-align: center; padding: 48px;">
+  <p style="color: var(--text-secondary);">No EVE data available. Run the engine with <code>scenarios</code> input to compute EVE.</p>
+</div>
+{% endif %}
+</div>

@@ -1,0 +1,167 @@
+<div id="tab-forecast-tracking" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">NII Forecast Tracking</h3>
+
+  {% if has_forecast_tracking %}
+
+  <!-- Stats KPIs -->
+  {% if forecast_tracking.stats %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Latest Forecast</div>
+      <div class="value">{{ "{:,.0f}".format(forecast_tracking.stats.latest) }}</div>
+      <div class="sub">{{ forecast_tracking.stats.n_snapshots }} snapshots</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Drift (First &rarr; Last)</div>
+      <div class="value {{ 'positive' if forecast_tracking.stats.range_pct >= 0 else 'negative' }}">{{ "{:+.2f}".format(forecast_tracking.stats.range_pct) }}%</div>
+      <div class="sub">from {{ "{:,.0f}".format(forecast_tracking.stats.earliest) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Revision Volatility</div>
+      <div class="value">{{ "{:,.0f}".format(forecast_tracking.stats.volatility) }}</div>
+      <div class="sub">CV: {{ "%.2f"|format(forecast_tracking.stats.stability_cv) }}%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Max Single Revision</div>
+      <div class="value {{ 'positive' if forecast_tracking.stats.max_revision >= 0 else 'negative' }}">{{ "{:+,.0f}".format(forecast_tracking.stats.max_revision) }}</div>
+      <div class="sub">Direction consistency: {{ "%.0f"|format(forecast_tracking.stats.direction_consistency) }}%</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Forecast evolution spaghetti chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">12M NII Forecast Evolution</h4>
+    <div class="chart-container">
+      <canvas id="chart-forecast-tracking"></canvas>
+    </div>
+  </div>
+
+  <!-- Revision bar chart -->
+  {% if forecast_tracking.revisions and forecast_tracking.revisions.dates %}
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Daily Forecast Revisions</h4>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-forecast-revisions"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Revision % Change</h4>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-forecast-revisions-pct"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <p class="footnote">
+    Shows how the 12-month forward NII forecast has evolved over time.
+    Stable forecasts indicate consistent rate positioning.
+    High revision volatility suggests model sensitivity to market moves or portfolio changes.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ forecast_tracking | tojson_safe }};
+    const ctx = document.getElementById('chart-forecast-tracking');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    const datasets = [];
+    const colors = { CHF: '#d62828', EUR: '#e67e22', USD: '#002868', GBP: '#6f42c1' };
+
+    for (const [ccy, values] of Object.entries(data.by_currency)) {
+      datasets.push({
+        label: ccy,
+        data: values,
+        borderColor: colors[ccy] || '#8b949e',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.3,
+      });
+    }
+    datasets.push({
+      label: 'Total',
+      data: data.total,
+      borderColor: '#58a6ff',
+      backgroundColor: 'transparent',
+      borderWidth: 3,
+      borderDash: [5, 3],
+      pointRadius: 2,
+      tension: 0.3,
+    });
+
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: data.dates, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+          y: { ticks: { color: '#8b949e' }, title: { display: true, text: '12M NII Forecast', color: '#8b949e' } }
+        }
+      }
+    });
+
+    // Revision bars
+    var revCtx = document.getElementById('chart-forecast-revisions');
+    if (revCtx && data.revisions && data.revisions.dates && data.revisions.dates.length) {
+      new Chart(revCtx, {
+        type: 'bar',
+        data: {
+          labels: data.revisions.dates,
+          datasets: [{
+            label: 'Revision',
+            data: data.revisions.changes,
+            backgroundColor: data.revisions.changes.map(v => v >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 9 } } },
+            y: { ticks: { color: '#8b949e' }, title: { display: true, text: 'Revision (abs)', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // Revision % bars
+    var revPctCtx = document.getElementById('chart-forecast-revisions-pct');
+    if (revPctCtx && data.revisions && data.revisions.dates && data.revisions.dates.length) {
+      new Chart(revPctCtx, {
+        type: 'bar',
+        data: {
+          labels: data.revisions.dates,
+          datasets: [{
+            label: 'Revision %',
+            data: data.revisions.pct_changes,
+            backgroundColor: data.revisions.pct_changes.map(v => v >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 9 } } },
+            y: { ticks: { color: '#8b949e', callback: function(v) { return v + '%'; } }, title: { display: true, text: 'Revision %', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No historical forecast data available.</p>
+    <p style="font-size: 0.85rem;">Run daily P&amp;L computations to build up forecast history in <code>data/pnl_snapshots/</code>.</p>
+  </div>
+  {% endif %}
+</div>

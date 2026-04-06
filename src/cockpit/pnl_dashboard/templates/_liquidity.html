@@ -1,0 +1,201 @@
+<div id="tab-liquidity" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Liquidity Forecast</h3>
+
+  {% if has_liquidity %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Net 7 Days</div>
+      <div class="value {{ 'positive' if liquidity.summary.net_7d >= 0 else 'negative' }}">{{ "{:,.0f}".format(liquidity.summary.net_7d) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Net 30 Days</div>
+      <div class="value {{ 'positive' if liquidity.summary.net_30d >= 0 else 'negative' }}">{{ "{:,.0f}".format(liquidity.summary.net_30d) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Net 90 Days</div>
+      <div class="value {{ 'positive' if liquidity.summary.net_90d >= 0 else 'negative' }}">{{ "{:,.0f}".format(liquidity.summary.net_90d) }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid {{ '#f85149' if liquidity.summary.survival_days is not none else 'var(--accent-green)' }};">
+      <div class="label">Survival Horizon</div>
+      <div class="value">{% if liquidity.summary.survival_days is not none %}{{ liquidity.summary.survival_days }}d{% else %}No deficit{% endif %}</div>
+    </div>
+  </div>
+
+  <div class="controls" id="liq-ccy-ctrl"></div>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <div class="chart-container" style="height: 400px;">
+      <canvas id="chart-liquidity"></canvas>
+    </div>
+  </div>
+
+  <!-- Top maturities in next 30 days -->
+  {% if liquidity.top_maturities %}
+  <div class="card">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Top Cash Flows — Next 30 Days</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Deal</th><th>CCY</th><th>Direction</th><th>Date</th><th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for m in liquidity.top_maturities %}
+        <tr>
+          <td>{{ m.deal_id }}</td>
+          <td>{{ m.currency }}</td>
+          <td>{{ m.direction }}</td>
+          <td>{{ m.date }}</td>
+          <td style="text-align: right;" class="{{ 'positive' if m.amount >= 0 else 'negative' }}">{{ "{:,.0f}".format(m.amount) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Reinvestment What-If -->
+  {% if liquidity.reinvestment %}
+  <div class="card" style="margin-top: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Reinvestment What-If &mdash; Maturing Assets at Market Rates</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Maturing Volume</th>
+          <th style="text-align:right;">Book Rate</th>
+          <th style="text-align:right;">Market Rate</th>
+          <th style="text-align:right;">Spread (bps)</th>
+          <th style="text-align:right;">NII Impact</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in liquidity.reinvestment %}
+        <tr>
+          <td>{{ r.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.maturing_volume) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(r.book_rate_pct) }}%</td>
+          <td style="text-align:right;">{{ "%.4f"|format(r.market_rate_pct) }}%</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.spread_bps > 0 else 'negative' if r.spread_bps < 0 else '' }}">{{ "{:+.1f}".format(r.spread_bps) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.nii_impact > 0 else 'negative' if r.nii_impact < 0 else '' }}">{{ "{:+,.0f}".format(r.nii_impact) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="footnote">If maturing assets are reinvested at current OIS forward rate. Positive spread = reinvestment at higher rate (NII gain).</p>
+  </div>
+  {% endif %}
+
+  <p class="footnote">Inflows (green) = maturing assets. Outflows (red) = maturing liabilities. Blue line = cumulative net position.</p>
+
+  <script>
+  (function() {
+    const data = {{ liquidity | tojson_safe }};
+    const ccys = data.all_currencies || Object.keys(data.by_currency);
+
+    // Build "All" aggregate
+    const allCcys = Object.keys(data.by_currency);
+    if (allCcys.length > 0) {
+      const first = data.by_currency[allCcys[0]];
+      const allData = {
+        labels: first.labels,
+        inflows: first.labels.map(() => 0),
+        outflows: first.labels.map(() => 0),
+        net: first.labels.map(() => 0),
+        cumulative: [],
+      };
+      allCcys.forEach(c => {
+        const d = data.by_currency[c];
+        for (let i = 0; i < d.inflows.length; i++) {
+          allData.inflows[i] += d.inflows[i];
+          allData.outflows[i] += d.outflows[i];
+          allData.net[i] += d.net[i];
+        }
+      });
+      let cum = 0;
+      allData.net.forEach(n => { cum += n; allData.cumulative.push(cum); });
+      data.by_currency['All'] = allData;
+    }
+
+    const ctrl = document.getElementById('liq-ccy-ctrl');
+    const allBtns = ['All'].concat(ccys);
+    allBtns.forEach((c, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'ctrl-btn' + (i === 0 ? ' active' : '');
+      btn.textContent = c;
+      btn.onclick = function() {
+        ctrl.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        updateChart(c);
+      };
+      ctrl.appendChild(btn);
+    });
+
+    const ctx = document.getElementById('chart-liquidity');
+    let chart;
+    function updateChart(ccy) {
+      const d = data.by_currency[ccy];
+      if (!d) return;
+      if (chart) chart.destroy();
+
+      // Thin down labels for readability: show every Nth label
+      const step = d.labels.length > 30 ? Math.ceil(d.labels.length / 30) : 1;
+      const displayLabels = d.labels.map((l, i) => i % step === 0 ? l : '');
+
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: displayLabels,
+          datasets: [
+            {
+              label: 'Inflows',
+              data: d.inflows,
+              backgroundColor: 'rgba(63,185,80,0.7)',
+              stack: 'cashflow',
+            },
+            {
+              label: 'Outflows',
+              data: d.outflows,
+              backgroundColor: 'rgba(248,81,73,0.7)',
+              stack: 'cashflow',
+            },
+            {
+              label: 'Cumulative Net',
+              data: d.cumulative,
+              type: 'line',
+              borderColor: '#58a6ff',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              pointRadius: 0,
+              yAxisID: 'y1',
+            },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#e6edf3', font: { size: 11 } } },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e', maxRotation: 45, font: { size: 9 } } },
+            y: { stacked: true, position: 'left', ticks: { color: '#8b949e' }, title: { display: true, text: 'Cash Flow', color: '#8b949e' } },
+            y1: { position: 'right', ticks: { color: '#58a6ff' }, title: { display: true, text: 'Cumulative', color: '#58a6ff' }, grid: { drawOnChartArea: false } },
+          }
+        }
+      });
+    }
+    updateChart('All');
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No liquidity schedule data available.</p>
+    <p style="font-size: 0.85rem;">Provide liquidity_schedule.xlsx with daily (90d) + monthly cash flow projections per deal.</p>
+  </div>
+  {% endif %}
+</div>

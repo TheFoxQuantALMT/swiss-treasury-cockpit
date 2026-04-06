@@ -1,0 +1,81 @@
+<div id="tab-strategy" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Strategy IAS Decomposition</h3>
+
+  {% if has_strategy %}
+  <!-- Chart -->
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">4-Leg P&amp;L by Month (Base)</h3>
+    <div class="chart-container">
+      <canvas id="chart-strategy"></canvas>
+    </div>
+  </div>
+
+  <!-- Detail table -->
+  {% if strategy.table %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Strategy Leg Summary</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Leg</th>
+          <th>Currency</th>
+          <th>Direction</th>
+          <th>Total P&amp;L</th>
+          <th>Avg Nominal</th>
+          <th>Avg RateRef</th>
+          <th>Avg OISfwd</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in strategy.table %}
+        <tr>
+          <td>{{ row.leg }}</td>
+          <td>{{ row.currency }}</td>
+          <td>{{ row.direction }}</td>
+          <td class="{{ 'positive' if row.pnl > 0 else 'negative' if row.pnl < 0 else '' }}">{{ "{:,.0f}".format(row.pnl) }}</td>
+          <td>{{ "{:,.0f}".format(row.nominal) }}</td>
+          <td>{{ "{:.4f}".format(row.rate_ref) }}</td>
+          <td>{{ "{:.4f}".format(row.ois_fwd) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <script>
+  (function() {
+    const stratData = {{ strategy | tojson_safe }};
+    if (typeof Chart === 'undefined' || !stratData.months || !stratData.months.length) return;
+
+    const datasets = [];
+    for (const [leg, info] of Object.entries(stratData.legs)) {
+      datasets.push({
+        label: leg,
+        data: info.values,
+        backgroundColor: info.color,
+      });
+    }
+
+    new Chart(document.getElementById('chart-strategy'), {
+      type: 'bar',
+      data: { labels: stratData.months, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+          y: { ticks: { color: '#8b949e' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No strategy IAS data available.</p>
+    <p style="font-size: 0.85rem;">Deals with <code>Strategy IAS</code> designation are required for this view.</p>
+  </div>
+  {% endif %}
+</div>

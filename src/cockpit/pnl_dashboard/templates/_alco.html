@@ -1,0 +1,214 @@
+<div id="tab-alco" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">ALCO Risk Summary</h3>
+
+  {% if has_alco %}
+  <div class="card">
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th style="text-align:right;">Value</th>
+          <th style="text-align:right;">&Delta; 1d</th>
+          <th style="text-align:right;">Limit</th>
+          <th style="text-align:right;">Utilization</th>
+          <th style="text-align:center;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for m in alco.metrics %}
+        <tr>
+          <td style="font-weight: 500;">{{ m.metric }}</td>
+          <td style="text-align:right;">
+            {% if m.display is defined and m.display %}{{ m.display }}
+            {% elif m.unit is defined and m.unit %}{{ "{:,.2f}".format(m.value) }}{{ m.unit }}
+            {% else %}{{ "{:,.0f}".format(m.value) }}{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if m.delta_1d is not none %}
+              <span class="{{ 'positive' if m.delta_1d > 0 else 'negative' if m.delta_1d < 0 else '' }}">{{ "{:+,.0f}".format(m.delta_1d) }}</span>
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if m.limit is not none %}{{ "{:,.0f}".format(m.limit) }}{% else %}&mdash;{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if m.utilization is not none %}
+              <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+                <span>{{ "%.1f"|format(m.utilization) }}%</span>
+                <div style="width: 60px; background: var(--bg-tertiary); border-radius: 3px; height: 6px; overflow: hidden;">
+                  <div style="height: 100%; width: {{ [m.utilization, 100] | min }}%; background: {{ '#3fb950' if m.status == 'green' else '#d29922' if m.status == 'yellow' else '#f85149' }}; border-radius: 3px;"></div>
+                </div>
+              </div>
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td style="text-align:center;">
+            {% if m.status == 'green' %}<span style="color: #3fb950; font-size: 1.1rem;">&#9679;</span>
+            {% elif m.status == 'yellow' %}<span style="color: #d29922; font-size: 1.1rem;">&#9679;</span>
+            {% elif m.status == 'red' %}<span style="color: #f85149; font-size: 1.1rem;">&#9679;</span>
+            {% else %}<span style="color: #8b949e; font-size: 1.1rem;">&#9679;</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Limit Breach Log -->
+  {% if has_limits and limits.breach_log %}
+  {% if limits.breach_log.breach_count > 0 or limits.breach_log.warning_count > 0 %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">
+      Limit Breach Log &mdash;
+      <span style="color: #f85149;">{{ limits.breach_log.breach_count }} breach{{ 'es' if limits.breach_log.breach_count != 1 else '' }}</span>,
+      <span style="color: #d29922;">{{ limits.breach_log.warning_count }} warning{{ 's' if limits.breach_log.warning_count != 1 else '' }}</span>
+    </h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Metric</th>
+          <th>Currency</th>
+          <th style="text-align:right;">Actual</th>
+          <th style="text-align:right;">Limit</th>
+          <th style="text-align:right;">Utilization</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in limits.breach_log.breaches %}
+        <tr style="background: rgba(248,81,73,0.08);">
+          <td><span style="color: #f85149; font-weight: 600;">BREACH</span></td>
+          <td>{{ b.label }}</td>
+          <td>{{ b.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(b.actual) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(b.limit) }}</td>
+          <td style="text-align:right; color: #f85149; font-weight: 600;">{{ "%.1f"|format(b.utilization_pct) }}%</td>
+        </tr>
+        {% endfor %}
+        {% for w in limits.breach_log.warnings %}
+        <tr style="background: rgba(210,153,34,0.08);">
+          <td><span style="color: #d29922; font-weight: 600;">WARNING</span></td>
+          <td>{{ w.label }}</td>
+          <td>{{ w.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(w.actual) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(w.limit) }}</td>
+          <td style="text-align:right; color: #d29922;">{{ "%.1f"|format(w.utilization_pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if has_limits and limits.limit_items %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Board-Approved Limits</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Currency</th>
+          <th style="text-align:right;">Actual</th>
+          <th style="text-align:right;">Limit</th>
+          <th style="text-align:right;">Utilization</th>
+          <th style="text-align:center;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in limits.limit_items %}
+        <tr>
+          <td>{{ it.label }}</td>
+          <td>{{ it.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(it.actual) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(it.limit) }}</td>
+          <td style="text-align:right;">
+            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+              <span>{{ "%.1f"|format(it.utilization_pct) }}%</span>
+              <div style="width: 60px; background: var(--bg-tertiary); border-radius: 3px; height: 6px; overflow: hidden;">
+                <div style="height: 100%; width: {{ [it.utilization_pct, 100] | min }}%; background: {{ '#3fb950' if it.status == 'green' else '#d29922' if it.status == 'yellow' else '#f85149' }}; border-radius: 3px;"></div>
+              </div>
+            </div>
+          </td>
+          <td style="text-align:center;">
+            {% if it.status == 'green' %}<span style="color: #3fb950;">&#9679;</span>
+            {% elif it.status == 'yellow' %}<span style="color: #d29922;">&#9679;</span>
+            {% else %}<span style="color: #f85149;">&#9679;</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- ALCO Decision Pack -->
+  {% if has_alco_decision_pack %}
+  <div class="card" style="margin-top: 16px; border-left: 3px solid var(--accent-blue);">
+    <h3 style="font-size: 0.85rem; margin-bottom: 10px;">
+      ALCO Decision Pack
+      {% if alco_decision_pack.n_critical > 0 %}
+        <span style="background: #f85149; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 0.7rem; margin-left: 8px;">{{ alco_decision_pack.n_critical }} CRITICAL</span>
+      {% endif %}
+      {% if alco_decision_pack.n_high > 0 %}
+        <span style="background: #e67e22; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 0.7rem; margin-left: 4px;">{{ alco_decision_pack.n_high }} HIGH</span>
+      {% endif %}
+    </h3>
+
+    {% if alco_decision_pack.executive_summary %}
+    <div style="margin-bottom: 12px;">
+      <h4 style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">Executive Summary</h4>
+      <ul style="list-style: none; padding: 0;">
+        {% for item in alco_decision_pack.executive_summary %}
+        <li style="padding: 4px 0; padding-left: 16px; position: relative; font-size: 0.85rem;">
+          <span style="position: absolute; left: 0; color: {{ '#f85149' if item.severity == 'critical' else '#d29922' }};">&#9679;</span>
+          {{ item.text }}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if alco_decision_pack.decisions %}
+    <div style="margin-bottom: 12px;">
+      <h4 style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">Decisions Required</h4>
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:center;">Priority</th>
+            <th>Topic</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in alco_decision_pack.decisions %}
+          <tr>
+            <td style="text-align:center;">
+              {% if d.priority == 'critical' %}<span style="color: #f85149; font-weight: 700;">CRITICAL</span>
+              {% elif d.priority == 'high' %}<span style="color: #e67e22; font-weight: 600;">HIGH</span>
+              {% else %}<span style="color: #d29922;">MEDIUM</span>{% endif %}
+            </td>
+            <td style="font-weight: 500;">{{ d.topic }}</td>
+            <td>{{ d.description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if not alco_decision_pack.executive_summary and not alco_decision_pack.decisions %}
+    <p style="color: var(--accent-green); font-size: 0.85rem;">All metrics within acceptable ranges. No decisions required.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <p class="footnote">Consolidated view for ALCO morning meeting. Status: <span style="color:#3fb950;">&#9679;</span> OK &nbsp; <span style="color:#d29922;">&#9679;</span> Warning &nbsp; <span style="color:#f85149;">&#9679;</span> Breach/Action</p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>Run with optional inputs (scenarios, limits, EVE) to populate the ALCO summary.</p>
+  </div>
+  {% endif %}
+</div>

@@ -1,9 +1,28 @@
 """Unified configuration for Swiss Treasury Cockpit.
 
-Merges constants from economic-pnl (P&L engine) and macro-cbwatch (CB monitoring).
+Merges constants from pnl_engine (P&L engine) and macro-cbwatch (CB monitoring).
+P&L-specific constants are re-exported from the standalone pnl_engine package.
 """
 
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Re-export P&L engine constants from standalone package
+# ---------------------------------------------------------------------------
+
+from pnl_engine.config import (  # noqa: F401
+    CURRENCY_TO_CARRY_INDEX,
+    CURRENCY_TO_OIS,
+    ECHEANCIER_INDEX_TO_WASP,
+    FLOAT_NAME_TO_WASP,
+    FUNDING_SOURCE,
+    LOOKBACK_DAYS,
+    MM_BY_CURRENCY,
+    NON_STRATEGY_PRODUCTS,
+    PRODUCT_RATE_COLUMN,
+    SHOCKS,
+    SUPPORTED_CURRENCIES,
+)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -12,52 +31,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 OUTPUT_DIR = PROJECT_ROOT / "output"
-
-# ---------------------------------------------------------------------------
-# P&L Engine constants (from economic-pnl config.py)
-# ---------------------------------------------------------------------------
-
-CURRENCY_TO_OIS: dict[str, str] = {
-    "CHF": "CHFSON",
-    "EUR": "EUREST",
-    "USD": "USSOFR",
-    "GBP": "GBPOIS",
-}
-
-PRODUCT_RATE_COLUMN: dict[str, str] = {
-    "IAM/LD": "EqOisRate",
-    "BND": "YTM",
-    "FXS": "EqOisRate",
-    "IRS": "Clientrate",
-    "IRS-MTM": "Clientrate",
-    "HCD": "Clientrate",
-}
-
-NON_STRATEGY_PRODUCTS: set[str] = {"BND", "FXS", "IAM/LD", "IRS", "IRS-MTM"}
-
-SUPPORTED_CURRENCIES: set[str] = {"CHF", "EUR", "USD", "GBP"}
-
-MM_BY_CURRENCY: dict[str, int] = {
-    "CHF": 360,
-    "EUR": 360,
-    "USD": 360,
-    "GBP": 365,
-}
-
-ECHEANCIER_INDEX_TO_WASP: dict[str, dict[str, str]] = {
-    "3M": {"CHF": "CHFSON3M", "EUR": "EUREST3M", "USD": "USSOFR3M", "GBP": "GBPOIS3M"},
-    "6M": {"CHF": "CHFSON6M", "EUR": "EUREST6M", "USD": "USSOFR6M", "GBP": "GBPOIS6M"},
-    "1M": {"CHF": "CHFSON1M", "EUR": "EUREST1M", "USD": "USSOFR1M", "GBP": "GBPOIS1M"},
-}
-
-FLOAT_NAME_TO_WASP: dict[str, str] = {
-    "SARON": "CHFSON",
-    "ESTR": "EUREST",
-    "SOFR": "USSOFR",
-    "SONIA": "GBPOIS",
-}
-
-SHOCKS: list[str] = ["0", "50", "wirp"]
 
 # ---------------------------------------------------------------------------
 # Exposure module constants (from economic-pnl config.py)
@@ -177,24 +150,3 @@ ANALYST_MODEL: str = "deepseek-r1:14b"
 REVIEWER_MODEL: str = "qwen3.5:9b"
 OLLAMA_HOST: str = "http://localhost:11434"
 MAX_REVIEW_RETRIES: int = 3
-
-# ---------------------------------------------------------------------------
-# Cost of Carry / P&L decomposition
-# ---------------------------------------------------------------------------
-
-FUNDING_SOURCE: str = "ois"  # "ois" (default) or "coc"
-
-# WASP carry-compounded curve indices (from wasptools.py)
-# These differ from OIS forward indices for EUR and CHF
-CURRENCY_TO_CARRY_INDEX: dict[str, str] = {
-    "CHF": "CSCML5",
-    "EUR": "ESAVB1",
-    "USD": "USSOFR",
-    "GBP": "GBPOIS",
-}
-
-# RFR lookback in business days (SNB WG: SARON=2, BoE WG: SONIA=5)
-LOOKBACK_DAYS: dict[str, int] = {
-    "CHF": 2,
-    "GBP": 5,
-}

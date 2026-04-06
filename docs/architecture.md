@@ -76,6 +76,13 @@ src/cockpit/
       wirp.py                WIRP rate expectations
       irs_stock.py           IRS stock (derivatives portfolio)
       reference_table.py     Reference table (counterparty, rating, HQLA, country)
+      budget.py              Monthly NII budget per currency
+      scenarios.py           BCBS 368 tenor-dependent rate shock definitions
+      hedge_pairs.py         Hedge relationship designations
+      nmd_profiles.py        NMD behavioral decay profiles
+      limits.py              Board-approved NII/EVE limits
+      alert_thresholds.py    Per-currency alert threshold overrides
+      liquidity_schedule.py  Daily (90d) + monthly cash flow projections
 
   engine/
     models.py               Canonical data models: Deal, RFRIndex, MarketData
@@ -86,6 +93,8 @@ src/cockpit/
       engine.py              Core: compute_daily_pnl, aggregate_to_monthly, strategy pivot
       matrices.py            Numpy builders: date grid, nominals, alive mask, rates, funding
       curves.py              OIS curve loading, WIRP overlay, WASP carry comparison
+      pnl_explain.py         P&L waterfall decomposition (ΔNII drivers)
+      forecast_tracking.py   Historical NII forecast snapshots
       report.py              Excel export
     scoring/
       scoring.py             Deterministic 0-100 scoring (4 families x 4 currencies)
@@ -106,8 +115,35 @@ src/cockpit/
     models.py               Agent request/response models
     tools.py                Verification tools for reviewer
 
+  pnl_dashboard/
+    renderer.py             Jinja2 HTML assembly for 21-tab P&L dashboard
+    charts.py               Chart.js data builders (all tab data)
+    templates/
+      pnl_dashboard.html    Main container with 21 tabs + navbar
+      _alco.html            ALCO Risk Summary (limit breach log)
+      _summary.html         Summary (KPIs, DoD bridge, CoC YTD)
+      _coc.html             CoC decomposition detail
+      _pnl_series.html      P&L time series
+      _sensitivity.html     Shock sensitivity matrix
+      _eve.html             EVE (IRRBB outlier, tenor ladder, convexity)
+      _nii_at_risk.html     NII-at-Risk (tornado, parametric EaR)
+      _repricing_gap.html   Repricing gap analysis
+      _currency_mismatch.html  FX mismatch
+      _nmd_audit.html       NMD behavioral model audit trail
+      _budget.html          Budget vs actual
+      _attribution.html     P&L attribution / explain waterfall
+      _forecast_tracking.html  Forecast tracking
+      _strategy.html        Strategy IAS decomposition
+      _counterparty.html    Counterparty P&L concentration
+      _hedge.html           Hedge effectiveness (scenario cross-ref)
+      _ftp.html             FTP & business unit margins
+      _liquidity.html       Liquidity forecast
+      _book2.html           BOOK2 MTM
+      _curves.html          Rate curves
+      _pnl_alerts.html      Alerts
+
   render/
-    renderer.py             Jinja2 HTML assembly
+    renderer.py             Jinja2 HTML assembly for 5-tab macro cockpit
     charts.py               Plotly chart data builders
     templates/
       cockpit.html          Main container with 5 tabs + navbar
@@ -116,6 +152,18 @@ src/cockpit/
       _pnl.html             P&L by currency and shock scenario
       _portfolio.html       Liquidity ladder, positions, counterparty
       _brief.html           LLM daily brief
+```
+
+```
+src/pnl_engine/
+  __init__.py               PnlEngine orchestrator exports
+  orchestrator.py           Stateful engine: load, build matrices, run shocks
+  engine.py                 Core: compute_daily_pnl, aggregate_to_monthly
+  matrices.py               Numpy array builders (nominal, alive, rate, funding)
+  curves.py                 OIS curve loading, WIRP mock fallback
+  scenarios.py              BCBS 368 scenario interpolation
+  eve.py                    EVE computation (PV, ΔEVE, KRD)
+  nmd.py                    NMD behavioral model (decay, beta, maturity)
 ```
 
 ## Design Principles

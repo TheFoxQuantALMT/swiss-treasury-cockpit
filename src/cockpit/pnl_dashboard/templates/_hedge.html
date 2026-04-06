@@ -1,0 +1,99 @@
+<div id="tab-hedge" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Hedge Effectiveness</h3>
+
+  {% if has_hedge %}
+  <div class="grid-3" style="margin-bottom: 16px;">
+    <div class="kpi-card" style="border-left: 3px solid var(--accent-green);">
+      <div class="label">Passing</div>
+      <div class="value positive">{{ hedge.summary.pass }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid var(--accent-red);">
+      <div class="label">Failing</div>
+      <div class="value negative">{{ hedge.summary.fail }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total Pairs</div>
+      <div class="value">{{ hedge.summary.total }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Pair</th><th>Type</th><th>Standard</th>
+          <th>Dollar Offset</th><th>R&sup2;</th>
+          <th>Hedged P&amp;L</th><th>Instrument P&amp;L</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in hedge.pairs %}
+        <tr>
+          <td>{{ p.pair_name }}</td>
+          <td>{{ p.hedge_type }}</td>
+          <td>{{ p.ias_standard }}</td>
+          <td>{{ "{:.4f}".format(p.dollar_offset) }}</td>
+          <td>{{ "{:.4f}".format(p.r_squared) }}</td>
+          <td>{{ "{:,.0f}".format(p.hedged_pnl) }}</td>
+          <td>{{ "{:,.0f}".format(p.instrument_pnl) }}</td>
+          <td>
+            {% if p.status == 'pass' %}
+            <span style="color: var(--accent-green); font-weight: 600;">PASS</span>
+            {% else %}
+            <span style="color: var(--accent-red); font-weight: 600;">FAIL</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Scenario Cross-Reference -->
+  {% if hedge.scenario_xref %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Hedge Performance Under Stress Scenarios</h3>
+    <div style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Pair</th>
+          <th>Scenario</th>
+          <th style="text-align:right;">Hedged P&amp;L</th>
+          <th style="text-align:right;">Instrument P&amp;L</th>
+          <th style="text-align:right;">Net P&amp;L</th>
+          <th style="text-align:right;">Offset Ratio</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for x in hedge.scenario_xref %}
+        <tr>
+          <td>{{ x.pair_name }}</td>
+          <td>{{ x.scenario }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if x.hedged_pnl > 0 else 'negative' if x.hedged_pnl < 0 else '' }}">{{ "{:,.0f}".format(x.hedged_pnl) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if x.instrument_pnl > 0 else 'negative' if x.instrument_pnl < 0 else '' }}">{{ "{:,.0f}".format(x.instrument_pnl) }}</td>
+          <td style="text-align:right; font-weight: 600;" class="{{ 'positive' if x.net_pnl > 0 else 'negative' if x.net_pnl < 0 else '' }}">{{ "{:,.0f}".format(x.net_pnl) }}</td>
+          <td style="text-align:right;">{{ "{:.4f}".format(x.ratio) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px;">
+      Shows how hedge pairs perform under each BCBS 368 stress scenario. Net P&amp;L close to zero indicates effective hedging under stress.
+    </p>
+  </div>
+  {% endif %}
+
+  <p class="footnote">IAS 39: Dollar-offset ratio must be between -0.80 and -1.25. IFRS 9: Economic relationship test requires R&sup2; &ge; 0.80.</p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No hedge effectiveness data available.</p>
+    <p style="font-size: 0.85rem;">Provide hedge_pairs.xlsx mapping hedged items to hedging instruments.</p>
+  </div>
+  {% endif %}
+</div>

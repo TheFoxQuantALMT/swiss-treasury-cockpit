@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P&amp;L Dashboard — {{ date_run }}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --border: #30363d;
+  --accent-blue: #58a6ff;
+  --accent-green: #3fb950;
+  --accent-yellow: #d29922;
+  --accent-red: #f85149;
+  --accent-orange: #e67e22;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.header h1 { font-size: 1.25rem; font-weight: 600; }
+.header .date { color: var(--text-secondary); font-size: 0.875rem; }
+.tabs {
+  display: flex; gap: 0; flex-wrap: wrap;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+}
+.tab-btn {
+  padding: 12px 16px;
+  background: none; border: none;
+  color: var(--text-secondary);
+  cursor: pointer; font-size: 0.8rem;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.tab-content { display: none; padding: 24px; }
+.tab-content.active { display: block; }
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px;
+  margin-bottom: 16px;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+table {
+  width: 100%; border-collapse: collapse;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+  font-size: 0.85rem;
+}
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--border); }
+th { background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+td:first-child, th:first-child { text-align: left; }
+.kpi-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px;
+  text-align: center;
+}
+.kpi-card .value, .kpi-card .kpi-value { font-size: 1.5rem; font-weight: 700; }
+.kpi-card .label, .kpi-card .kpi-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px; }
+.kpi-card .sub { font-size: 0.7rem; color: var(--text-secondary); margin-top: 4px; }
+.positive { color: var(--accent-green); }
+.negative { color: var(--accent-red); }
+.neutral { color: var(--text-secondary); }
+.chart-container { position: relative; height: 400px; margin: 16px 0; }
+.chart-sm { height: 300px; }
+canvas { max-width: 100%; }
+.controls {
+  display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.ctrl-btn {
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  color: var(--text-secondary); padding: 6px 14px;
+  border-radius: 4px; cursor: pointer; font-size: 0.8rem;
+  transition: all 0.15s;
+}
+.ctrl-btn:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.ctrl-btn.active { color: var(--accent-blue); border-color: var(--accent-blue); }
+.footnote { font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px; font-style: italic; }
+@media print {
+  body { background: #fff; color: #000; font-size: 10pt; }
+  .tabs { display: none; }
+  .tab-content { display: block !important; page-break-before: always; page-break-inside: avoid; }
+  .tab-content:first-of-type { page-break-before: avoid; }
+  .header { background: #fff; border-bottom: 2px solid #000; }
+  .card { border-color: #ccc; page-break-inside: avoid; }
+  .kpi-card { border-color: #ccc; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  th { background: #f0f0f0; color: #333; }
+  .ctrl-btn, .controls { display: none; }
+  .chart-container { height: 250px !important; page-break-inside: avoid; }
+  .positive { color: #006600; }
+  .negative { color: #cc0000; }
+  table { font-size: 9pt; }
+  /* ALCO Decision Pack — print priority */
+  #tab-alco { page-break-before: avoid; }
+  #tab-alco .card { border-color: #999; }
+  #tab-alco .card[style*="border-left"] { border-left: 3px solid #0066cc !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>P&amp;L Dashboard</h1>
+  <span class="date">Run: {{ date_run }} &middot; Rates: {{ date_rates }}</span>
+</div>
+
+<div class="tabs">
+  <!-- ALCO -->
+  <button class="tab-btn" onclick="switchTab('alco', event)">ALCO</button>
+  <!-- NII Core -->
+  <button class="tab-btn active" onclick="switchTab('summary', event)">Summary</button>
+  <button class="tab-btn" onclick="switchTab('coc', event)">CoC Decomposition</button>
+  <button class="tab-btn" onclick="switchTab('pnl-series', event)">P&amp;L Series</button>
+  <button class="tab-btn" onclick="switchTab('sensitivity', event)">Shock Sensitivity</button>
+  <!-- Risk -->
+  <button class="tab-btn" onclick="switchTab('eve', event)">EVE</button>
+  <button class="tab-btn" onclick="switchTab('nii-at-risk', event)">NII-at-Risk</button>
+  <button class="tab-btn" onclick="switchTab('repricing-gap', event)">Repricing Gap</button>
+  <button class="tab-btn" onclick="switchTab('currency-mismatch', event)">FX Mismatch</button>
+  <button class="tab-btn" onclick="switchTab('nmd-audit', event)">NMD Audit</button>
+  <button class="tab-btn" onclick="switchTab('deposit-behavior', event)">Deposits</button>
+  <button class="tab-btn" onclick="switchTab('risk-cube', event)">Risk Cube</button>
+  <button class="tab-btn" onclick="switchTab('regulatory', event)">Regulatory</button>
+  <!-- Attribution -->
+  <button class="tab-btn" onclick="switchTab('budget', event)">Budget vs Actual</button>
+  <button class="tab-btn" onclick="switchTab('attribution', event)">P&amp;L Attribution</button>
+  <button class="tab-btn" onclick="switchTab('forecast-tracking', event)">Forecast Tracking</button>
+  <!-- Structure -->
+  <button class="tab-btn" onclick="switchTab('strategy', event)">Strategy IAS</button>
+  <button class="tab-btn" onclick="switchTab('counterparty', event)">Counterparty</button>
+  <button class="tab-btn" onclick="switchTab('hedge', event)">Hedge Effectiveness</button>
+  <button class="tab-btn" onclick="switchTab('hedge-strategy', event)">Hedge Strategy</button>
+  <!-- Profitability -->
+  <button class="tab-btn" onclick="switchTab('nim', event)">NIM</button>
+  <button class="tab-btn" onclick="switchTab('fixed-float', event)">Fixed/Float</button>
+  <button class="tab-btn" onclick="switchTab('deal-explorer', event)">Deal Explorer</button>
+  <button class="tab-btn" onclick="switchTab('maturity-wall', event)">Maturity Wall</button>
+  <!-- FTP & Liquidity -->
+  <button class="tab-btn" onclick="switchTab('ftp', event)">FTP</button>
+  <button class="tab-btn" onclick="switchTab('liquidity', event)">Liquidity</button>
+  <!-- Scenarios -->
+  <button class="tab-btn" onclick="switchTab('scenario-studio', event)">Scenario Studio</button>
+  <!-- Market -->
+  <button class="tab-btn" onclick="switchTab('book2', event)">BOOK2 MTM</button>
+  <button class="tab-btn" onclick="switchTab('curves', event)">Rate Curves</button>
+  <!-- Monitoring -->
+  <button class="tab-btn" onclick="switchTab('trends', event)">Trends</button>
+  <button class="tab-btn" onclick="switchTab('pnl-alerts', event)">Alerts</button>
+</div>
+
+<!-- ALCO -->
+{% include '_alco.html' %}
+<!-- NII Core -->
+{% include '_summary.html' %}
+{% include '_coc.html' %}
+{% include '_pnl_series.html' %}
+{% include '_sensitivity.html' %}
+<!-- Risk -->
+{% include '_eve.html' %}
+{% include '_nii_at_risk.html' %}
+{% include '_repricing_gap.html' %}
+{% include '_currency_mismatch.html' %}
+{% include '_nmd_audit.html' %}
+{% include '_deposit_behavior.html' %}
+{% include '_risk_cube.html' %}
+{% include '_regulatory.html' %}
+<!-- Attribution -->
+{% include '_budget.html' %}
+{% include '_attribution.html' %}
+{% include '_forecast_tracking.html' %}
+<!-- Structure -->
+{% include '_strategy.html' %}
+{% include '_counterparty.html' %}
+{% include '_hedge.html' %}
+{% include '_hedge_strategy.html' %}
+<!-- Profitability -->
+{% include '_nim.html' %}
+{% include '_fixed_float.html' %}
+{% include '_deal_explorer.html' %}
+{% include '_maturity_wall.html' %}
+<!-- FTP & Liquidity -->
+{% include '_ftp.html' %}
+{% include '_liquidity.html' %}
+<!-- Scenarios -->
+{% include '_scenario_studio.html' %}
+<!-- Market -->
+{% include '_book2.html' %}
+{% include '_curves.html' %}
+<!-- Monitoring -->
+{% include '_trends.html' %}
+{% include '_pnl_alerts.html' %}
+
+<script>
+function switchTab(id, evt) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  var tab = document.getElementById('tab-' + id);
+  if (tab) tab.classList.add('active');
+  var btn = (evt && evt.target) ? evt.target.closest('.tab-btn') : null;
+  if (btn) btn.classList.add('active');
+}
+function fmt(n) {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toFixed(4) + '%';
+}
+function valClass(n) { return n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'; }
+
+// CSV export for any table element
+function exportTableCsv(tableEl, filename) {
+  if (!tableEl) return;
+  var csv = [];
+  tableEl.querySelectorAll('tr').forEach(function(row) {
+    var cols = [];
+    row.querySelectorAll('th, td').forEach(function(cell) {
+      var text = cell.innerText.replace(/"/g, '""').replace(/\s+/g, ' ').trim();
+      cols.push('"' + text + '"');
+    });
+    csv.push(cols.join(','));
+  });
+  var blob = new Blob([csv.join('\n')], {type: 'text/csv;charset=utf-8;'});
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename || 'export.csv';
+  link.click();
+}
+
+// Add export buttons to all tables on load
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.tab-content table').forEach(function(tbl, idx) {
+    var tabEl = tbl.closest('.tab-content');
+    var tabName = tabEl ? tabEl.id.replace('tab-', '') : 'table';
+    var btn = document.createElement('button');
+    btn.className = 'ctrl-btn';
+    btn.style.cssText = 'float: right; margin: 4px 0; font-size: 0.7rem; padding: 3px 8px;';
+    btn.textContent = 'CSV';
+    btn.title = 'Export table to CSV';
+    btn.onclick = function() { exportTableCsv(tbl, tabName + '_' + idx + '.csv'); };
+    tbl.parentElement.insertBefore(btn, tbl);
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,209 @@
+<div id="tab-coc" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Cost of Carry Decomposition</h3>
+
+  {% if has_coc %}
+  <!-- Controls -->
+  <div class="controls">
+    <span style="color: var(--text-secondary); font-size: 0.8rem; line-height: 32px; margin-right: 8px;">Currency:</span>
+    <button class="ctrl-btn active" onclick="setCocCurrency('All')">All</button>
+    <button class="ctrl-btn" onclick="setCocCurrency('CHF')">CHF</button>
+    <button class="ctrl-btn" onclick="setCocCurrency('EUR')">EUR</button>
+    <button class="ctrl-btn" onclick="setCocCurrency('USD')">USD</button>
+    <button class="ctrl-btn" onclick="setCocCurrency('GBP')">GBP</button>
+    <span style="width: 16px;"></span>
+    <span style="color: var(--text-secondary); font-size: 0.8rem; line-height: 32px; margin-right: 8px;">Shock:</span>
+    <button class="ctrl-btn active" onclick="setCocShock('shock_0')">Base</button>
+    <button class="ctrl-btn" onclick="setCocShock('shock_50')">+50bp</button>
+    <button class="ctrl-btn" onclick="setCocShock('shock_wirp')">WIRP</button>
+  </div>
+
+  <!-- Chart -->
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-coc"></canvas>
+    </div>
+    <p class="footnote">
+      CoC Simple = GrossCarry &minus; FundingCost (NII, BCBS 368).
+      CoC Compound = Nom &times; [&prod;(1+r&middot;d/D) &minus; &prod;(1+f&middot;d/D)] (ISDA 2021 &sect;6.9).
+    </p>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Monthly Breakdown (All Currencies, Base)</h3>
+    <div style="overflow-x: auto;">
+    <table id="coc-table">
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th>GrossCarry</th>
+          <th>FundingCost</th>
+          <th>CoC Simple</th>
+          <th>CoC Compound</th>
+          <th>Funding Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in coc.table %}
+        <tr>
+          <td>{{ row.month }}</td>
+          <td>{{ "{:,.2f}".format(row.GrossCarry) }}</td>
+          <td>{{ "{:,.2f}".format(row.FundingCost) }}</td>
+          <td>{{ "{:,.2f}".format(row.CoC_Simple) }}</td>
+          <td>{{ "{:,.2f}".format(row.CoC_Compound) }}</td>
+          <td>{{ "{:.4f}".format(row.FundingRate) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Carry vs Roll-down Decomposition -->
+  {% if coc.carry_rolldown %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Carry vs Roll-down (Base, All Currencies)</h3>
+    <div class="chart-container chart-sm">
+      <canvas id="chart-carry-rolldown"></canvas>
+    </div>
+    <p class="footnote">Carry = CoC Simple (spread income). Roll-down = Total NII P&amp;L &minus; Carry (curve shape &amp; time effects).</p>
+  </div>
+  <script>
+  (function() {
+    const cr = {{ coc.carry_rolldown | tojson_safe }};
+    const ctx = document.getElementById('chart-carry-rolldown');
+    if (ctx && typeof Chart !== 'undefined' && cr.months.length) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: cr.months,
+          datasets: [
+            { label: 'Carry', data: cr.carry, backgroundColor: 'rgba(63,185,80,0.6)', stack: 's', borderRadius: 3 },
+            { label: 'Roll-down', data: cr.rolldown, backgroundColor: 'rgba(88,166,255,0.5)', stack: 's', borderRadius: 3 },
+            { label: 'Total PnL', data: cr.total_pnl, type: 'line', borderColor: '#e6edf3', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3' } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e' } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+  {% endif %}
+
+  <script>
+  (function() {
+    const cocData = {{ coc | tojson_safe }};
+    let cocCurrency = 'All';
+    let cocShock = 'shock_0';
+    let cocChart = null;
+
+    function renderCocChart() {
+      const ctx = document.getElementById('chart-coc');
+      if (!ctx || typeof Chart === 'undefined' || !cocData.months.length) return;
+      if (cocChart) cocChart.destroy();
+
+      const ccy = cocData.by_currency[cocCurrency] || {};
+      const shock = ccy[cocShock] || {};
+      const gc = shock.GrossCarry || [];
+      const fc = shock.FundingCost || [];
+      const cs = shock.CoC_Simple || [];
+      const cc = shock.CoC_Compound || [];
+
+      cocChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: cocData.months,
+          datasets: [
+            {
+              label: 'GrossCarry',
+              data: gc,
+              backgroundColor: 'rgba(63, 185, 80, 0.6)',
+              borderColor: '#3fb950',
+              borderWidth: 1,
+              order: 2,
+            },
+            {
+              label: 'FundingCost',
+              data: fc.map(v => -Math.abs(v)),
+              backgroundColor: 'rgba(248, 81, 73, 0.6)',
+              borderColor: '#f85149',
+              borderWidth: 1,
+              order: 2,
+            },
+            {
+              label: 'CoC Simple',
+              data: cs,
+              type: 'line',
+              borderColor: '#58a6ff',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.3,
+              order: 1,
+            },
+            {
+              label: 'CoC Compound',
+              data: cc,
+              type: 'line',
+              borderColor: '#58a6ff',
+              borderDash: [6, 3],
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.3,
+              order: 1,
+            },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+            y: { ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    window.setCocCurrency = function(ccy) {
+      cocCurrency = ccy;
+      document.querySelectorAll('#tab-coc .controls .ctrl-btn').forEach(b => {
+        if (b.textContent.trim() === ccy) b.classList.add('active');
+        else if (['All','CHF','EUR','USD','GBP'].includes(b.textContent.trim())) {
+          if (b.textContent.trim() !== ccy) b.classList.remove('active');
+        }
+      });
+      renderCocChart();
+    };
+
+    window.setCocShock = function(shock) {
+      cocShock = shock;
+      const labels = {'shock_0':'Base','shock_50':'+50bp','shock_wirp':'WIRP'};
+      document.querySelectorAll('#tab-coc .controls .ctrl-btn').forEach(b => {
+        const t = b.textContent.trim();
+        if (labels[shock] === t) b.classList.add('active');
+        else if (['Base','+50bp','WIRP'].includes(t) && labels[shock] !== t) b.classList.remove('active');
+      });
+      renderCocChart();
+    };
+
+    renderCocChart();
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No Cost of Carry data available.</p>
+    <p style="font-size: 0.85rem;">Ensure <code>funding_source</code> is configured and CoC measures are computed.</p>
+  </div>
+  {% endif %}
+</div>

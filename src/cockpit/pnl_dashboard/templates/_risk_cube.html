@@ -1,0 +1,132 @@
+<div id="tab-risk-cube" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Risk Cube &mdash; Cross-Dimensional Analytics</h3>
+
+  {% if has_risk_cube %}
+
+  <!-- Product × Currency Heatmap -->
+  {% if risk_cube.product_currency and risk_cube.product_currency.products %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Product &times; Currency P&amp;L</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          {% for ccy in risk_cube.product_currency.currencies %}
+          <th>{{ ccy }}</th>
+          {% endfor %}
+          <th style="font-weight: 700;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for i in range(risk_cube.product_currency.products | length) %}
+        <tr>
+          <td>{{ risk_cube.product_currency.products[i] }}</td>
+          {% for j in range(risk_cube.product_currency.currencies | length) %}
+            {% set val = risk_cube.product_currency.matrix[i][j] %}
+            <td style="text-align: right;
+              {% if val > 0 %}background: rgba(63,185,80,{{ [val|abs / ([risk_cube.product_currency.matrix|map('max')|max, 1]|max) * 0.4, 0.4]|min }});
+              {% elif val < 0 %}background: rgba(248,81,73,{{ [val|abs / ([risk_cube.product_currency.matrix|map('max')|max, 1]|max) * 0.4, 0.4]|min }});{% endif %}"
+              class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">
+              {{ "{:,.0f}".format(val) }}
+            </td>
+          {% endfor %}
+          <td style="text-align: right; font-weight: 600;">{{ "{:,.0f}".format(risk_cube.product_currency.totals_by_prod[risk_cube.product_currency.products[i]]) }}</td>
+        </tr>
+      {% endfor %}
+      <tr style="font-weight: 600; border-top: 2px solid var(--border);">
+        <td>Total</td>
+        {% for ccy in risk_cube.product_currency.currencies %}
+        <td style="text-align: right;">{{ "{:,.0f}".format(risk_cube.product_currency.totals_by_ccy[ccy]) }}</td>
+        {% endfor %}
+        <td></td>
+      </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Counterparty × Product (Top 10) -->
+  {% if risk_cube.counterparty_product and risk_cube.counterparty_product.counterparties %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Top 10 Counterparties &times; Product P&amp;L</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Counterparty</th>
+          {% for prod in risk_cube.counterparty_product.products %}
+          <th>{{ prod }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for i in range(risk_cube.counterparty_product.counterparties | length) %}
+        <tr>
+          <td>{{ risk_cube.counterparty_product.counterparties[i] }}</td>
+          {% for j in range(risk_cube.counterparty_product.products | length) %}
+            {% set val = risk_cube.counterparty_product.matrix[i][j] %}
+            <td style="text-align: right;" class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">
+              {{ "{:,.0f}".format(val) }}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Direction × Currency -->
+  {% if risk_cube.direction_currency and risk_cube.direction_currency.directions %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Direction &times; Currency P&amp;L</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Direction</th>
+          {% for ccy in risk_cube.direction_currency.currencies %}
+          <th>{{ ccy }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for i in range(risk_cube.direction_currency.directions | length) %}
+        <tr>
+          <td>{{ risk_cube.direction_currency.directions[i] }}
+            <span style="font-size: 0.7rem; color: var(--text-secondary);">
+              {% if risk_cube.direction_currency.directions[i] == 'L' %}(Loan)
+              {% elif risk_cube.direction_currency.directions[i] == 'B' %}(Bond)
+              {% elif risk_cube.direction_currency.directions[i] == 'D' %}(Deposit)
+              {% elif risk_cube.direction_currency.directions[i] == 'S' %}(Swap){% endif %}
+            </span>
+          </td>
+          {% for j in range(risk_cube.direction_currency.currencies | length) %}
+            {% set val = risk_cube.direction_currency.matrix[i][j] %}
+            <td style="text-align: right;" class="{{ 'positive' if val > 0 else 'negative' if val < 0 else '' }}">
+              {{ "{:,.0f}".format(val) }}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <p class="footnote">
+    Cross-dimensional P&amp;L views reveal hidden concentrations.
+    Heatmap intensity reflects magnitude relative to the largest cell.
+  </p>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No cross-dimensional data available.</p>
+    <p style="font-size: 0.85rem;">Provide deal-level P&amp;L with Product, Currency, Direction, and Counterparty columns.</p>
+  </div>
+  {% endif %}
+</div>

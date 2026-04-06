@@ -86,6 +86,16 @@ def cmd_compute(
     )
     pnl.run()
 
+    # Save NII forecast snapshot for forecast tracking
+    if pnl.pnlAllS is not None and not dry_run:
+        try:
+            from cockpit.engine.pnl.forecast_tracking import save_nii_forecast
+            snapshot_path = save_nii_forecast(pnl.pnlAllS, date, data_dir)
+            if snapshot_path:
+                print(f"[compute] Saved NII forecast snapshot to {snapshot_path}")
+        except Exception as e:
+            print(f"[compute] Warning: could not save NII forecast snapshot: {e}")
+
     # Serialize P&L results to JSON
     pnl_result = {}
     if pnl.pnlAllS is not None:
@@ -278,6 +288,222 @@ def cmd_render(
     print(f"[render] Output: {output_path}")
 
 
+def cmd_render_pnl(
+    *,
+    date: str,
+    input_dir: str | None = None,
+    output_dir: Path = OUTPUT_DIR,
+    funding_source: str = "ois",
+    budget_file: str | None = None,
+    hedge_pairs_file: str | None = None,
+    prev_date: str | None = None,
+) -> None:
+    """Render dedicated P&L dashboard from Excel inputs."""
+    from cockpit.engine.pnl.forecast import ForecastRatePnL
+    from cockpit.pnl_dashboard.renderer import render_pnl_dashboard
+
+    date_dt = datetime.strptime(date, "%Y-%m-%d")
+
+    print(f"[render-pnl] Running P&L engine for {date}...")
+    pnl = ForecastRatePnL(
+        dateRun=date_dt,
+        dateRates=date_dt,
+        export=False,
+        input_dir=input_dir,
+        output_dir=str(output_dir),
+        funding_source=funding_source,
+    )
+
+    # Load optional ALM inputs
+    budget = None
+    hedge_pairs = None
+    scenarios_data = None
+    alert_thresholds = None
+    prev_pnl_all_s = None
+    forecast_history = None
+    eve_results = None
+    eve_scenarios = None
+    eve_krd = None
+    limits = None
+    liquidity_schedule = None
+    nmd_profiles = None
+
+    if input_dir:
+        input_path = Path(input_dir)
+        # Auto-discover budget file
+        budget_path = Path(budget_file) if budget_file else None
+        if budget_path is None:
+            candidates = list(input_path.glob("*budget*"))
+            if candidates:
+                budget_path = candidates[0]
+        if budget_path and budget_path.exists():
+            try:
+                from cockpit.data.parsers.budget import parse_budget
+                budget = parse_budget(budget_path)
+                print(f"[render-pnl] Loaded budget from {budget_path}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load budget: {e}")
+
+        # Auto-discover hedge pairs file
+        hp_path = Path(hedge_pairs_file) if hedge_pairs_file else None
+        if hp_path is None:
+            candidates = list(input_path.glob("*hedge*"))
+            if candidates:
+                hp_path = candidates[0]
+        if hp_path and hp_path.exists():
+            try:
+                from cockpit.data.parsers.hedge_pairs import parse_hedge_pairs
+                hedge_pairs = parse_hedge_pairs(hp_path)
+                print(f"[render-pnl] Loaded hedge pairs from {hp_path}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load hedge pairs: {e}")
+
+        # Auto-discover scenarios file
+        sc_candidates = list(input_path.glob("*scenario*"))
+        if sc_candidates:
+            try:
+                from cockpit.data.parsers.scenarios import parse_scenarios
+                scenarios_def = parse_scenarios(sc_candidates[0])
+                print(f"[render-pnl] Running BCBS 368 scenarios from {sc_candidates[0]}...")
+                scenarios_data = pnl._engine.run_scenarios(scenarios_def) if pnl._engine else None
+                if scenarios_data is not None and not scenarios_data.empty:
+                    print(f"[render-pnl] Computed {scenarios_data['Shock'].nunique()} scenarios")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not run scenarios: {e}")
+
+        # Auto-discover NMD profiles
+        nmd_candidates = list(input_path.glob("*nmd*"))
+        if nmd_candidates:
+            try:
+                from cockpit.data.parsers.nmd_profiles import parse_nmd_profiles
+                nmd_profiles = parse_nmd_profiles(nmd_candidates[0])
+                # Inject into engine for EVE computation
+                if pnl._engine:
+                    pnl._engine._nmd_profiles = nmd_profiles
+                    print(f"[render-pnl] Loaded NMD profiles from {nmd_candidates[0]} ({len(nmd_profiles)} profiles)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load NMD profiles: {e}")
+
+        # Run EVE computation (uses scenarios if available)
+        if pnl._engine:
+            try:
+                sc_for_eve = locals().get('scenarios_def')
+                eve_results = pnl._engine.run_eve(scenarios=sc_for_eve)
+                eve_scenarios = pnl._engine.eve_scenarios
+                eve_krd = pnl._engine.eve_krd
+                print(f"[render-pnl] EVE computed (total={eve_results['eve'].sum():,.0f})")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not compute EVE: {e}")
+
+        # Auto-discover limits
+        limits_candidates = list(input_path.glob("*limits*")) + list(input_path.glob("*limit*"))
+        # Exclude alert_thresholds files
+        limits_candidates = [p for p in limits_candidates if "threshold" not in p.stem.lower() and "alert" not in p.stem.lower()]
+        if limits_candidates:
+            try:
+                from cockpit.data.parsers.limits import parse_limits
+                limits = parse_limits(limits_candidates[0])
+                print(f"[render-pnl] Loaded limits from {limits_candidates[0]} ({len(limits)} metrics)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load limits: {e}")
+
+        # Auto-discover alert thresholds
+        threshold_candidates = list(input_path.glob("*threshold*")) + list(input_path.glob("*alert_config*"))
+        if threshold_candidates:
+            try:
+                from cockpit.data.parsers.alert_thresholds import parse_alert_thresholds
+                alert_thresholds = parse_alert_thresholds(threshold_candidates[0])
+                print(f"[render-pnl] Loaded alert thresholds from {threshold_candidates[0]}")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load alert thresholds: {e}")
+
+        # Auto-discover liquidity schedule
+        liq_candidates = list(input_path.glob("*liquidity*"))
+        if liq_candidates:
+            try:
+                from cockpit.data.parsers.liquidity_schedule import parse_liquidity_schedule
+                liquidity_schedule = parse_liquidity_schedule(liq_candidates[0])
+                print(f"[render-pnl] Loaded liquidity schedule from {liq_candidates[0]} ({len(liquidity_schedule)} deals)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load liquidity schedule: {e}")
+
+    # Load previous day's P&L for attribution / explain
+    pnl_explain = None
+    if prev_date:
+        try:
+            prev_dt = datetime.strptime(prev_date, "%Y-%m-%d")
+            prev_pnl_obj = ForecastRatePnL(
+                dateRun=prev_dt, dateRates=prev_dt,
+                export=False, input_dir=input_dir,
+                output_dir=str(output_dir), funding_source=funding_source,
+            )
+            prev_pnl_all_s = prev_pnl_obj.pnlAllS
+            print(f"[render-pnl] Loaded previous P&L from {prev_date}")
+
+            # Compute full P&L explain if deal-level data available
+            prev_pnl_by_deal = getattr(prev_pnl_obj, 'pnl_by_deal', None)
+            curr_pnl_by_deal = getattr(pnl, 'pnl_by_deal', None)
+            if curr_pnl_by_deal is not None and prev_pnl_by_deal is not None:
+                from cockpit.engine.pnl.pnl_explain import compute_pnl_explain
+                pnl_explain = compute_pnl_explain(
+                    curr_pnl_by_deal=curr_pnl_by_deal,
+                    prev_pnl_by_deal=prev_pnl_by_deal,
+                    curr_pnl_all_s=pnl.pnlAllS,
+                    prev_pnl_all_s=prev_pnl_all_s,
+                    deals=pnl.pnlData,
+                    date_run=date_dt,
+                    prev_date_run=prev_dt,
+                )
+                if pnl_explain and pnl_explain.get("has_data"):
+                    s = pnl_explain["summary"]
+                    print(f"[render-pnl] P&L explain: dNII={s['delta']:+,.0f} "
+                          f"(time={s['time_effect']:+,.0f}, new={s['new_deal_effect']:+,.0f}, "
+                          f"matured={s['matured_deal_effect']:+,.0f}, rate={s['rate_effect']:+,.0f})")
+        except Exception as e:
+            print(f"[render-pnl] Warning: could not load previous P&L: {e}")
+
+    # Load forecast history from snapshots
+    snapshot_dir = DATA_DIR / "pnl_snapshots"
+    if snapshot_dir.exists():
+        try:
+            from cockpit.engine.pnl.forecast_tracking import load_forecast_history
+            forecast_history = load_forecast_history(snapshot_dir)
+            if forecast_history is not None and not forecast_history.empty:
+                print(f"[render-pnl] Loaded {len(forecast_history)} forecast history records")
+        except Exception as e:
+            print(f"[render-pnl] Warning: could not load forecast history: {e}")
+
+    output_path = output_dir / f"{date}_pnl_dashboard.html"
+
+    print("[render-pnl] Rendering P&L dashboard...")
+    render_pnl_dashboard(
+        pnl_all=pnl.pnlAll,
+        pnl_all_s=pnl.pnlAllS,
+        ois_curves=pnl.fwdOIS0,
+        wirp_curves=pnl.fwdWIRP,
+        irs_stock=pnl.irsStock,
+        date_run=date_dt,
+        date_rates=date_dt,
+        output_path=output_path,
+        deals=pnl.pnlData,
+        pnl_by_deal=getattr(pnl, 'pnl_by_deal', None),
+        budget=budget,
+        hedge_pairs=hedge_pairs,
+        prev_pnl_all_s=prev_pnl_all_s,
+        forecast_history=forecast_history,
+        scenarios_data=scenarios_data,
+        alert_thresholds=alert_thresholds,
+        eve_results=eve_results,
+        eve_scenarios=eve_scenarios,
+        eve_krd=eve_krd,
+        limits=limits,
+        pnl_explain=pnl_explain,
+        liquidity_schedule=liquidity_schedule,
+        nmd_profiles=nmd_profiles,
+    )
+    print(f"[render-pnl] Output: {output_path}")
+
+
 def cmd_run_all(
     *,
     date: str,
@@ -328,6 +554,16 @@ def main() -> None:
     p_render = sub.add_parser("render", help="Render HTML cockpit")
     p_render.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
 
+    # render-pnl
+    p_render_pnl = sub.add_parser("render-pnl", help="Render dedicated P&L dashboard")
+    p_render_pnl.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
+    p_render_pnl.add_argument("--input-dir", help="Path to Excel input files")
+    p_render_pnl.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
+                              help="Funding rate source: OIS curve (default) or deal-level CocRate")
+    p_render_pnl.add_argument("--budget", dest="budget_file", help="Path to budget.xlsx")
+    p_render_pnl.add_argument("--hedge-pairs", dest="hedge_pairs_file", help="Path to hedge_pairs.xlsx")
+    p_render_pnl.add_argument("--prev-date", help="Previous date for P&L attribution (YYYY-MM-DD)")
+
     # run-all
     p_all = sub.add_parser("run-all", help="Execute all steps")
     p_all.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
@@ -348,5 +584,7 @@ def main() -> None:
         cmd_analyze(date=args.date, data_dir=data_dir, dry_run=args.dry_run)
     elif args.command == "render":
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
+    elif args.command == "render-pnl":
+        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source, budget_file=args.budget_file, hedge_pairs_file=args.hedge_pairs_file, prev_date=args.prev_date)
     elif args.command == "run-all":
         cmd_run_all(date=args.date, input_dir=args.input_dir, data_dir=data_dir, output_dir=output_dir, dry_run=args.dry_run, funding_source=args.funding_source)

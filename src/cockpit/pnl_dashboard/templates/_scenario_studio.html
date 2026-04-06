@@ -1,0 +1,161 @@
+<div id="tab-scenario-studio" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Scenario Studio &mdash; Combined NII + EVE Analysis</h3>
+
+  {% if has_scenario_studio %}
+
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Base NII</div>
+      <div class="value">{{ "{:,.0f}".format(scenario_studio.base_nii) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Prob-Weighted NII</div>
+      <div class="value {{ 'positive' if scenario_studio.probability_weighted.expected_delta >= 0 else 'negative' }}">
+        {{ "{:,.0f}".format(scenario_studio.probability_weighted.expected_nii) }}
+      </div>
+      <div class="sub">{{ "{:+,.0f}".format(scenario_studio.probability_weighted.expected_delta) }} vs base</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Worst Scenario</div>
+      <div class="value negative">{{ scenario_studio.ranking[0].scenario if scenario_studio.ranking else '&mdash;' }}</div>
+      <div class="sub">{{ "{:+,.0f}".format(scenario_studio.ranking[0].combined_impact) if scenario_studio.ranking else '' }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">EVE Data</div>
+      <div class="value">{{ 'Yes' if scenario_studio.has_eve else 'NII Only' }}</div>
+    </div>
+  </div>
+
+  <!-- Combined Impact Chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Combined Impact: &Delta;NII + &Delta;EVE per Scenario</h4>
+    <div class="chart-container"><canvas id="chart-scenario-combined"></canvas></div>
+  </div>
+
+  <!-- Ranking Table -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Scenario Ranking (Worst &rarr; Best)</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Scenario</th>
+          <th style="text-align:right;">NII</th>
+          <th style="text-align:right;">&Delta;NII</th>
+          {% if scenario_studio.has_eve %}<th style="text-align:right;">&Delta;EVE</th>{% endif %}
+          <th style="text-align:right;">Combined Impact</th>
+          <th style="text-align:right;">Probability</th>
+          <th style="text-align:right;">Weighted NII</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in scenario_studio.ranking %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.scenario }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.nii) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.delta_nii > 0 else 'negative' if r.delta_nii < 0 else '' }}">{{ "{:+,.0f}".format(r.delta_nii) }}</td>
+          {% if scenario_studio.has_eve %}
+          <td style="text-align:right;" class="{{ 'positive' if r.delta_eve > 0 else 'negative' if r.delta_eve < 0 else '' }}">{{ "{:+,.0f}".format(r.delta_eve) }}</td>
+          {% endif %}
+          <td style="text-align:right; font-weight: 600;" class="{{ 'positive' if r.combined_impact > 0 else 'negative' if r.combined_impact < 0 else '' }}">{{ "{:+,.0f}".format(r.combined_impact) }}</td>
+          <td style="text-align:right;">{{ "%.1f"|format(r.probability * 100) }}%</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.weighted_nii) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Decision Matrix -->
+  {% if scenario_studio.decision_matrix %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Decision Matrix</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th style="text-align:right;">&Delta;NII</th>
+          {% if scenario_studio.has_eve %}<th style="text-align:right;">&Delta;EVE</th>{% endif %}
+          <th style="text-align:center;">Severity</th>
+          <th>Recommended Action</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in scenario_studio.decision_matrix %}
+        <tr>
+          <td>{{ d.scenario }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if d.delta_nii > 0 else 'negative' if d.delta_nii < 0 else '' }}">{{ "{:+,.0f}".format(d.delta_nii) }}</td>
+          {% if scenario_studio.has_eve %}
+          <td style="text-align:right;" class="{{ 'positive' if d.delta_eve > 0 else 'negative' if d.delta_eve < 0 else '' }}">{{ "{:+,.0f}".format(d.delta_eve) }}</td>
+          {% endif %}
+          <td style="text-align:center;">
+            {% if d.severity == 'critical' %}<span style="color: #f85149; font-weight: 600;">CRITICAL</span>
+            {% elif d.severity == 'high' %}<span style="color: #e67e22; font-weight: 600;">HIGH</span>
+            {% elif d.severity == 'medium' %}<span style="color: #d29922;">MEDIUM</span>
+            {% else %}<span style="color: #3fb950;">LOW</span>{% endif %}
+          </td>
+          <td>{{ d.action }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <p class="footnote">
+    Combined Impact = &Delta;NII (12-month income) + &Delta;EVE (economic value change).
+    Probabilities are indicative weights for expected NII calculation.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ scenario_studio | tojson_safe }};
+
+    if (typeof Chart !== 'undefined' && data.combined && data.combined.length) {
+      const labels = data.combined.map(c => c.scenario);
+      const datasets = [
+        {
+          label: 'ΔNII',
+          data: data.combined.map(c => c.delta_nii),
+          backgroundColor: data.combined.map(c => c.delta_nii >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+          borderColor: data.combined.map(c => c.delta_nii >= 0 ? '#3fb950' : '#f85149'),
+          borderWidth: 1,
+        }
+      ];
+      if (data.has_eve) {
+        datasets.push({
+          label: 'ΔEVE',
+          data: data.combined.map(c => c.delta_eve),
+          backgroundColor: 'rgba(88,166,255,0.5)',
+          borderColor: '#58a6ff',
+          borderWidth: 1,
+        });
+      }
+      new Chart(document.getElementById('chart-scenario-combined'), {
+        type: 'bar',
+        data: { labels: labels, datasets: datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#e6edf3' } },
+            title: { display: false }
+          },
+          scales: {
+            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+            y: { ticks: { color: '#8b949e', callback: function(v) { return v.toLocaleString(); } }, grid: { color: '#21262d' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No scenario data available.</p>
+    <p style="font-size: 0.85rem;">Run BCBS 368 scenarios to enable the Scenario Studio.</p>
+  </div>
+  {% endif %}
+</div>

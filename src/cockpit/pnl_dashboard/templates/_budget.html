@@ -1,0 +1,86 @@
+<div id="tab-budget" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Budget vs Actual</h3>
+
+  {% if has_budget %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">YTD Actual</div>
+      <div class="value">{{ "{:,.0f}".format(budget.ytd.actual) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">YTD Budget</div>
+      <div class="value">{{ "{:,.0f}".format(budget.ytd.budget) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Variance</div>
+      <div class="value {{ 'positive' if budget.ytd.variance >= 0 else 'negative' }}">{{ "{:,.0f}".format(budget.ytd.variance) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Variance %</div>
+      <div class="value {{ 'positive' if budget.ytd.variance_pct >= 0 else 'negative' }}">{{ "{:+.1f}".format(budget.ytd.variance_pct) }}%</div>
+    </div>
+  </div>
+
+  <div class="controls" id="budget-ccy-ctrl"></div>
+
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-budget"></canvas>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const data = {{ budget | tojson_safe }};
+    const months = data.months;
+    const ccys = Object.keys(data.by_currency);
+
+    const ctrl = document.getElementById('budget-ccy-ctrl');
+    ccys.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'ctrl-btn' + (ccys.indexOf(c) === 0 ? ' active' : '');
+      btn.textContent = c;
+      btn.onclick = function() {
+        ctrl.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        updateChart(c);
+      };
+      ctrl.appendChild(btn);
+    });
+
+    const ctx = document.getElementById('chart-budget');
+    let chart;
+    function updateChart(ccy) {
+      const d = data.by_currency[ccy];
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: months,
+          datasets: [
+            { label: 'Actual', data: d.actual, backgroundColor: 'rgba(88,166,255,0.8)' },
+            { label: 'Budget', data: d.budget, backgroundColor: 'rgba(139,148,158,0.5)', borderColor: '#8b949e', borderWidth: 1 },
+            { label: 'Variance', data: d.variance, type: 'line', borderColor: d.variance.map(v => v >= 0 ? '#3fb950' : '#f85149'), backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+            y: { ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+    if (ccys.length) updateChart(ccys[0]);
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No budget data available.</p>
+    <p style="font-size: 0.85rem;">Provide budget.xlsx with monthly NII targets per currency.</p>
+  </div>
+  {% endif %}
+</div>

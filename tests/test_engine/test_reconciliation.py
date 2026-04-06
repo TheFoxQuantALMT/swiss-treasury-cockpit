@@ -214,8 +214,10 @@ class TestBook2Mtm:
 
         result = compute_book2_mtm(irs_stock, datetime(2026, 4, 4), shock="0")
         assert "MTM" in result.columns
-        # Mock fallback returns 0.0 for all positions
-        assert (result["MTM"] == 0.0).all()
+        # Analytical fallback: MTM ≈ Notional × (Rate - OIS_proxy) × remaining_years
+        # Should produce non-zero values for deals with rate != OIS proxy
+        assert not result["MTM"].isna().any(), "MTM should not contain NaN"
+        assert result["MTM"].dtype == float
 
 
 # ═══════════════════════════════════════════════════════════════════════════

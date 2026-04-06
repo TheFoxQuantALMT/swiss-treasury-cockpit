@@ -1,0 +1,144 @@
+<div id="tab-trends" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Historical Trends</h3>
+
+  {% if has_trends %}
+
+  <!-- Metric summary cards with sparklines -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px;">
+    {% for name, m in trends.metrics.items() %}
+    <div class="kpi-card" style="text-align: left; padding: 12px;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="label" style="text-transform: none; font-size: 0.8rem;">{{ name.replace('_', ' ').title() }}</span>
+        <span style="font-size: 0.7rem; padding: 2px 6px; border-radius: 3px;
+          {% if m.trend == 'up' %}background: rgba(63,185,80,0.2); color: #3fb950;
+          {% elif m.trend == 'down' %}background: rgba(248,81,73,0.2); color: #f85149;
+          {% else %}background: rgba(139,148,158,0.2); color: #8b949e;{% endif %}">
+          {% if m.trend == 'up' %}&#x25B2;{% elif m.trend == 'down' %}&#x25BC;{% else %}&#x25CF;{% endif %}
+          {{ m.trend }}
+        </span>
+      </div>
+      <div style="font-size: 1.25rem; font-weight: 700; margin: 4px 0;">
+        {% if m.latest is not none %}{{ "{:,.2f}".format(m.latest) }}{% else %}&mdash;{% endif %}
+      </div>
+      <div style="font-size: 0.7rem; color: var(--text-secondary);">
+        Range: {{ "{:,.2f}".format(m.min) }} &ndash; {{ "{:,.2f}".format(m.max) }} &middot;
+        &sigma; {{ "{:,.2f}".format(m.std) }}
+      </div>
+      <canvas id="spark-{{ name }}" height="30" style="margin-top: 6px;"></canvas>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Main multi-line chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">KPI Time Series</h4>
+    <div class="controls" id="trend-controls"></div>
+    <div class="chart-container"><canvas id="chart-trends-main"></canvas></div>
+  </div>
+
+  <p class="footnote">
+    Daily KPI snapshots saved automatically. Trends require at least 2 snapshots.
+    Run <code>cockpit compute</code> daily to build history.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ trends | tojson_safe }};
+    const dates = data.dates;
+    const metricNames = Object.keys(data.metrics);
+    const palette = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#e67e22', '#6f42c1', '#d62828', '#a5d6ff'];
+
+    // Sparklines
+    metricNames.forEach(function(name, idx) {
+      var canvas = document.getElementById('spark-' + name);
+      if (!canvas || typeof Chart === 'undefined') return;
+      var values = data.metrics[name].values.filter(function(v) { return v !== null; });
+      if (values.length < 2) return;
+      new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: values.map(function(_, i) { return i; }),
+          datasets: [{
+            data: values,
+            borderColor: palette[idx % palette.length],
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0.4,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: { x: { display: false }, y: { display: false } },
+          animation: false,
+        }
+      });
+    });
+
+    // Main chart: all metrics on separate Y axes would be messy.
+    // Instead: let user toggle which metrics to show.
+    var mainChart = null;
+    var activeMetrics = metricNames.slice(0, Math.min(3, metricNames.length));
+
+    function renderMainChart() {
+      var ctx = document.getElementById('chart-trends-main');
+      if (!ctx || typeof Chart === 'undefined') return;
+      if (mainChart) mainChart.destroy();
+
+      var datasets = activeMetrics.map(function(name, idx) {
+        return {
+          label: name.replace(/_/g, ' '),
+          data: data.metrics[name].values,
+          borderColor: palette[idx % palette.length],
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.3,
+          spanGaps: true,
+        };
+      });
+
+      mainChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: dates, datasets: datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } } },
+            y: { ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // Build toggle buttons
+    var controlsEl = document.getElementById('trend-controls');
+    metricNames.forEach(function(name, idx) {
+      var btn = document.createElement('button');
+      btn.className = 'ctrl-btn' + (activeMetrics.indexOf(name) >= 0 ? ' active' : '');
+      btn.textContent = name.replace(/_/g, ' ');
+      btn.style.borderLeftColor = palette[idx % palette.length];
+      btn.style.borderLeftWidth = '3px';
+      btn.onclick = function() {
+        var i = activeMetrics.indexOf(name);
+        if (i >= 0) { activeMetrics.splice(i, 1); btn.classList.remove('active'); }
+        else { activeMetrics.push(name); btn.classList.add('active'); }
+        renderMainChart();
+      };
+      controlsEl.appendChild(btn);
+    });
+
+    renderMainChart();
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No historical KPI data available.</p>
+    <p style="font-size: 0.85rem;">Run <code>cockpit compute</code> daily to accumulate KPI snapshots in <code>data/kpi_snapshots/</code>.</p>
+  </div>
+  {% endif %}
+</div>

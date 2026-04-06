@@ -11,6 +11,9 @@ This document maps each regulatory standard to where and how it is applied in th
 | IFRS 9.5.4.1 | Interest Revenue | Effective interest rate method |
 | IFRS 9.B5.4.5 | EIR Approximation | Simple carry as management approximation |
 | BCBS 368 section 3.2 | IRRBB NII | Interest rate risk in the banking book |
+| BCBS 368 section 3.3 | IRRBB EVE | Economic Value of Equity sensitivity |
+| BCBS 368 Annex 2 | IRRBB Scenarios | 6 standardized rate shock scenarios |
+| EBA/GL/2018/02 | NMD Guidelines | Non-Maturing Deposit behavioral modeling |
 | SNB Working Group | SARON Convention | 2 business day lookback |
 | BoE Working Group | SONIA Convention | 5 business day lookback |
 
@@ -115,6 +118,148 @@ This is a subset of the full IRRBB NII calculation (which also includes repricin
 
 ---
 
+## BCBS 368 section 3.3: IRRBB EVE (Economic Value of Equity)
+
+**What it specifies:** Banks must measure the change in economic value of equity under standardized interest rate shocks.
+
+**Where applied:**
+- `src/pnl_engine/eve.py` -- `compute_eve()`, `compute_eve_scenarios()`, `compute_key_rate_durations()`
+- `src/pnl_engine/orchestrator.py` -- `run_eve()` method on `PnlEngine`
+- `src/cockpit/pnl_dashboard/templates/_eve.html` -- EVE dashboard tab
+
+**How applied:**
+
+EVE = present value of future cash flows (interest + principal) discounted at OIS forward rates:
+
+```
+EVE = Σ_i Σ_t CF(i,t) × exp(-OIS(t) × t_years)
+```
+
+Where `CF(i,t)` includes daily interest accrual and principal return at maturity.
+
+ΔEVE measures the change under each BCBS scenario:
+
+```
+ΔEVE = EVE(shocked) - EVE(base)
+```
+
+Key Rate Duration (KRD) measures sensitivity at each BCBS tenor point (O/N, 3M, ..., 30Y) via 1bp Gaussian bump:
+
+```
+KRD(tenor) = -[EVE(+1bp at tenor) - EVE(base)] / EVE(base)
+```
+
+### IRRBB Outlier Test
+
+BCBS 368 §3.3 requires an outlier identification: a bank is an outlier if |ΔEVE| under any standardized scenario exceeds **15% of Tier 1 capital**.
+
+**Where applied:**
+- `src/cockpit/pnl_dashboard/charts.py` -- `_build_eve()` computes outlier test when `tier1_capital` is provided in `limits.xlsx`
+- `src/cockpit/pnl_dashboard/templates/_eve.html` -- Displays per-scenario ΔEVE/Tier1 % and PASS/FAIL status
+
+**How applied:**
+
+```
+Outlier = |ΔEVE(scenario)| / Tier1_Capital > 15%
+```
+
+The test is computed for all 6 BCBS standardized scenarios. If any scenario exceeds the 15% threshold, the bank is classified as an outlier.
+
+**Input:** Add a row `metric=tier1_capital, limit_value=<amount>` to `limits.xlsx`.
+
+### EVE Tenor Ladder
+
+EVE is bucketed by deal modified duration into BCBS tenor bands (O/N, ≤3M, 3M-6M, 6M-1Y, 1Y-2Y, 2Y-3Y, 3Y-5Y, 5Y-10Y, 10Y-20Y, >20Y) and displayed as a stacked bar chart per currency on the EVE tab.
+
+### Convexity / Gamma Measurement
+
+Derived from the parallel ±200bp EVE scenarios:
+
+- **Effective Duration** = -(ΔEVE_up - ΔEVE_down) / (2 × EVE × Δr)
+- **Convexity (γ)** = (ΔEVE_up + ΔEVE_down) / (EVE × Δr²)
+
+Positive convexity means the portfolio benefits from large rate moves in either direction. Computed at total and per-currency level on the EVE tab.
+
+**Where applied:** `src/cockpit/pnl_dashboard/charts.py` -- `_build_eve()` convexity section.
+
+### Parametric Earnings-at-Risk (EaR)
+
+Simplified parametric EaR estimated from BCBS scenario ΔNII deltas:
+
+- Compute mean (μ) and standard deviation (σ) of ΔNII across all scenarios
+- **EaR 95%** = μ - 1.645σ
+- **EaR 99%** = μ - 2.326σ
+
+This assumes a normal distribution of NII outcomes, which is an approximation. For more accurate tail risk, historical simulation with actual curve time series is recommended.
+
+**Where applied:** `src/cockpit/pnl_dashboard/charts.py` -- `_build_nii_at_risk()` parametric EaR section.
+
+### NMD Audit Trail
+
+Deal-level matching audit showing which deals matched which NMD profile tier (core/volatile/term), with decay rate, deposit beta, and behavioral maturity parameters. Summary by tier and currency × tier. Displayed on the NMD Audit tab.
+
+**Where applied:** `src/cockpit/pnl_dashboard/charts.py` -- `_build_nmd_audit()`.
+
+---
+
+## BCBS 368 Annex 2: Standardized Rate Shock Scenarios
+
+**What it specifies:** Six prescribed interest rate shock scenarios for IRRBB assessment.
+
+**Where applied:**
+- `src/pnl_engine/scenarios.py` -- `interpolate_scenario_shifts()`, `get_default_scenarios()`
+- `src/cockpit/data/parsers/__init__.py` -- `parse_scenarios()` for custom scenario definitions
+
+**Scenarios:**
+
+| Scenario | Short End | Long End | Description |
+|----------|-----------|----------|-------------|
+| `parallel_up` | +200bp | +200bp | Uniform upward shift |
+| `parallel_down` | -200bp | -200bp | Uniform downward shift |
+| `short_up` | +300bp @ O/N | 0bp @ 20Y | Short-end steepening |
+| `short_down` | -300bp @ O/N | 0bp @ 20Y | Short-end flattening |
+| `steepener` | -100bp | +100bp | Curve steepening |
+| `flattener` | +100bp | -100bp | Curve flattening |
+
+Shifts are interpolated from BCBS standard tenor points (O/N, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y) to the daily date grid using `numpy.interp`. Applied per currency.
+
+---
+
+## EBA/GL/2018/02: Non-Maturing Deposit Guidelines
+
+**What it specifies:** Guidelines for modeling Non-Maturing Deposits (NMDs) in IRRBB. Deposits with no contractual maturity (sight deposits) require behavioral assumptions for repricing risk.
+
+**Where applied:**
+- `src/pnl_engine/nmd.py` -- `apply_nmd_decay()`, `apply_deposit_beta()`, `get_behavioral_maturity()`
+- `src/pnl_engine/orchestrator.py` -- NMD integration in `_build_static_matrices()` and `update_pnl()`
+- `src/cockpit/data/parsers/nmd_profiles.py` -- `parse_nmd_profiles()`
+
+**How applied:**
+
+NMD behavioral model with three components:
+
+1. **Decay profile** — exponential nominal runoff:
+   ```
+   nominal(t) = nominal(0) × exp(-decay_rate × t)
+   ```
+
+2. **Deposit beta** — partial rate passthrough to client rates:
+   ```
+   effective_rate = floor_rate + beta × max(0, OIS - floor_rate)
+   ```
+   Where `beta < 1` means the bank retains a margin when rates rise.
+
+3. **Behavioral maturity** — replaces contractual maturity in repricing gap analysis.
+
+Standard tiers follow SNB/EBA convention:
+- **Core**: stable balances, long behavioral maturity (5-7Y), low beta (0.3-0.5)
+- **Volatile**: rate-sensitive, short maturity (1-2Y), high beta (0.7-0.9)
+- **Term**: contractual maturity, beta = 1.0
+
+Profiles are loaded from `nmd_profiles.xlsx` (optional). When absent, all deposits use contractual maturity.
+
+---
+
 ## SNB Working Group: SARON Convention
 
 **What it specifies:** The observation shift (lookback) convention for SARON-based instruments.
@@ -189,6 +334,61 @@ Direction filtering ensures valid combinations:
 
 ---
 
+## Hedge Effectiveness Testing
+
+**What it specifies:** IAS 39 §AG105 requires retrospective dollar-offset testing. IFRS 9 §6.4.1(c)(i) requires demonstration of an economic relationship between hedged item and hedging instrument.
+
+**Where applied:**
+- `src/cockpit/pnl_dashboard/charts.py` -- `_build_hedge_effectiveness()` computes per-pair metrics
+- `src/cockpit/pnl_dashboard/templates/_hedge.html` -- Dashboard tab rendering
+- Input: `hedge_pairs.xlsx` parsed by `parse_hedge_pairs()`
+
+**Input format (`hedge_pairs.xlsx`):**
+
+| Column | Description |
+|--------|-------------|
+| `pair_id` | Unique pair identifier |
+| `pair_name` | Display name |
+| `hedge_type` | `cash_flow` or `fair_value` |
+| `ias_standard` | `IAS39` or `IFRS9` — determines which test applies |
+| `hedged_item_deal_ids` | Comma-separated Dealid list for the hedged exposure |
+| `hedging_instrument_deal_ids` | Comma-separated Dealid list for the hedging instrument |
+
+**How applied:**
+
+For each hedge pair, the engine extracts monthly P&L at shock=0 (base scenario) for both sides and computes two metrics:
+
+### 1. Dollar-Offset Ratio (IAS 39)
+
+```
+Dollar Offset = Cumulative Instrument P&L / Cumulative Hedged Item P&L
+```
+
+A perfect hedge yields -1.0 (instrument gain fully offsets hedged item loss and vice versa).
+
+**Pass criterion (IAS 39 §AG105):** ratio within **-0.80 to -1.25** (80%-125% offset range).
+
+### 2. R² — Economic Relationship (IFRS 9)
+
+```
+R² = Corr(hedged_monthly_pnl, instrument_monthly_pnl)²
+```
+
+Pearson correlation squared, computed over common months with data on both sides. Requires at least 3 months.
+
+**Pass criterion (IFRS 9 §6.4.1):** R² ≥ **0.80** (strong statistical relationship).
+
+### Test Selection
+
+| Standard | Test Used | Pass Range |
+|----------|-----------|------------|
+| IAS 39 | Dollar-offset ratio | -1.25 ≤ ratio ≤ -0.80 |
+| IFRS 9 | R² (economic relationship) | R² ≥ 0.80 |
+
+**Dashboard output:** The Hedge Effectiveness tab shows a summary (passing/failing/total counts) and a per-pair table with dollar offset, R², cumulative P&L for both legs, and PASS/FAIL status.
+
+---
+
 ## Validation Test Suite
 
 The engine includes a three-tier validation framework mapped to regulatory requirements:
@@ -227,3 +427,29 @@ Cross-validation against independent sources (auto-skipped when WASP unavailable
 | WASP `stockSwapMTM` | BOOK2 MTM output structure |
 | WIRP mock curves | Step-function shape, shock uniformity, rate plausibility |
 | Manual Python loop | Independent P&L calculation matches engine |
+
+### EVE Tests (`test_eve.py`)
+
+| Regulation | What is tested |
+|---|---|
+| BCBS 368 §3.3 | EVE base computes with positive total, reasonable duration (0-60Y) |
+| BCBS 368 Annex 2 | ΔEVE computed for all 6 scenarios, parallel_up reduces EVE |
+| BCBS 368 §3.3 | Key rate durations at standard BCBS tenor points |
+
+### NMD Behavioral Model Tests (`test_nmd.py`)
+
+| Regulation | What is tested |
+|---|---|
+| EBA/GL/2018/02 | Exponential decay reduces deposit nominal over time |
+| EBA/GL/2018/02 | Deposit beta < 1 reduces rate passthrough |
+| EBA/GL/2018/02 | Floor rate enforced as minimum client rate |
+| EBA/GL/2018/02 | Behavioral maturity returned for repricing gap analysis |
+
+### P&L Explain Tests (`test_pnl_explain.py`)
+
+| What is tested | Validates |
+|---|---|
+| Identical portfolios → ΔNII = 0 | Waterfall baseline correctness |
+| Waterfall first + effects = last | Decomposition reconciliation |
+| New/matured deal detection | Deal lifecycle classification |
+| Multi-currency rate effect | Per-currency rate sensitivity attribution |

@@ -1,0 +1,112 @@
+<div id="tab-counterparty" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Counterparty P&amp;L Concentration</h3>
+
+  {% if has_counterparty %}
+  <div class="grid-3" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Top 10 P&amp;L Share</div>
+      <div class="value">{{ counterparty_pnl.top_10|length }}</div>
+      <div class="sub">counterparties</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">HHI (P&amp;L)</div>
+      <div class="value">{{ "{:,.0f}".format(counterparty_pnl.hhi) }}</div>
+      <div class="sub">{% if counterparty_pnl.hhi < 1500 %}Low concentration{% elif counterparty_pnl.hhi < 2500 %}Moderate{% else %}High concentration{% endif %}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Product Mix</div>
+      <div class="value">{{ counterparty_pnl.by_product|length }}</div>
+      <div class="sub">product lines</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Top Counterparties by |P&amp;L|</h3>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-cpty-bar"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="font-size: 0.85rem; margin-bottom: 8px;">P&amp;L by Product</h3>
+      <div class="chart-container chart-sm">
+        <canvas id="chart-cpty-product"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Top 10 Detail</h3>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead><tr><th>Counterparty</th><th>P&amp;L</th><th>% of Total</th></tr></thead>
+      <tbody>
+      {% for row in counterparty_pnl.top_10 %}
+        <tr>
+          <td>{{ row.counterparty }}</td>
+          <td class="{{ 'positive' if row.pnl > 0 else 'negative' if row.pnl < 0 else 'neutral' }}">{{ "{:,.0f}".format(row.pnl) }}</td>
+          <td>{{ "{:.1f}".format(row.pct) }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const top10 = {{ counterparty_pnl.top_10 | tojson_safe }};
+    const byProduct = {{ counterparty_pnl.by_product | tojson_safe }};
+
+    // Horizontal bar — top counterparties
+    const ctxBar = document.getElementById('chart-cpty-bar');
+    if (ctxBar && typeof Chart !== 'undefined') {
+      new Chart(ctxBar, {
+        type: 'bar',
+        data: {
+          labels: top10.map(r => r.counterparty),
+          datasets: [{
+            data: top10.map(r => r.pnl),
+            backgroundColor: top10.map(r => r.pnl >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+          }]
+        },
+        options: {
+          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e' } },
+            y: { ticks: { color: '#e6edf3', font: { size: 10 } } }
+          }
+        }
+      });
+    }
+
+    // Donut — product breakdown
+    const ctxProd = document.getElementById('chart-cpty-product');
+    if (ctxProd && typeof Chart !== 'undefined') {
+      const prods = Object.keys(byProduct);
+      new Chart(ctxProd, {
+        type: 'doughnut',
+        data: {
+          labels: prods,
+          datasets: [{
+            data: prods.map(p => Math.abs(byProduct[p].value)),
+            backgroundColor: prods.map(p => byProduct[p].color),
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No counterparty P&amp;L data available.</p>
+    <p style="font-size: 0.85rem;">Counterparty metadata is required in deal data.</p>
+  </div>
+  {% endif %}
+</div>

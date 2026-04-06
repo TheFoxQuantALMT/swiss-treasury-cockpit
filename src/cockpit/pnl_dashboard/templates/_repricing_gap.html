@@ -1,0 +1,96 @@
+<div id="tab-repricing-gap" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Repricing Gap Profile</h3>
+
+  {% if has_repricing_gap %}
+  <div class="controls" id="reprice-ccy-ctrl"></div>
+
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="chart-repricing"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Gap Detail</h3>
+    <div style="overflow-x: auto;">
+    <table id="tbl-repricing">
+      <thead><tr><th>Bucket</th><th>Assets</th><th>Liabilities</th><th>Gap</th><th>Cumulative Gap</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+  </div>
+
+  <p class="footnote">Fixed-rate deals reprice at maturity. Floating-rate deals reprice at next fixing date. Buckets follow Basel IRRBB time bands.</p>
+
+  <script>
+  (function() {
+    const data = {{ repricing_gap | tojson_safe }};
+    const buckets = data.buckets;
+
+    // Currency selector
+    const ctrl = document.getElementById('reprice-ccy-ctrl');
+    const ccys = Object.keys(data.by_currency);
+    ccys.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'ctrl-btn' + (c === 'All' ? ' active' : '');
+      btn.textContent = c;
+      btn.onclick = function() {
+        ctrl.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        updateChart(c);
+        updateTable(c);
+      };
+      ctrl.appendChild(btn);
+    });
+
+    const ctx = document.getElementById('chart-repricing');
+    if (!ctx || typeof Chart === 'undefined') return;
+
+    let chart;
+    function updateChart(ccy) {
+      const d = data.by_currency[ccy];
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: buckets,
+          datasets: [
+            { label: 'Assets', data: d.assets, backgroundColor: 'rgba(63,185,80,0.7)' },
+            { label: 'Liabilities', data: d.liabilities.map(v => -Math.abs(v)), backgroundColor: 'rgba(248,81,73,0.7)' },
+            { label: 'Cumulative Gap', data: d.cumulative_gap, type: 'line', borderColor: '#58a6ff', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, yAxisID: 'y' },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e', font: { size: 10 } } },
+            y: { ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    function updateTable(ccy) {
+      const d = data.by_currency[ccy];
+      const tbody = document.querySelector('#tbl-repricing tbody');
+      tbody.innerHTML = '';
+      buckets.forEach((b, i) => {
+        const gap = d.gap[i];
+        const cum = d.cumulative_gap[i];
+        tbody.innerHTML += '<tr><td>' + b + '</td><td>' + fmt(d.assets[i]) + '</td><td>' + fmt(d.liabilities[i]) + '</td><td class="' + valClass(gap) + '">' + fmt(gap) + '</td><td class="' + valClass(cum) + '">' + fmt(cum) + '</td></tr>';
+      });
+    }
+
+    updateChart('All');
+    updateTable('All');
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No repricing gap data available.</p>
+    <p style="font-size: 0.85rem;">Deal-level data with maturity dates is required.</p>
+  </div>
+  {% endif %}
+</div>

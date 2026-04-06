@@ -1,0 +1,230 @@
+<div id="tab-hedge-strategy" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Hedge Strategy Optimizer</h3>
+
+  {% if has_hedge_strategy %}
+
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Overall Hedge Ratio</div>
+      <div class="value {{ 'positive' if hedge_strategy.kpis.overall_hedge_ratio > 0.5 else 'negative' }}">
+        {{ "%.1f"|format(hedge_strategy.kpis.overall_hedge_ratio * 100) }}%
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Hedge Instruments</div>
+      <div class="value">{{ hedge_strategy.kpis.hedge_instrument_count }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Hedge Cost (P&amp;L)</div>
+      <div class="value {{ 'positive' if hedge_strategy.kpis.hedge_cost_total >= 0 else 'negative' }}">
+        {{ "{:,.0f}".format(hedge_strategy.kpis.hedge_cost_total) }}
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Next Roll</div>
+      <div class="value {{ 'negative' if hedge_strategy.kpis.next_roll_days is not none and hedge_strategy.kpis.next_roll_days < 30 else '' }}">
+        {% if hedge_strategy.kpis.next_roll_days is not none %}{{ hedge_strategy.kpis.next_roll_days }}d{% else %}&mdash;{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Coverage Chart -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Hedge Ratio by Currency</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-hedge-coverage"></canvas></div>
+    </div>
+    {% if hedge_strategy.naked_exposure %}
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Naked Exposure (+50bp &Delta;NII)</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-naked-exposure"></canvas></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Coverage Table -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Coverage Detail</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Hedged Notional</th>
+          <th style="text-align:right;">Total Notional</th>
+          <th style="text-align:right;">Hedge Ratio</th>
+          <th>Coverage</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in hedge_strategy.coverage %}
+        <tr>
+          <td>{{ c.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(c.hedged_notional) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(c.total_notional) }}</td>
+          <td style="text-align:right; font-weight: 500;">{{ "%.1f"|format(c.hedge_ratio * 100) }}%</td>
+          <td>
+            <div style="width: 80px; background: var(--bg-tertiary); border-radius: 3px; height: 8px; overflow: hidden;">
+              <div style="height: 100%; width: {{ (c.hedge_ratio * 100)|round }}%; background: {{ '#3fb950' if c.hedge_ratio > 0.6 else '#d29922' if c.hedge_ratio > 0.3 else '#f85149' }}; border-radius: 3px;"></div>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Naked Exposure Table -->
+  {% if hedge_strategy.naked_exposure %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Unhedged Sensitivity Decomposition</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th style="text-align:right;">Total &Delta;NII (+50bp)</th>
+          <th style="text-align:right;">Hedged</th>
+          <th style="text-align:right;">Naked (Unhedged)</th>
+          <th style="text-align:right;">Hedge Ratio</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for n in hedge_strategy.naked_exposure %}
+        <tr>
+          <td>{{ n.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(n.total_delta) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(n.hedged_delta) }}</td>
+          <td style="text-align:right; font-weight: 600;" class="{{ 'positive' if n.naked_delta > 0 else 'negative' if n.naked_delta < 0 else '' }}">{{ "{:,.0f}".format(n.naked_delta) }}</td>
+          <td style="text-align:right;">{{ "%.1f"|format(n.hedge_ratio * 100) }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Roll Calendar -->
+  {% if hedge_strategy.roll_calendar %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Hedge Roll Calendar (Next 12 Months)</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Deal ID</th>
+          <th>Currency</th>
+          <th>Product</th>
+          <th style="text-align:right;">Notional</th>
+          <th style="text-align:right;">Maturity</th>
+          <th style="text-align:right;">Days</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in hedge_strategy.roll_calendar %}
+        <tr>
+          <td>{{ r.deal_id }}</td>
+          <td>{{ r.currency }}</td>
+          <td>{{ r.product }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.notional) }}</td>
+          <td style="text-align:right;">{{ r.maturity }}</td>
+          <td style="text-align:right; {{ 'color: #f85149; font-weight: 600;' if r.days_to_maturity < 30 else 'color: #d29922;' if r.days_to_maturity < 90 else '' }}">{{ r.days_to_maturity }}d</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Hedge Cost by Currency -->
+  {% if hedge_strategy.hedge_cost.by_currency %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Hedge Cost (IRS P&amp;L by Currency)</h4>
+    <div class="grid-4">
+      {% for ccy, cost in hedge_strategy.hedge_cost.by_currency.items() %}
+      <div class="kpi-card" style="padding: 10px;">
+        <div class="label">{{ ccy }}</div>
+        <div class="value {{ 'positive' if cost >= 0 else 'negative' }}" style="font-size: 1.1rem;">{{ "{:,.0f}".format(cost) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <p class="footnote">
+    Hedge Ratio = IRS/Swap notional &divide; Total notional per currency.
+    Naked Exposure = sensitivity not offset by hedging instruments.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ hedge_strategy | tojson_safe }};
+
+    // Coverage bar chart
+    if (typeof Chart !== 'undefined' && data.coverage && data.coverage.length) {
+      new Chart(document.getElementById('chart-hedge-coverage'), {
+        type: 'bar',
+        data: {
+          labels: data.coverage.map(c => c.currency),
+          datasets: [{
+            label: 'Hedge Ratio %',
+            data: data.coverage.map(c => (c.hedge_ratio * 100).toFixed(1)),
+            backgroundColor: data.coverage.map(c => c.color),
+            borderColor: data.coverage.map(c => c.color),
+            borderWidth: 1,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { min: 0, max: 100, ticks: { color: '#8b949e', callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } },
+            y: { ticks: { color: '#e6edf3' }, grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    // Naked exposure stacked bar
+    if (typeof Chart !== 'undefined' && data.naked_exposure && data.naked_exposure.length) {
+      var ctx = document.getElementById('chart-naked-exposure');
+      if (ctx) {
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: data.naked_exposure.map(n => n.currency),
+            datasets: [
+              {
+                label: 'Hedged',
+                data: data.naked_exposure.map(n => n.hedged_delta),
+                backgroundColor: 'rgba(63,185,80,0.6)',
+                borderColor: '#3fb950', borderWidth: 1,
+              },
+              {
+                label: 'Naked',
+                data: data.naked_exposure.map(n => n.naked_delta),
+                backgroundColor: 'rgba(248,81,73,0.6)',
+                borderColor: '#f85149', borderWidth: 1,
+              }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#e6edf3' } } },
+            scales: {
+              x: { stacked: true, ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+              y: { stacked: true, ticks: { color: '#8b949e', callback: function(v) { return v.toLocaleString(); } }, grid: { color: '#21262d' } }
+            }
+          }
+        });
+      }
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No hedge strategy data available.</p>
+    <p style="font-size: 0.85rem;">Provide deals with Direction=S (swaps/IRS) to enable hedge strategy analysis.</p>
+  </div>
+  {% endif %}
+</div>
