@@ -149,6 +149,11 @@ canvas { max-width: 100%; }
   <button class="tab-btn" onclick="switchTab('strategy', event)">Strategy IAS</button>
   <button class="tab-btn" onclick="switchTab('counterparty', event)">Counterparty</button>
   <button class="tab-btn" onclick="switchTab('hedge', event)">Hedge Effectiveness</button>
+  <!-- Profitability -->
+  <button class="tab-btn" onclick="switchTab('nim', event)">NIM</button>
+  <button class="tab-btn" onclick="switchTab('fixed-float', event)">Fixed/Float</button>
+  <button class="tab-btn" onclick="switchTab('deal-explorer', event)">Deal Explorer</button>
+  <button class="tab-btn" onclick="switchTab('maturity-wall', event)">Maturity Wall</button>
   <!-- FTP & Liquidity -->
   <button class="tab-btn" onclick="switchTab('ftp', event)">FTP</button>
   <button class="tab-btn" onclick="switchTab('liquidity', event)">Liquidity</button>
@@ -156,6 +161,7 @@ canvas { max-width: 100%; }
   <button class="tab-btn" onclick="switchTab('book2', event)">BOOK2 MTM</button>
   <button class="tab-btn" onclick="switchTab('curves', event)">Rate Curves</button>
   <!-- Monitoring -->
+  <button class="tab-btn" onclick="switchTab('trends', event)">Trends</button>
   <button class="tab-btn" onclick="switchTab('pnl-alerts', event)">Alerts</button>
 </div>
 
@@ -180,6 +186,11 @@ canvas { max-width: 100%; }
 {% include '_strategy.html' %}
 {% include '_counterparty.html' %}
 {% include '_hedge.html' %}
+<!-- Profitability -->
+{% include '_nim.html' %}
+{% include '_fixed_float.html' %}
+{% include '_deal_explorer.html' %}
+{% include '_maturity_wall.html' %}
 <!-- FTP & Liquidity -->
 {% include '_ftp.html' %}
 {% include '_liquidity.html' %}
@@ -187,6 +198,7 @@ canvas { max-width: 100%; }
 {% include '_book2.html' %}
 {% include '_curves.html' %}
 <!-- Monitoring -->
+{% include '_trends.html' %}
 {% include '_pnl_alerts.html' %}
 
 <script>

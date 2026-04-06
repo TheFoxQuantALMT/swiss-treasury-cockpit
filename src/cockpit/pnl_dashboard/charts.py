@@ -12,6 +12,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from cockpit.engine.pnl.pnl_explain import compute_pnl_explain
+
 logger = logging.getLogger(__name__)
 
 # Currency color palette (consistent with cockpit)
@@ -52,6 +54,38 @@ def _safe_stacked(pnl_all_s: pd.DataFrame) -> pd.DataFrame:
 def _month_labels(months) -> list[str]:
     """Convert Period/str months to display labels."""
     return [str(m) for m in months]
+
+
+def _auto_pnl_explain(
+    pnl_by_deal: Optional[pd.DataFrame],
+    prev_pnl_by_deal: Optional[pd.DataFrame],
+    pnl_all_s: Optional[pd.DataFrame],
+    prev_pnl_all_s: Optional[pd.DataFrame],
+    deals: Optional[pd.DataFrame],
+    date_run: Optional[datetime],
+    prev_date_run: Optional[datetime],
+) -> Optional[dict]:
+    """Auto-trigger compute_pnl_explain when sufficient data is available."""
+    if (pnl_by_deal is None or prev_pnl_by_deal is None
+            or pnl_all_s is None or prev_pnl_all_s is None
+            or date_run is None or prev_date_run is None):
+        return None
+    if (isinstance(pnl_by_deal, pd.DataFrame) and pnl_by_deal.empty) or \
+       (isinstance(prev_pnl_by_deal, pd.DataFrame) and prev_pnl_by_deal.empty):
+        return None
+    try:
+        return compute_pnl_explain(
+            curr_pnl_by_deal=pnl_by_deal,
+            prev_pnl_by_deal=prev_pnl_by_deal,
+            curr_pnl_all_s=pnl_all_s,
+            prev_pnl_all_s=prev_pnl_all_s,
+            deals=deals if deals is not None else pd.DataFrame(),
+            date_run=date_run,
+            prev_date_run=prev_date_run,
+        )
+    except Exception:
+        logger.warning("Auto P&L explain failed, falling back to basic attribution", exc_info=True)
+        return None
 
 
 def _filter_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -1788,7 +1822,21 @@ def _build_alco(result: dict) -> dict:
             "status": "red" if ftp["totals"].get("alm_margin", 0) < 0 else "green",
         })
 
-    # 10. Alert counts
+    # 10. NIM
+    nim_data = result.get("nim", {})
+    if nim_data.get("has_data"):
+        nim_bps = nim_data["kpis"].get("nim_bps", 0)
+        metrics.append({
+            "metric": "NIM (ann.)",
+            "value": nim_bps,
+            "delta_1d": None,
+            "limit": None,
+            "utilization": None,
+            "status": "green" if nim_bps > 50 else "yellow" if nim_bps > 0 else "red",
+            "unit": "bps",
+        })
+
+    # 11. Alert counts
     alerts = result.get("pnl_alerts", {})
     if alerts.get("has_data"):
         a_sum = alerts.get("summary", {})
@@ -1837,10 +1885,14 @@ def build_pnl_dashboard_data(
     limits: Optional[pd.DataFrame] = None,
     # P&L Explain
     pnl_explain: Optional[dict] = None,
+    prev_pnl_by_deal: Optional[pd.DataFrame] = None,
+    prev_date_run: Optional[datetime] = None,
     # Liquidity & FTP
     liquidity_schedule: Optional[pd.DataFrame] = None,
     # NMD profiles (for audit trail)
     nmd_profiles: Optional[pd.DataFrame] = None,
+    # KPI history (for trends tab)
+    kpi_history: Optional[pd.DataFrame] = None,
 ) -> dict:
     """Build all chart data for the P&L dashboard."""
     df = _safe_stacked(pnl_all_s)
@@ -1863,10 +1915,16 @@ def build_pnl_dashboard_data(
         # Wave 2
         "budget": _build_budget(df, budget),
         "hedge": _build_hedge_effectiveness(df, hedge_pairs, pnl_by_deal, scenarios_data),
-        # Wave 3 (placeholders)
+        # Wave 3
         "nii_at_risk": _build_nii_at_risk(df, scenarios_data),
         "forecast_tracking": _build_forecast_tracking(forecast_history),
-        "attribution": _build_attribution(df, prev_pnl_all_s, pnl_explain),
+        "attribution": _build_attribution(
+            df, prev_pnl_all_s,
+            pnl_explain or _auto_pnl_explain(
+                pnl_by_deal, prev_pnl_by_deal, pnl_all_s, prev_pnl_all_s,
+                deals, date_run, prev_date_run,
+            ),
+        ),
         # EVE (Phase 2)
         "eve": _build_eve(eve_results, eve_scenarios, eve_krd, limits),
         # FTP & Liquidity
@@ -1874,6 +1932,13 @@ def build_pnl_dashboard_data(
         "liquidity": _build_liquidity(liquidity_schedule, deals),
         # NMD audit trail
         "nmd_audit": _build_nmd_audit(deals, nmd_profiles),
+        # Phase 1: Deal Explorer, Fixed/Float, NIM
+        "deal_explorer": _build_deal_explorer(df, pnl_by_deal, deals),
+        "fixed_float": _build_fixed_float(df, deals),
+        "nim": _build_nim(df, deals),
+        # Phase 2: Maturity Wall, Trends
+        "maturity_wall": _build_maturity_wall(deals, df),
+        "trends": _build_trends(kpi_history),
     }
 
     # Limit utilization (needs eve + nii_at_risk computed first)
@@ -2229,9 +2294,10 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
 
 
 def _build_forecast_tracking(forecast_history: Optional[pd.DataFrame] = None) -> dict:
-    """Historical NII forecast evolution."""
+    """Historical NII forecast evolution with revision analytics."""
     if forecast_history is None or (isinstance(forecast_history, pd.DataFrame) and forecast_history.empty):
-        return {"has_data": False, "dates": [], "by_currency": {}, "total": []}
+        return {"has_data": False, "dates": [], "by_currency": {}, "total": [],
+                "revisions": {}, "stats": {}}
 
     dates = sorted(forecast_history["date"].unique()) if "date" in forecast_history.columns else []
     date_labels = [str(d) for d in dates]
@@ -2247,7 +2313,49 @@ def _build_forecast_tracking(forecast_history: Optional[pd.DataFrame] = None) ->
         d_data = forecast_history[forecast_history["date"] == d]
         totals.append(round(float(d_data["nii_forecast"].sum()), 0))
 
-    return {"has_data": len(dates) > 0, "dates": date_labels, "by_currency": by_currency, "total": totals}
+    # Revision analytics: how much did the forecast change between consecutive runs
+    revisions = {"dates": [], "changes": [], "pct_changes": []}
+    if len(totals) >= 2:
+        for i in range(1, len(totals)):
+            revisions["dates"].append(date_labels[i])
+            delta = totals[i] - totals[i - 1]
+            revisions["changes"].append(round(float(delta), 0))
+            pct = (delta / totals[i - 1] * 100) if totals[i - 1] != 0 else 0
+            revisions["pct_changes"].append(round(float(pct), 2))
+
+    # Summary statistics
+    stats = {}
+    if len(totals) >= 2:
+        changes = [totals[i] - totals[i - 1] for i in range(1, len(totals))]
+        abs_changes = [abs(c) for c in changes]
+        stats["latest"] = totals[-1]
+        stats["earliest"] = totals[0]
+        stats["range_pct"] = round((totals[-1] - totals[0]) / abs(totals[0]) * 100, 2) if totals[0] != 0 else 0
+        stats["avg_revision"] = round(float(np.mean(changes)), 0) if changes else 0
+        stats["max_revision"] = round(float(max(changes, key=abs)), 0) if changes else 0
+        stats["volatility"] = round(float(np.std(changes)), 0) if len(changes) > 1 else 0
+        # Stability score: lower is more stable (coefficient of variation of revisions)
+        if stats["volatility"] > 0 and stats["latest"] != 0:
+            stats["stability_cv"] = round(stats["volatility"] / abs(stats["latest"]) * 100, 2)
+        else:
+            stats["stability_cv"] = 0
+        stats["n_snapshots"] = len(totals)
+        # Direction consistency: % of revisions in same direction as latest trend
+        if changes:
+            last_dir = 1 if changes[-1] >= 0 else -1
+            same_dir = sum(1 for c in changes if (c >= 0) == (last_dir >= 0))
+            stats["direction_consistency"] = round(same_dir / len(changes) * 100, 1)
+        else:
+            stats["direction_consistency"] = 0
+
+    return {
+        "has_data": len(dates) > 0,
+        "dates": date_labels,
+        "by_currency": by_currency,
+        "total": totals,
+        "revisions": revisions,
+        "stats": stats,
+    }
 
 
 def _build_attribution(
@@ -2341,4 +2449,588 @@ def _build_attribution(
             "spread_effect": 0,
             "n_new": 0, "n_matured": 0, "n_existing": 0,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Deal Explorer, Fixed/Float Mix, NIM & Jaws
+# ---------------------------------------------------------------------------
+
+
+def _build_deal_explorer(
+    df: pd.DataFrame,
+    pnl_by_deal: Optional[pd.DataFrame] = None,
+    deals: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Deal-level drill-down with sortable table, P&L histogram, maturity profile."""
+    if pnl_by_deal is None or (isinstance(pnl_by_deal, pd.DataFrame) and pnl_by_deal.empty):
+        return {"has_data": False, "deals": [], "histogram": {}, "maturity_profile": {},
+                "summary_stats": {}, "by_product": {}, "by_currency": {}}
+
+    by_deal = pnl_by_deal.copy()
+
+    # Filter to base shock
+    if "Shock" in by_deal.columns:
+        by_deal = by_deal[by_deal["Shock"] == "0"]
+    if by_deal.empty:
+        return {"has_data": False, "deals": [], "histogram": {}, "maturity_profile": {},
+                "summary_stats": {}, "by_product": {}, "by_currency": {}}
+
+    # Aggregate across months to annual deal-level totals
+    id_cols = [c for c in ["Dealid", "Counterparty", "Currency", "Product",
+                           "Direction", "Périmètre TOTAL"]
+               if c in by_deal.columns]
+    if "Dealid" not in id_cols:
+        return {"has_data": False, "deals": [], "histogram": {}, "maturity_profile": {},
+                "summary_stats": {}, "by_product": {}, "by_currency": {}}
+
+    agg_cols = {}
+    for col in ["PnL", "GrossCarry", "FundingCost"]:
+        if col in by_deal.columns:
+            agg_cols[col] = (col, "sum")
+    for col in ["Nominal", "OISfwd", "RateRef"]:
+        if col in by_deal.columns:
+            agg_cols[col] = (col, "mean")
+
+    agg = by_deal.groupby(id_cols).agg(**agg_cols).reset_index()
+
+    # Enrich with deal metadata (maturity, amount) if deals DataFrame available
+    if deals is not None and not deals.empty and "Dealid" in deals.columns:
+        meta_cols = ["Dealid"]
+        for c in ["Maturitydate", "Valuedate", "Amount", "FTP"]:
+            if c in deals.columns:
+                meta_cols.append(c)
+        meta = deals[meta_cols].drop_duplicates(subset=["Dealid"])
+        agg["Dealid"] = agg["Dealid"].astype(str)
+        meta["Dealid"] = meta["Dealid"].astype(str)
+        agg = agg.merge(meta, on="Dealid", how="left")
+
+    # Compute spread (bps)
+    if "OISfwd" in agg.columns and "RateRef" in agg.columns:
+        agg["Spread_bps"] = (agg["OISfwd"] - agg["RateRef"]) * 10000
+    else:
+        agg["Spread_bps"] = 0.0
+
+    # Build deal list (capped at 200 for HTML performance)
+    agg_sorted = agg.sort_values("PnL", key=abs, ascending=False)
+    deal_list = []
+    for _, row in agg_sorted.head(200).iterrows():
+        d = {
+            "deal_id": str(row.get("Dealid", "")),
+            "counterparty": str(row.get("Counterparty", "")),
+            "currency": str(row.get("Currency", "")),
+            "product": str(row.get("Product", "")),
+            "direction": str(row.get("Direction", "")),
+            "perimeter": str(row.get("Périmètre TOTAL", "")),
+            "pnl": round(float(row.get("PnL", 0)), 0),
+            "nominal": round(float(row.get("Nominal", 0)), 0),
+            "ois": round(float(row.get("OISfwd", 0)) * 100, 4),
+            "rate_ref": round(float(row.get("RateRef", 0)) * 100, 4),
+            "spread_bps": round(float(row.get("Spread_bps", 0)), 1),
+        }
+        if "Maturitydate" in row.index and pd.notna(row.get("Maturitydate")):
+            d["maturity"] = str(pd.Timestamp(row["Maturitydate"]).strftime("%Y-%m-%d"))
+        else:
+            d["maturity"] = ""
+        if "FTP" in row.index and pd.notna(row.get("FTP")):
+            d["ftp"] = round(float(row["FTP"]) * 100, 4)
+        else:
+            d["ftp"] = None
+        deal_list.append(d)
+
+    # P&L histogram (binned)
+    pnl_values = agg["PnL"].dropna().values
+    histogram = {"bins": [], "counts": []}
+    if len(pnl_values) > 0:
+        n_bins = min(30, max(10, len(pnl_values) // 5))
+        counts, bin_edges = np.histogram(pnl_values, bins=n_bins)
+        histogram["bins"] = [round(float(b), 0) for b in bin_edges[:-1]]
+        histogram["counts"] = [int(c) for c in counts]
+        histogram["bin_width"] = round(float(bin_edges[1] - bin_edges[0]), 0)
+
+    # Maturity profile (deals maturing per quarter)
+    maturity_profile = {"labels": [], "counts": [], "volumes": []}
+    if "Maturitydate" in agg.columns:
+        mat = pd.to_datetime(agg["Maturitydate"], errors="coerce")
+        valid = agg[mat.notna()].copy()
+        valid["MatQ"] = mat[mat.notna()].dt.to_period("Q").astype(str)
+        if not valid.empty:
+            grp = valid.groupby("MatQ").agg(
+                count=("Dealid", "count"),
+                volume=("Nominal", "sum"),
+            ).sort_index()
+            maturity_profile["labels"] = grp.index.tolist()[:20]
+            maturity_profile["counts"] = grp["count"].tolist()[:20]
+            maturity_profile["volumes"] = [round(float(v), 0) for v in grp["volume"].values[:20]]
+
+    # Summary stats
+    total_pnl = float(agg["PnL"].sum())
+    positive = agg[agg["PnL"] > 0]
+    negative = agg[agg["PnL"] <= 0]
+    summary_stats = {
+        "total_deals": len(agg),
+        "total_pnl": round(total_pnl, 0),
+        "avg_pnl": round(float(agg["PnL"].mean()), 0) if len(agg) > 0 else 0,
+        "median_pnl": round(float(agg["PnL"].median()), 0) if len(agg) > 0 else 0,
+        "positive_count": len(positive),
+        "negative_count": len(negative),
+        "positive_pnl": round(float(positive["PnL"].sum()), 0) if len(positive) > 0 else 0,
+        "negative_pnl": round(float(negative["PnL"].sum()), 0) if len(negative) > 0 else 0,
+        "top1_pct": round(float(agg_sorted.head(1)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl != 0 else 0,
+        "top10_pct": round(float(agg_sorted.head(10)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl != 0 else 0,
+    }
+
+    # By product breakdown
+    by_product = {}
+    if "Product" in agg.columns:
+        for prod, grp in agg.groupby("Product"):
+            by_product[str(prod)] = {
+                "count": len(grp),
+                "pnl": round(float(grp["PnL"].sum()), 0),
+                "nominal": round(float(grp["Nominal"].sum()), 0),
+                "color": PRODUCT_COLORS.get(str(prod), "#8b949e"),
+            }
+
+    # By currency breakdown
+    by_currency = {}
+    if "Currency" in agg.columns:
+        for ccy, grp in agg.groupby("Currency"):
+            by_currency[str(ccy)] = {
+                "count": len(grp),
+                "pnl": round(float(grp["PnL"].sum()), 0),
+                "nominal": round(float(grp["Nominal"].sum()), 0),
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            }
+
+    return {
+        "has_data": True,
+        "deals": deal_list,
+        "histogram": histogram,
+        "maturity_profile": maturity_profile,
+        "summary_stats": summary_stats,
+        "by_product": by_product,
+        "by_currency": by_currency,
+    }
+
+
+def _build_fixed_float(
+    df: pd.DataFrame,
+    deals: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Fixed vs Floating mix analysis by currency with sensitivity attribution."""
+    if deals is None or deals.empty:
+        return {"has_data": False, "mix": {}, "by_currency": {}, "sensitivity": {}}
+
+    d = deals.copy()
+
+    # Identify floating: deals with non-empty Floating Rates Short Name
+    float_col = None
+    for c in ["Floating Rates Short Name", "FloatingRateShortName", "is_floating"]:
+        if c in d.columns:
+            float_col = c
+            break
+
+    if float_col is None:
+        return {"has_data": False, "mix": {}, "by_currency": {}, "sensitivity": {}}
+
+    if float_col == "is_floating":
+        d["_is_float"] = d[float_col].astype(bool)
+    else:
+        d["_is_float"] = d[float_col].fillna("").astype(str).str.strip().ne("")
+
+    d["_type"] = d["_is_float"].map({True: "Floating", False: "Fixed"})
+
+    # Need nominal — use Amount or Nominal
+    nom_col = "Amount" if "Amount" in d.columns else "Nominal" if "Nominal" in d.columns else None
+    if nom_col is None:
+        return {"has_data": False, "mix": {}, "by_currency": {}, "sensitivity": {}}
+
+    d["_nom"] = pd.to_numeric(d[nom_col], errors="coerce").fillna(0).abs()
+
+    # Overall mix
+    mix = {}
+    for t in ["Fixed", "Floating"]:
+        subset = d[d["_type"] == t]
+        mix[t] = {
+            "count": len(subset),
+            "nominal": round(float(subset["_nom"].sum()), 0),
+        }
+    total_nom = d["_nom"].sum()
+    for t in mix:
+        mix[t]["pct"] = round(mix[t]["nominal"] / total_nom * 100, 1) if total_nom > 0 else 0
+
+    # By currency
+    ccy_col = "Currency" if "Currency" in d.columns else "Deal currency" if "Deal currency" in d.columns else None
+    by_currency = {}
+    if ccy_col:
+        for ccy in sorted(d[ccy_col].dropna().unique()):
+            subset = d[d[ccy_col] == ccy]
+            ccy_total = subset["_nom"].sum()
+            fixed = subset[subset["_type"] == "Fixed"]["_nom"].sum()
+            floating = subset[subset["_type"] == "Floating"]["_nom"].sum()
+            by_currency[str(ccy)] = {
+                "fixed": round(float(fixed), 0),
+                "floating": round(float(floating), 0),
+                "fixed_pct": round(float(fixed) / ccy_total * 100, 1) if ccy_total > 0 else 0,
+                "floating_pct": round(float(floating) / ccy_total * 100, 1) if ccy_total > 0 else 0,
+                "count_fixed": int(len(subset[subset["_type"] == "Fixed"])),
+                "count_floating": int(len(subset[subset["_type"] == "Floating"])),
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            }
+
+    # Sensitivity attribution: floating reprices → full rate sensitivity;
+    # fixed → no direct NII sensitivity (only EVE)
+    # Extract from P&L stacked data if available
+    sensitivity = {}
+    if not df.empty and "Shock" in df.columns:
+        pnl_base = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
+        pnl_50 = df[(df["Indice"] == "PnL") & (df["Shock"] == "50")]
+        if not pnl_base.empty and not pnl_50.empty:
+            base_total = _filter_total(pnl_base)["Value"].sum()
+            shock_total = _filter_total(pnl_50)["Value"].sum()
+            delta = shock_total - base_total
+            # Floating book is ~100% of rate sensitivity
+            sensitivity = {
+                "total_delta": round(float(delta), 0),
+                "floating_nom_pct": mix.get("Floating", {}).get("pct", 0),
+                "note": "Floating book reprices at next fixing → drives NII sensitivity. "
+                        "Fixed book locked in → drives EVE sensitivity.",
+            }
+
+    return {
+        "has_data": True,
+        "mix": mix,
+        "by_currency": by_currency,
+        "sensitivity": sensitivity,
+    }
+
+
+def _build_nim(
+    df: pd.DataFrame,
+    deals: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Net Interest Margin: NIM = NII / Avg Earning Assets. Jaws chart (yield vs cost)."""
+    if df.empty:
+        return {"has_data": False, "kpis": {}, "jaws": {}, "by_currency": {}, "by_month": {}}
+
+    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+    nom = df[(df["Indice"] == "Nominal") & (df["Shock"] == "0")].copy()
+    ois = df[(df["Indice"] == "OISfwd") & (df["Shock"] == "0")].copy()
+    ref = df[(df["Indice"] == "RateRef") & (df["Shock"] == "0")].copy()
+
+    if pnl.empty or nom.empty:
+        return {"has_data": False, "kpis": {}, "jaws": {}, "by_currency": {}, "by_month": {}}
+
+    # Filter to Total rows to avoid double-counting
+    pnl = _filter_total(pnl)
+    nom = _filter_total(nom)
+    ois = _filter_total(ois)
+    ref = _filter_total(ref)
+
+    # --- Global NIM ---
+    total_nii = pnl["Value"].sum()
+    # Earning assets = average nominal for asset direction (L/B)
+    if "Direction" in nom.columns:
+        asset_nom = nom[nom["Direction"].isin(["L", "B"])]["Value"].sum()
+    else:
+        asset_nom = nom["Value"].abs().sum()
+
+    # Annualize: if data covers N months, annualize
+    months = sorted(pnl["Month"].unique()) if "Month" in pnl.columns else []
+    n_months = max(len(months), 1)
+    annual_factor = 12.0 / n_months
+
+    nii_annual = total_nii * annual_factor
+    avg_assets = asset_nom / n_months if n_months > 0 else 0
+    nim_bps = (nii_annual / avg_assets * 10000) if avg_assets != 0 else 0
+
+    # --- Jaws chart: asset yield vs funding cost by month ---
+    jaws = {"months": [], "asset_yield": [], "funding_cost": [], "nim": []}
+
+    # Use GrossCarry and FundingCost if available
+    gc_rows = df[(df["Indice"] == "GrossCarry") & (df["Shock"] == "0")]
+    fc_rows = df[(df["Indice"] == "FundingCost") & (df["Shock"] == "0")]
+    has_coc = not gc_rows.empty and not fc_rows.empty
+
+    if has_coc:
+        gc = _filter_total(gc_rows)
+        fc = _filter_total(fc_rows)
+        for m in months:
+            m_gc = gc[gc["Month"] == m]["Value"].sum()
+            m_fc = fc[fc["Month"] == m]["Value"].sum()
+            m_nom = nom[nom["Month"] == m]["Value"].abs().sum()
+            # Annualized rates in bps
+            if m_nom > 0:
+                yield_bps = m_gc / m_nom * 12 * 10000
+                cost_bps = m_fc / m_nom * 12 * 10000
+            else:
+                yield_bps = 0
+                cost_bps = 0
+            jaws["months"].append(str(m))
+            jaws["asset_yield"].append(round(float(yield_bps), 1))
+            jaws["funding_cost"].append(round(float(cost_bps), 1))
+            jaws["nim"].append(round(float(yield_bps - cost_bps), 1))
+    else:
+        # Fallback: use weighted OIS as funding proxy, RateRef as asset yield
+        for m in months:
+            m_ois = ois[ois["Month"] == m]["Value"].mean() if not ois.empty else 0
+            m_ref = ref[ref["Month"] == m]["Value"].mean() if not ref.empty else 0
+            jaws["months"].append(str(m))
+            jaws["asset_yield"].append(round(float(m_ref) * 10000, 1))
+            jaws["funding_cost"].append(round(float(m_ois) * 10000, 1))
+            jaws["nim"].append(round(float(m_ref - m_ois) * 10000, 1))
+
+    # --- NIM by currency ---
+    by_currency = {}
+    if "Deal currency" in pnl.columns:
+        for ccy in sorted(pnl["Deal currency"].unique()):
+            ccy_pnl = pnl[pnl["Deal currency"] == ccy]["Value"].sum()
+            if "Direction" in nom.columns:
+                ccy_asset = nom[(nom["Deal currency"] == ccy) & (nom["Direction"].isin(["L", "B"]))]["Value"].sum()
+            else:
+                ccy_asset = nom[nom["Deal currency"] == ccy]["Value"].abs().sum()
+            ccy_avg = ccy_asset / n_months if n_months > 0 else 0
+            ccy_nii_a = ccy_pnl * annual_factor
+            ccy_nim = (ccy_nii_a / ccy_avg * 10000) if ccy_avg != 0 else 0
+
+            by_currency[str(ccy)] = {
+                "nii": round(float(ccy_pnl), 0),
+                "avg_assets": round(float(ccy_avg), 0),
+                "nim_bps": round(float(ccy_nim), 1),
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            }
+
+    # --- NIM by perimeter ---
+    by_perimeter = {}
+    if "Périmètre TOTAL" in pnl.columns:
+        for peri in sorted(pnl["Périmètre TOTAL"].unique()):
+            p_pnl = pnl[pnl["Périmètre TOTAL"] == peri]["Value"].sum()
+            if "Direction" in nom.columns:
+                p_asset = nom[(nom["Périmètre TOTAL"] == peri) & (nom["Direction"].isin(["L", "B"]))]["Value"].sum()
+            else:
+                p_asset = nom[nom["Périmètre TOTAL"] == peri]["Value"].abs().sum()
+            p_avg = p_asset / n_months if n_months > 0 else 0
+            p_nii_a = p_pnl * annual_factor
+            p_nim = (p_nii_a / p_avg * 10000) if p_avg != 0 else 0
+            by_perimeter[str(peri)] = {
+                "nii": round(float(p_pnl), 0),
+                "avg_assets": round(float(p_avg), 0),
+                "nim_bps": round(float(p_nim), 1),
+            }
+
+    kpis = {
+        "nii_annual": round(float(nii_annual), 0),
+        "avg_earning_assets": round(float(avg_assets), 0),
+        "nim_bps": round(float(nim_bps), 1),
+        "n_months": n_months,
+    }
+
+    return {
+        "has_data": True,
+        "kpis": kpis,
+        "jaws": jaws,
+        "by_currency": by_currency,
+        "by_perimeter": by_perimeter,
+    }
+
+
+def _build_maturity_wall(
+    deals: Optional[pd.DataFrame] = None,
+    df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Maturity wall: maturing volumes by month, colored by reinvestment spread."""
+    if deals is None or deals.empty:
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {},
+                "top_maturities": [], "reinvestment_summary": {}, "kpis": {}}
+
+    d = deals.copy()
+    if "Maturitydate" not in d.columns:
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {},
+                "top_maturities": [], "reinvestment_summary": {}, "kpis": {}}
+
+    d["_mat"] = pd.to_datetime(d["Maturitydate"], errors="coerce")
+    d = d[d["_mat"].notna()].copy()
+    if d.empty:
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {},
+                "top_maturities": [], "reinvestment_summary": {}, "kpis": {}}
+
+    # Nominal (use Amount or Nominal)
+    nom_col = "Amount" if "Amount" in d.columns else "Nominal" if "Nominal" in d.columns else None
+    if nom_col:
+        d["_nom"] = pd.to_numeric(d[nom_col], errors="coerce").fillna(0).abs()
+    else:
+        d["_nom"] = 0.0
+
+    # Rate columns
+    rate_col = None
+    for c in ["RateRef", "EqOisRate", "Clientrate", "YTM"]:
+        if c in d.columns:
+            rate_col = c
+            break
+    if rate_col:
+        d["_book_rate"] = pd.to_numeric(d[rate_col], errors="coerce").fillna(0)
+    else:
+        d["_book_rate"] = 0.0
+
+    # Current OIS by currency from P&L data (weighted avg OIS at shock=0)
+    market_rates = {}
+    if df is not None and not df.empty:
+        ois_rows = df[(df["Indice"] == "OISfwd") & (df["Shock"] == "0")]
+        if not ois_rows.empty and "Deal currency" in ois_rows.columns:
+            for ccy in ois_rows["Deal currency"].unique():
+                market_rates[str(ccy)] = float(ois_rows[ois_rows["Deal currency"] == ccy]["Value"].mean())
+
+    # Month label
+    d["_mat_month"] = d["_mat"].dt.to_period("M").astype(str)
+
+    # Sort by maturity and take next 24 months
+    d = d.sort_values("_mat")
+    months = sorted(d["_mat_month"].unique())[:24]
+    d = d[d["_mat_month"].isin(months)]
+
+    if d.empty:
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {},
+                "top_maturities": [], "reinvestment_summary": {}, "kpis": {}}
+
+    ccy_col = "Currency" if "Currency" in d.columns else "Deal currency" if "Deal currency" in d.columns else None
+    prod_col = "Product" if "Product" in d.columns else "Product2BuyBack" if "Product2BuyBack" in d.columns else None
+
+    # By currency × month
+    by_currency = {}
+    if ccy_col:
+        for ccy in sorted(d[ccy_col].dropna().unique()):
+            ccy_data = d[d[ccy_col] == ccy]
+            volumes = []
+            for m in months:
+                vol = float(ccy_data[ccy_data["_mat_month"] == m]["_nom"].sum())
+                volumes.append(round(vol, 0))
+            by_currency[str(ccy)] = {
+                "volumes": volumes,
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+                "total": round(float(ccy_data["_nom"].sum()), 0),
+            }
+
+    # By product × month
+    by_product = {}
+    if prod_col:
+        for prod in sorted(d[prod_col].dropna().unique()):
+            prod_data = d[d[prod_col] == prod]
+            volumes = []
+            for m in months:
+                vol = float(prod_data[prod_data["_mat_month"] == m]["_nom"].sum())
+                volumes.append(round(vol, 0))
+            by_product[str(prod)] = {
+                "volumes": volumes,
+                "color": PRODUCT_COLORS.get(str(prod), "#8b949e"),
+            }
+
+    # Top 20 upcoming maturities with reinvestment spread
+    top = d.head(20).copy()
+    top_maturities = []
+    for _, row in top.iterrows():
+        ccy = str(row.get(ccy_col, "")) if ccy_col else ""
+        book_rate = float(row["_book_rate"])
+        mkt_rate = market_rates.get(ccy, 0)
+        spread_bps = (mkt_rate - book_rate) * 10000
+        top_maturities.append({
+            "deal_id": str(row.get("Dealid", "")),
+            "counterparty": str(row.get("Counterparty", "")),
+            "currency": ccy,
+            "product": str(row.get(prod_col, "")) if prod_col else "",
+            "maturity": str(row["_mat"].strftime("%Y-%m-%d")),
+            "nominal": round(float(row["_nom"]), 0),
+            "book_rate_pct": round(book_rate * 100, 4),
+            "market_rate_pct": round(mkt_rate * 100, 4),
+            "spread_bps": round(spread_bps, 1),
+        })
+
+    # Reinvestment summary: aggregate by currency
+    reinvestment_summary = {}
+    if ccy_col:
+        for ccy in sorted(d[ccy_col].dropna().unique()):
+            ccy_data = d[d[ccy_col] == ccy]
+            total_vol = float(ccy_data["_nom"].sum())
+            mkt = market_rates.get(str(ccy), 0)
+            avg_book = float((ccy_data["_book_rate"] * ccy_data["_nom"]).sum()) / total_vol if total_vol > 0 else 0
+            spread = (mkt - avg_book) * 10000
+            # NII impact: total_vol × spread / 10000 (annualized)
+            nii_impact = total_vol * (mkt - avg_book)
+            reinvestment_summary[str(ccy)] = {
+                "maturing_volume": round(total_vol, 0),
+                "avg_book_rate": round(avg_book * 100, 4),
+                "market_rate": round(mkt * 100, 4),
+                "spread_bps": round(spread, 1),
+                "nii_impact": round(nii_impact, 0),
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            }
+
+    # KPIs
+    total_maturing = float(d["_nom"].sum())
+    total_nii_impact = sum(r["nii_impact"] for r in reinvestment_summary.values())
+    # Months until next big maturity (>10% of total)
+    big_threshold = total_maturing * 0.10
+    months_to_cliff = None
+    for i, m in enumerate(months):
+        m_vol = float(d[d["_mat_month"] == m]["_nom"].sum())
+        if m_vol >= big_threshold:
+            months_to_cliff = i + 1
+            break
+
+    kpis = {
+        "total_maturing_24m": round(total_maturing, 0),
+        "total_nii_impact": round(total_nii_impact, 0),
+        "avg_spread_bps": round(total_nii_impact / total_maturing * 10000, 1) if total_maturing > 0 else 0,
+        "months_to_cliff": months_to_cliff,
+        "deal_count": len(d),
+    }
+
+    return {
+        "has_data": True,
+        "months": months,
+        "by_currency": by_currency,
+        "by_product": by_product,
+        "top_maturities": top_maturities,
+        "reinvestment_summary": reinvestment_summary,
+        "kpis": kpis,
+    }
+
+
+def _build_trends(
+    kpi_history: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Historical KPI trends from daily snapshots."""
+    if kpi_history is None or (isinstance(kpi_history, pd.DataFrame) and kpi_history.empty):
+        return {"has_data": False, "dates": [], "metrics": {}}
+
+    df = kpi_history.copy()
+    if "date" not in df.columns:
+        return {"has_data": False, "dates": [], "metrics": {}}
+
+    df = df.sort_values("date")
+    dates = [str(d) for d in df["date"].unique()]
+
+    # Each metric column becomes a time series
+    metric_cols = [c for c in df.columns if c != "date"]
+    metrics = {}
+    for col in metric_cols:
+        values = df.groupby("date")[col].first().reindex(df["date"].unique())
+        vals = [round(float(v), 2) if pd.notna(v) else None for v in values]
+        if any(v is not None for v in vals):
+            # Compute trailing stats
+            valid = [v for v in vals if v is not None]
+            metrics[col] = {
+                "values": vals,
+                "latest": valid[-1] if valid else None,
+                "min": round(min(valid), 2) if valid else None,
+                "max": round(max(valid), 2) if valid else None,
+                "mean": round(float(np.mean(valid)), 2) if valid else None,
+                "std": round(float(np.std(valid)), 2) if len(valid) > 1 else 0,
+                "trend": "up" if len(valid) >= 2 and valid[-1] > valid[0] else
+                         "down" if len(valid) >= 2 and valid[-1] < valid[0] else "flat",
+            }
+
+    return {
+        "has_data": len(dates) > 1 and len(metrics) > 0,
+        "dates": dates,
+        "metrics": metrics,
     }

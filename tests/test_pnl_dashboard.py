@@ -117,6 +117,8 @@ class TestEmptyData:
             "currency_mismatch", "repricing_gap", "counterparty_pnl", "pnl_alerts",
             "budget", "hedge", "nii_at_risk", "forecast_tracking", "attribution", "eve", "limits",
             "ftp", "liquidity", "nmd_audit", "alco",
+            "deal_explorer", "fixed_float", "nim",
+            "maturity_wall", "trends",
         }
         assert set(result.keys()) == expected_keys
 

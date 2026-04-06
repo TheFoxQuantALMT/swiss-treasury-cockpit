@@ -1,0 +1,191 @@
+<div id="tab-nim" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">NIM &amp; Profitability</h3>
+
+  {% if has_nim %}
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card" style="border-left: 3px solid var(--accent-blue);">
+      <div class="label">NII (Annualized)</div>
+      <div class="value {{ 'positive' if nim.kpis.nii_annual >= 0 else 'negative' }}">{{ "{:,.0f}".format(nim.kpis.nii_annual) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Avg Earning Assets</div>
+      <div class="value">{{ "{:,.0f}".format(nim.kpis.avg_earning_assets) }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid {{ '#3fb950' if nim.kpis.nim_bps > 0 else '#f85149' }};">
+      <div class="label">Net Interest Margin</div>
+      <div class="value {{ 'positive' if nim.kpis.nim_bps > 0 else 'negative' }}">{{ "%.1f"|format(nim.kpis.nim_bps) }} bps</div>
+      <div class="sub">{{ "%.2f"|format(nim.kpis.nim_bps / 100) }}% p.a.</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Horizon</div>
+      <div class="value">{{ nim.kpis.n_months }}M</div>
+      <div class="sub">months in dataset</div>
+    </div>
+  </div>
+
+  <!-- Jaws Chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Jaws Chart &mdash; Asset Yield vs Funding Cost (bps, annualized)</h4>
+    <div class="chart-container"><canvas id="chart-nim-jaws"></canvas></div>
+  </div>
+
+  <!-- NIM by Currency + NIM by Perimeter -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">NIM by Currency</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-nim-currency"></canvas></div>
+      <table style="margin-top: 12px;">
+        <thead><tr><th>CCY</th><th>NII</th><th>Avg Assets</th><th>NIM (bps)</th></tr></thead>
+        <tbody>
+        {% for ccy, d in nim.by_currency.items() %}
+          <tr>
+            <td>{{ ccy }}</td>
+            <td style="text-align:right;" class="{{ 'positive' if d.nii >= 0 else 'negative' }}">{{ "{:,.0f}".format(d.nii) }}</td>
+            <td style="text-align:right;">{{ "{:,.0f}".format(d.avg_assets) }}</td>
+            <td style="text-align:right; font-weight: 600;" class="{{ 'positive' if d.nim_bps > 0 else 'negative' if d.nim_bps < 0 else '' }}">{{ "%.1f"|format(d.nim_bps) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if nim.by_perimeter %}
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">NIM by Business Unit</h4>
+      <div class="chart-container chart-sm"><canvas id="chart-nim-perimeter"></canvas></div>
+      <table style="margin-top: 12px;">
+        <thead><tr><th>Perimeter</th><th>NII</th><th>Avg Assets</th><th>NIM (bps)</th></tr></thead>
+        <tbody>
+        {% for peri, d in nim.by_perimeter.items() %}
+          <tr>
+            <td>{{ peri }}</td>
+            <td style="text-align:right;" class="{{ 'positive' if d.nii >= 0 else 'negative' }}">{{ "{:,.0f}".format(d.nii) }}</td>
+            <td style="text-align:right;">{{ "{:,.0f}".format(d.avg_assets) }}</td>
+            <td style="text-align:right; font-weight: 600;" class="{{ 'positive' if d.nim_bps > 0 else 'negative' if d.nim_bps < 0 else '' }}">{{ "%.1f"|format(d.nim_bps) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <p class="footnote">NIM = NII (annualized) &divide; Average Earning Assets &times; 10,000. Jaws: green spread = positive margin; narrowing jaws = margin compression risk.</p>
+
+  <script>
+  (function() {
+    const data = {{ nim | tojson_safe }};
+
+    // Jaws chart
+    if (typeof Chart !== 'undefined' && data.jaws && data.jaws.months && data.jaws.months.length) {
+      new Chart(document.getElementById('chart-nim-jaws'), {
+        type: 'line',
+        data: {
+          labels: data.jaws.months,
+          datasets: [
+            {
+              label: 'Asset Yield',
+              data: data.jaws.asset_yield,
+              borderColor: '#3fb950',
+              backgroundColor: 'rgba(63,185,80,0.1)',
+              fill: false,
+              tension: 0.3,
+              borderWidth: 2,
+              pointRadius: 3,
+            },
+            {
+              label: 'Funding Cost',
+              data: data.jaws.funding_cost,
+              borderColor: '#f85149',
+              backgroundColor: 'rgba(248,81,73,0.1)',
+              fill: false,
+              tension: 0.3,
+              borderWidth: 2,
+              pointRadius: 3,
+            },
+            {
+              label: 'NIM (spread)',
+              data: data.jaws.nim,
+              borderColor: '#58a6ff',
+              backgroundColor: 'rgba(88,166,255,0.15)',
+              fill: true,
+              tension: 0.3,
+              borderWidth: 2,
+              borderDash: [5, 3],
+              pointRadius: 2,
+              yAxisID: 'y1',
+            }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { color: '#8b949e' } },
+            y: { position: 'left', ticks: { color: '#8b949e' }, title: { display: true, text: 'Rate (bps)', color: '#8b949e' } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#8b949e' }, title: { display: true, text: 'NIM (bps)', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // NIM by currency bar chart
+    if (typeof Chart !== 'undefined' && data.by_currency) {
+      const ccys = Object.keys(data.by_currency);
+      new Chart(document.getElementById('chart-nim-currency'), {
+        type: 'bar',
+        data: {
+          labels: ccys,
+          datasets: [{
+            label: 'NIM (bps)',
+            data: ccys.map(c => data.by_currency[c].nim_bps),
+            backgroundColor: ccys.map(c => data.by_currency[c].color + 'cc'),
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e' } },
+            y: { ticks: { color: '#8b949e' }, title: { display: true, text: 'NIM (bps)', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // NIM by perimeter bar chart
+    var periCanvas = document.getElementById('chart-nim-perimeter');
+    if (typeof Chart !== 'undefined' && periCanvas && data.by_perimeter) {
+      const peris = Object.keys(data.by_perimeter);
+      new Chart(periCanvas, {
+        type: 'bar',
+        data: {
+          labels: peris,
+          datasets: [{
+            label: 'NIM (bps)',
+            data: peris.map(p => data.by_perimeter[p].nim_bps),
+            backgroundColor: ['rgba(88,166,255,0.8)', 'rgba(63,185,80,0.8)', 'rgba(210,153,34,0.8)', 'rgba(139,148,158,0.8)'],
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e' } },
+            y: { ticks: { color: '#8b949e' }, title: { display: true, text: 'NIM (bps)', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No P&amp;L data available for NIM calculation.</p>
+  </div>
+  {% endif %}
+</div>

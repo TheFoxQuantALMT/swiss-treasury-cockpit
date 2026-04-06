@@ -1,0 +1,175 @@
+<div id="tab-maturity-wall" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Maturity Wall &amp; Reinvestment Risk</h3>
+
+  {% if has_maturity_wall %}
+  <!-- KPI Cards -->
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Total Maturing (24M)</div>
+      <div class="value">{{ "{:,.0f}".format(maturity_wall.kpis.total_maturing_24m) }}</div>
+      <div class="sub">{{ maturity_wall.kpis.deal_count }} deals</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid {{ '#3fb950' if maturity_wall.kpis.total_nii_impact >= 0 else '#f85149' }};">
+      <div class="label">Reinvestment NII Impact</div>
+      <div class="value {{ 'positive' if maturity_wall.kpis.total_nii_impact >= 0 else 'negative' }}">{{ "{:+,.0f}".format(maturity_wall.kpis.total_nii_impact) }}</div>
+      <div class="sub">if rolled at current OIS</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Avg Reinvestment Spread</div>
+      <div class="value {{ 'positive' if maturity_wall.kpis.avg_spread_bps >= 0 else 'negative' }}">{{ "{:+.1f}".format(maturity_wall.kpis.avg_spread_bps) }} bps</div>
+      <div class="sub">market vs book</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Months to Cliff</div>
+      <div class="value">{% if maturity_wall.kpis.months_to_cliff is not none %}{{ maturity_wall.kpis.months_to_cliff }}M{% else %}None{% endif %}</div>
+      <div class="sub">&gt;10% of total maturing</div>
+    </div>
+  </div>
+
+  <!-- Maturity wall chart: stacked bar by currency -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Maturity Wall by Currency</h4>
+    <div class="chart-container"><canvas id="chart-matwall-currency"></canvas></div>
+  </div>
+
+  <!-- By product chart -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Maturity Wall by Product</h4>
+    <div class="chart-container chart-sm"><canvas id="chart-matwall-product"></canvas></div>
+  </div>
+
+  <!-- Reinvestment summary table -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Reinvestment Analysis by Currency</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Currency</th>
+          <th>Maturing Volume</th>
+          <th>Avg Book Rate %</th>
+          <th>Current OIS %</th>
+          <th>Spread (bps)</th>
+          <th>NII Impact</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for ccy, r in maturity_wall.reinvestment_summary.items() %}
+        <tr>
+          <td>{{ ccy }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.maturing_volume) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(r.avg_book_rate) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(r.market_rate) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.spread_bps >= 0 else 'negative' }}">{{ "{:+.1f}".format(r.spread_bps) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.nii_impact >= 0 else 'negative' }}">{{ "{:+,.0f}".format(r.nii_impact) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Top upcoming maturities -->
+  <div class="card">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Top 20 Upcoming Maturities</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Deal</th><th>Counterparty</th><th>CCY</th><th>Product</th>
+          <th>Maturity</th><th>Nominal</th>
+          <th>Book %</th><th>Market %</th><th>Spread (bps)</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in maturity_wall.top_maturities %}
+        <tr>
+          <td>{{ d.deal_id }}</td>
+          <td>{{ d.counterparty }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.product }}</td>
+          <td>{{ d.maturity }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(d.nominal) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(d.book_rate_pct) }}</td>
+          <td style="text-align:right;">{{ "%.4f"|format(d.market_rate_pct) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if d.spread_bps >= 0 else 'negative' }}">{{ "{:+.1f}".format(d.spread_bps) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Spread = Current OIS &minus; Book Rate. Positive = reinvestment uplift (green); Negative = reinvestment drag (red).
+    NII Impact = Maturing Volume &times; Spread (annualized). "Months to Cliff" = first month with &gt;10% of total volume maturing.
+  </p>
+
+  <script>
+  (function() {
+    const data = {{ maturity_wall | tojson_safe }};
+    const months = data.months;
+
+    // Currency stacked bar
+    if (typeof Chart !== 'undefined' && data.by_currency && months.length) {
+      const ccys = Object.keys(data.by_currency);
+      new Chart(document.getElementById('chart-matwall-currency'), {
+        type: 'bar',
+        data: {
+          labels: months,
+          datasets: ccys.map(function(ccy) {
+            var d = data.by_currency[ccy];
+            return {
+              label: ccy,
+              data: d.volumes,
+              backgroundColor: d.color + 'cc',
+              stack: 's',
+            };
+          })
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e', maxRotation: 45 } },
+            y: { stacked: true, ticks: { color: '#8b949e' }, title: { display: true, text: 'Maturing Volume', color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    // Product stacked bar
+    if (typeof Chart !== 'undefined' && data.by_product && months.length) {
+      var prods = Object.keys(data.by_product);
+      new Chart(document.getElementById('chart-matwall-product'), {
+        type: 'bar',
+        data: {
+          labels: months,
+          datasets: prods.map(function(p) {
+            var d = data.by_product[p];
+            return {
+              label: p,
+              data: d.volumes,
+              backgroundColor: d.color + 'cc',
+              stack: 's',
+            };
+          })
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e', maxRotation: 45 } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No maturity data available.</p>
+    <p style="font-size: 0.85rem;">Provide deals with Maturitydate to enable the Maturity Wall.</p>
+  </div>
+  {% endif %}
+</div>

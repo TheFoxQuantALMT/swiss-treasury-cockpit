@@ -44,8 +44,11 @@ def render_pnl_dashboard(
     eve_krd: Optional[pd.DataFrame] = None,
     limits: Optional[pd.DataFrame] = None,
     pnl_explain: Optional[dict] = None,
+    prev_pnl_by_deal: Optional[pd.DataFrame] = None,
+    prev_date_run: Optional[datetime] = None,
     liquidity_schedule: Optional[pd.DataFrame] = None,
     nmd_profiles: Optional[pd.DataFrame] = None,
+    kpi_history: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Render the P&L dashboard HTML from engine output.
 
@@ -97,8 +100,11 @@ def render_pnl_dashboard(
         eve_krd=eve_krd,
         limits=limits,
         pnl_explain=pnl_explain,
+        prev_pnl_by_deal=prev_pnl_by_deal,
+        prev_date_run=prev_date_run,
         liquidity_schedule=liquidity_schedule,
         nmd_profiles=nmd_profiles,
+        kpi_history=kpi_history,
     )
 
     context = {
@@ -152,6 +158,18 @@ def render_pnl_dashboard(
         # ALCO risk summary
         "alco": data["alco"],
         "has_alco": data["alco"].get("has_data", False),
+        # Phase 1 tabs
+        "deal_explorer": data["deal_explorer"],
+        "has_deal_explorer": data["deal_explorer"].get("has_data", False),
+        "fixed_float": data["fixed_float"],
+        "has_fixed_float": data["fixed_float"].get("has_data", False),
+        "nim": data["nim"],
+        "has_nim": data["nim"].get("has_data", False),
+        # Phase 2 tabs
+        "maturity_wall": data["maturity_wall"],
+        "has_maturity_wall": data["maturity_wall"].get("has_data", False),
+        "trends": data["trends"],
+        "has_trends": data["trends"].get("has_data", False),
     }
 
     template = env.get_template("pnl_dashboard.html")
