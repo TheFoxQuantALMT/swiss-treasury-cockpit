@@ -116,6 +116,7 @@ class TestEmptyData:
             "summary", "coc", "pnl_series", "sensitivity", "strategy", "book2", "curves",
             "currency_mismatch", "repricing_gap", "counterparty_pnl", "pnl_alerts",
             "budget", "hedge", "nii_at_risk", "forecast_tracking", "attribution", "eve", "limits",
+            "ftp", "liquidity", "nmd_audit", "alco",
         }
         assert set(result.keys()) == expected_keys
 

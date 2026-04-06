@@ -1,0 +1,130 @@
+<div id="tab-ftp" class="tab-content">
+  <h3 style="font-size: 0.9rem; margin-bottom: 12px;">FTP &amp; Business Unit P&amp;L</h3>
+
+  {% if has_ftp %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">Total NII</div>
+      <div class="value">{{ "{:,.0f}".format(ftp.totals.total_nii) }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #58a6ff;">
+      <div class="label">Client Margin</div>
+      <div class="value {{ 'positive' if ftp.totals.client_margin >= 0 else 'negative' }}">{{ "{:,.0f}".format(ftp.totals.client_margin) }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid #3fb950;">
+      <div class="label">ALM Margin</div>
+      <div class="value {{ 'positive' if ftp.totals.alm_margin >= 0 else 'negative' }}">{{ "{:,.0f}".format(ftp.totals.alm_margin) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Deals with FTP</div>
+      <div class="value">{{ ftp.totals.deal_count }}</div>
+    </div>
+  </div>
+
+  <!-- Perimeter waterfall -->
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Margin by Perimeter</h4>
+      <div class="chart-container"><canvas id="chart-ftp-perimeter"></canvas></div>
+    </div>
+    <div class="card">
+      <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Margin by Currency</h4>
+      <div class="chart-container"><canvas id="chart-ftp-currency"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Top deals table -->
+  <div class="card">
+    <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Top 10 Deals by ALM Margin</h4>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Deal</th><th>CCY</th><th>Perimeter</th><th>Product</th><th>Counterparty</th>
+          <th>Amount</th><th>Client %</th><th>FTP %</th><th>OIS %</th>
+          <th>Client Margin (bps)</th><th>ALM Margin (bps)</th>
+          <th>Client P&amp;L</th><th>ALM P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in ftp.top_deals %}
+        <tr>
+          <td>{{ d.deal_id }}</td>
+          <td>{{ d.currency }}</td>
+          <td>{{ d.perimeter }}</td>
+          <td>{{ d.product }}</td>
+          <td>{{ d.counterparty }}</td>
+          <td style="text-align: right;">{{ "{:,.0f}".format(d.amount) }}</td>
+          <td style="text-align: right;">{{ "{:.4f}".format(d.client_rate) }}</td>
+          <td style="text-align: right;">{{ "{:.4f}".format(d.ftp_rate) }}</td>
+          <td style="text-align: right;">{{ "{:.4f}".format(d.ref_rate) }}</td>
+          <td style="text-align: right;" class="{{ 'positive' if d.client_margin_bps >= 0 else 'negative' }}">{{ "{:+.1f}".format(d.client_margin_bps) }}</td>
+          <td style="text-align: right;" class="{{ 'positive' if d.alm_margin_bps >= 0 else 'negative' }}">{{ "{:+.1f}".format(d.alm_margin_bps) }}</td>
+          <td style="text-align: right;" class="{{ 'positive' if d.client_margin_pnl >= 0 else 'negative' }}">{{ "{:,.0f}".format(d.client_margin_pnl) }}</td>
+          <td style="text-align: right;" class="{{ 'positive' if d.alm_margin_pnl >= 0 else 'negative' }}">{{ "{:,.0f}".format(d.alm_margin_pnl) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <p class="footnote">Client Margin = ClientRate &minus; FTP. ALM Margin = FTP &minus; OIS. Total NII = Client Margin + ALM Margin.</p>
+
+  <script>
+  (function() {
+    const data = {{ ftp | tojson_safe }};
+    const peris = data.perimeters;
+    const ccys = data.by_currency;
+
+    // Perimeter grouped bar chart
+    const periLabels = Object.keys(peris);
+    new Chart(document.getElementById('chart-ftp-perimeter'), {
+      type: 'bar',
+      data: {
+        labels: periLabels,
+        datasets: [
+          { label: 'Client Margin', data: periLabels.map(p => peris[p].client_margin), backgroundColor: 'rgba(88,166,255,0.8)' },
+          { label: 'ALM Margin', data: periLabels.map(p => peris[p].alm_margin), backgroundColor: 'rgba(63,185,80,0.8)' },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#8b949e' } },
+          y: { ticks: { color: '#8b949e' } }
+        }
+      }
+    });
+
+    // Currency grouped bar chart
+    const ccyLabels = Object.keys(ccys);
+    new Chart(document.getElementById('chart-ftp-currency'), {
+      type: 'bar',
+      data: {
+        labels: ccyLabels,
+        datasets: [
+          { label: 'Client Margin', data: ccyLabels.map(c => ccys[c].client_margin), backgroundColor: ccyLabels.map(c => ccys[c].color + 'cc') },
+          { label: 'ALM Margin', data: ccyLabels.map(c => ccys[c].alm_margin), backgroundColor: ccyLabels.map(c => ccys[c].color + '80') },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e6edf3', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#8b949e' } },
+          y: { ticks: { color: '#8b949e' } }
+        }
+      }
+    });
+  })();
+  </script>
+
+  {% else %}
+  <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
+    <p>No FTP data available.</p>
+    <p style="font-size: 0.85rem;">Add an FTP column to deals.xlsx with per-deal transfer pricing rates (decimal).</p>
+  </div>
+  {% endif %}
+</div>

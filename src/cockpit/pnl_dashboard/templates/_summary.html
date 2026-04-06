@@ -25,6 +25,65 @@
     </div>
   </div>
 
+  <!-- Day-over-Day P&L Bridge -->
+  {% if summary.dod_bridge is defined and summary.dod_bridge %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Day-over-Day P&amp;L Bridge (Base)</h3>
+    <table>
+      <thead><tr><th>CCY</th><th style="text-align:right;">Previous</th><th style="text-align:right;">Current</th><th style="text-align:right;">&Delta;</th></tr></thead>
+      <tbody>
+      {% for r in summary.dod_bridge %}
+        <tr{% if r.currency == 'Total' %} style="font-weight: 600; border-top: 1px solid var(--border);"{% endif %}>
+          <td>{{ r.currency }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.previous) }}</td>
+          <td style="text-align:right;">{{ "{:,.0f}".format(r.current) }}</td>
+          <td style="text-align:right;" class="{{ 'positive' if r.delta > 0 else 'negative' if r.delta < 0 else '' }}">{{ "{:+,.0f}".format(r.delta) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- CoC & Liquidity KPIs (conditional) -->
+  {% if summary.coc_ytd is defined and summary.coc_ytd %}
+  <div class="grid-4" style="margin-bottom: 16px;">
+    <div class="kpi-card">
+      <div class="label">YTD Gross Carry</div>
+      <div class="value {{ 'positive' if summary.coc_ytd.gross_carry >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.gross_carry) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">YTD Funding Cost</div>
+      <div class="value {{ 'positive' if summary.coc_ytd.funding_cost <= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.funding_cost) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">YTD CoC (Simple)</div>
+      <div class="value {{ 'positive' if summary.coc_ytd.coc_simple >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.coc_simple) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">YTD CoC (Compound)</div>
+      <div class="value {{ 'positive' if summary.coc_ytd.coc_compound >= 0 else 'negative' }}">{{ "{:,.0f}".format(summary.coc_ytd.coc_compound) }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if has_liquidity and liquidity.summary %}
+  <div class="grid-3" style="margin-bottom: 16px;">
+    <div class="kpi-card" style="border-left: 3px solid {{ '#f85149' if liquidity.summary.net_30d < 0 else '#3fb950' }};">
+      <div class="label">Liquidity Net 30d</div>
+      <div class="value {{ 'positive' if liquidity.summary.net_30d >= 0 else 'negative' }}">{{ "{:,.0f}".format(liquidity.summary.net_30d) }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Liquidity Net 90d</div>
+      <div class="value {{ 'positive' if liquidity.summary.net_90d >= 0 else 'negative' }}">{{ "{:,.0f}".format(liquidity.summary.net_90d) }}</div>
+    </div>
+    <div class="kpi-card" style="border-left: 3px solid {{ '#f85149' if liquidity.summary.survival_days is not none else '#3fb950' }};">
+      <div class="label">Survival Horizon</div>
+      <div class="value">{% if liquidity.summary.survival_days is not none %}{{ liquidity.summary.survival_days }}d{% else %}No deficit{% endif %}</div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Donut + Waterfall -->
   <div class="grid-2">
     <div class="card">
@@ -64,7 +123,7 @@
   {% if has_limits %}
   <div class="card">
     <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Limit Utilization</h3>
-    {% for item in limits["items"] %}
+    {% for item in limits.limit_items %}
     <div style="margin-bottom: 10px;">
       <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 3px;">
         <span>{{ item.label }}</span>

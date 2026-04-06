@@ -236,6 +236,48 @@ Standard tiers (SNB/EBA convention):
 
 Profiles are loaded from `nmd_profiles.xlsx` and injected via `PnlEngine(nmd_profiles=...)`.
 
+## Convexity / Gamma
+
+Derived from the parallel ±200bp EVE scenarios on the dashboard:
+
+```
+Effective Duration = -(ΔEVE_up - ΔEVE_down) / (2 × EVE × Δr)
+Convexity (γ)     = (ΔEVE_up + ΔEVE_down) / (EVE × Δr²)
+```
+
+Where Δr = 0.02 (200bp). Positive convexity means the portfolio benefits from large rate moves in either direction. Computed at total and per-currency level.
+
+## Parametric Earnings-at-Risk (EaR)
+
+Simplified parametric EaR estimated from BCBS scenario ΔNII deltas:
+
+```
+EaR 95% = μ - 1.645 × σ
+EaR 99% = μ - 2.326 × σ
+```
+
+Where μ and σ are the mean and standard deviation of ΔNII across all BCBS scenarios. Assumes normal distribution. For more accurate tail risk, historical simulation with curve time series is recommended.
+
+## FTP (Funds Transfer Pricing)
+
+Per-deal internal transfer rate enabling a 3-way margin split:
+
+| Margin | Formula | Interpretation |
+|--------|---------|---------------|
+| Client Margin | `ClientRate - FTP` | Spread earned from client pricing |
+| ALM Margin | `FTP - OIS` | Spread earned from funding mismatch |
+| Total NII | `ClientRate - OIS` | Sum of both margins |
+
+FTP is a column (`FTP`) in `deals.xlsx` containing per-deal FTP rates in decimal. Aggregated by perimeter (CC/WM/CIB) for business unit profitability analysis.
+
+## Liquidity Forecast
+
+Daily (90-day) + monthly cash flow projections per deal, parsed from `liquidity_schedule.xlsx`. Same wide format as `schedule.xlsx` but with additional daily columns (`YYYY/MM/DD`). Powers:
+
+- Inflow/outflow bars with cumulative gap line
+- Survival horizon (first day cumulative net goes negative)
+- Top 10 maturing deals in next 30 days
+
 ## P&L Explain
 
 The P&L explain module (`cockpit/engine/pnl/pnl_explain.py`) decomposes ΔNII between two dates into actionable drivers:

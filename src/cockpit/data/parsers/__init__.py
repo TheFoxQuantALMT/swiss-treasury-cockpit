@@ -9,6 +9,7 @@ from cockpit.data.parsers.scenarios import parse_scenarios, get_default_scenario
 from cockpit.data.parsers.alert_thresholds import parse_alert_thresholds
 from cockpit.data.parsers.nmd_profiles import parse_nmd_profiles
 from cockpit.data.parsers.limits import parse_limits
+from cockpit.data.parsers.liquidity_schedule import parse_liquidity_schedule
 from pnl_engine.engine import _month_columns
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "get_default_scenarios",
     "parse_nmd_profiles",
     "parse_limits",
+    "parse_liquidity_schedule",
 ]

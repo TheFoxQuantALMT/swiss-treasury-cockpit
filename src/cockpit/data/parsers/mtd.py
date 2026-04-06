@@ -41,6 +41,7 @@ _DEALS_RENAME = {
     "notional": "notional",
     "last_fixing_date": "last_fixing_date",
     "next_fixing_date": "next_fixing_date",
+    "ftp": "FTP",
 }
 
 _VALID_PRODUCTS = {"IAM/LD", "BND", "FXS", "IRS", "IRS-MTM", "HCD"}
@@ -100,7 +101,7 @@ def parse_deals(path: Path) -> pd.DataFrame:
             df.loc[bad_peri, "Périmètre TOTAL"] = "CC"
 
     # Validate rate ranges (warn, don't drop)
-    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread"]:
+    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread", "FTP"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
             extreme = df[col].abs() > 0.50

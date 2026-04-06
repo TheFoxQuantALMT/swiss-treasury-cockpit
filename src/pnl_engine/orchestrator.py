@@ -108,6 +108,7 @@ class PnlEngine:
         self.eve_results: Optional[pd.DataFrame] = None
         self.eve_scenarios: Optional[pd.DataFrame] = None
         self.eve_krd: Optional[pd.DataFrame] = None
+        self.nmd_match_log: list[dict] = []
 
         # Precomputed matrices (built once, reused across shocks)
         self._deals_use: Optional[pd.DataFrame] = None
@@ -161,7 +162,7 @@ class PnlEngine:
         # Apply NMD behavioral decay if profiles provided
         if self._nmd_profiles is not None and not self._nmd_profiles.empty:
             from pnl_engine.nmd import apply_nmd_decay
-            self._nominal_daily = apply_nmd_decay(
+            self._nominal_daily, self.nmd_match_log = apply_nmd_decay(
                 self._deals_use, self._nmd_profiles, self._nominal_daily,
                 self._days, self.dateRun,
             )

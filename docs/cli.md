@@ -102,6 +102,31 @@ The renderer handles missing data gracefully -- each tab renders a placeholder i
 
 ---
 
+### `render-pnl` -- Render Dedicated P&L Dashboard
+
+Renders the 21-tab ALM/Treasury P&L dashboard from Excel inputs. Auto-discovers optional ALM files (budget, scenarios, hedge pairs, NMD profiles, limits, alert thresholds, liquidity schedule).
+
+```bash
+uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels
+uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels --funding-source coc
+uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels --prev-date 2026-04-04
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--date` | Yes | Reference date (YYYY-MM-DD) |
+| `--input-dir` | No | Directory containing Excel input files |
+| `--funding-source` | No | `ois` (default) or `coc` |
+| `--budget-file` | No | Explicit path to budget file (overrides auto-discovery) |
+| `--hedge-pairs-file` | No | Explicit path to hedge pairs file |
+| `--prev-date` | No | Previous date for DoD attribution and P&L explain |
+
+**Output:** `output/{date}_pnl_dashboard.html`
+
+**Auto-discovered optional files:** `*budget*`, `*scenario*`, `*hedge*`, `*nmd*`, `*limit*`, `*alert*threshold*`, `*liquidity*` in the input directory.
+
+---
+
 ### `run-all` -- Execute Full Pipeline
 
 Runs all stages in sequence: fetch -> compute -> analyze -> render.

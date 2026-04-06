@@ -59,6 +59,44 @@
     </div>
   </div>
 
+  <!-- Carry vs Roll-down Decomposition -->
+  {% if coc.carry_rolldown %}
+  <div class="card">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Carry vs Roll-down (Base, All Currencies)</h3>
+    <div class="chart-container chart-sm">
+      <canvas id="chart-carry-rolldown"></canvas>
+    </div>
+    <p class="footnote">Carry = CoC Simple (spread income). Roll-down = Total NII P&amp;L &minus; Carry (curve shape &amp; time effects).</p>
+  </div>
+  <script>
+  (function() {
+    const cr = {{ coc.carry_rolldown | tojson_safe }};
+    const ctx = document.getElementById('chart-carry-rolldown');
+    if (ctx && typeof Chart !== 'undefined' && cr.months.length) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: cr.months,
+          datasets: [
+            { label: 'Carry', data: cr.carry, backgroundColor: 'rgba(63,185,80,0.6)', stack: 's', borderRadius: 3 },
+            { label: 'Roll-down', data: cr.rolldown, backgroundColor: 'rgba(88,166,255,0.5)', stack: 's', borderRadius: 3 },
+            { label: 'Total PnL', data: cr.total_pnl, type: 'line', borderColor: '#e6edf3', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3 },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#e6edf3' } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8b949e' } },
+            y: { stacked: true, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+  })();
+  </script>
+  {% endif %}
+
   <script>
   (function() {
     const cocData = {{ coc | tojson_safe }};

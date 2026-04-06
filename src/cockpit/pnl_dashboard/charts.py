@@ -54,14 +54,26 @@ def _month_labels(months) -> list[str]:
     return [str(m) for m in months]
 
 
+def _filter_total(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter for PnL_Type == 'Total', falling back to all rows if no Total rows exist."""
+    if "PnL_Type" not in df.columns:
+        return df
+    total = df[df["PnL_Type"] == "Total"]
+    return total if not total.empty else df
+
+
 # ---------------------------------------------------------------------------
 # Tab 1: Executive Summary
 # ---------------------------------------------------------------------------
 
-def _build_summary(df: pd.DataFrame, date_rates: datetime) -> dict:
-    """KPIs, currency donut, realized/forecast waterfall, top 5 contributors."""
+def _build_summary(
+    df: pd.DataFrame,
+    date_rates: datetime,
+    prev_df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """KPIs, currency donut, realized/forecast waterfall, top 5 contributors, DoD bridge."""
     if df.empty:
-        return {"kpis": {}, "donut": {}, "waterfall": {}, "top5": []}
+        return {"kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
     pnl_rows = df[df["Indice"] == "PnL"].copy()
     if pnl_rows.empty:
@@ -73,12 +85,14 @@ def _build_summary(df: pd.DataFrame, date_rates: datetime) -> dict:
         shock_data = pnl_rows[pnl_rows["Shock"] == shock]
         if shock_data.empty:
             continue
-        total = shock_data["Value"].sum()
-        realized = 0.0
-        forecast = 0.0
+        # Use "Total" PnL_Type to avoid triple-counting with Realized+Forecast
+        total = _filter_total(shock_data)["Value"].sum()
         if "PnL_Type" in shock_data.columns:
-            realized = shock_data[shock_data["PnL_Type"] == "Realized"]["Value"].sum()
-            forecast = shock_data[shock_data["PnL_Type"].isin(["Forecast", "Total"])]["Value"].sum() - realized
+            realized = float(shock_data[shock_data["PnL_Type"] == "Realized"]["Value"].sum())
+            forecast = float(shock_data[shock_data["PnL_Type"] == "Forecast"]["Value"].sum())
+        else:
+            realized = 0.0
+            forecast = 0.0
         kpis[f"shock_{shock}"] = {
             "total": round(float(total), 0),
             "realized": round(float(realized), 0),
@@ -91,8 +105,9 @@ def _build_summary(df: pd.DataFrame, date_rates: datetime) -> dict:
     else:
         kpis["delta_50_0"] = 0
 
-    # Currency donut (shock=0)
-    base = pnl_rows[pnl_rows["Shock"] == "0"]
+    # Currency donut (shock=0, Total PnL_Type only)
+    base_all = pnl_rows[pnl_rows["Shock"] == "0"]
+    base = _filter_total(base_all)
     if "Deal currency" in base.columns:
         ccy_totals = base.groupby("Deal currency")["Value"].sum()
         donut = {
@@ -103,16 +118,16 @@ def _build_summary(df: pd.DataFrame, date_rates: datetime) -> dict:
     else:
         donut = {"labels": [], "values": [], "colors": []}
 
-    # Realized vs Forecast waterfall per currency
+    # Realized vs Forecast waterfall per currency (use base_all for the split)
     waterfall = {"labels": [], "realized": [], "forecast": []}
-    if "PnL_Type" in base.columns and "Deal currency" in base.columns:
-        for ccy in sorted(base["Deal currency"].unique()):
-            ccy_data = base[base["Deal currency"] == ccy]
-            r = ccy_data[ccy_data["PnL_Type"] == "Realized"]["Value"].sum()
-            f = ccy_data[ccy_data["PnL_Type"].isin(["Forecast", "Total"])]["Value"].sum() - r
+    if "PnL_Type" in base_all.columns and "Deal currency" in base_all.columns:
+        for ccy in sorted(base_all["Deal currency"].unique()):
+            ccy_data = base_all[base_all["Deal currency"] == ccy]
+            r = float(ccy_data[ccy_data["PnL_Type"] == "Realized"]["Value"].sum())
+            f = float(ccy_data[ccy_data["PnL_Type"] == "Forecast"]["Value"].sum())
             waterfall["labels"].append(ccy)
-            waterfall["realized"].append(round(float(r), 0))
-            waterfall["forecast"].append(round(float(f), 0))
+            waterfall["realized"].append(round(r, 0))
+            waterfall["forecast"].append(round(f, 0))
 
     # Top 5 contributors (by |PnL|, shock=0)
     top5 = []
@@ -127,7 +142,51 @@ def _build_summary(df: pd.DataFrame, date_rates: datetime) -> dict:
                 "pnl": round(float(row["Value"]), 0),
             })
 
-    return {"kpis": kpis, "donut": donut, "waterfall": waterfall, "top5": top5}
+    # CoC YTD: aggregate GrossCarry, FundingCost, CoC_Simple, CoC_Compound at shock=0
+    coc_ytd = None
+    coc_indices = {"GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound"}
+    coc_rows = _filter_total(df[(df["Indice"].isin(coc_indices)) & (df["Shock"] == "0")])
+    if not coc_rows.empty:
+        coc_ytd = {
+            "gross_carry": round(float(coc_rows.loc[coc_rows["Indice"] == "GrossCarry", "Value"].sum()), 0),
+            "funding_cost": round(float(coc_rows.loc[coc_rows["Indice"] == "FundingCost", "Value"].sum()), 0),
+            "coc_simple": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Simple", "Value"].sum()), 0),
+            "coc_compound": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Compound", "Value"].sum()), 0),
+        }
+
+    # Day-over-day P&L bridge (requires prev_df)
+    dod_bridge = None
+    if prev_df is not None and not prev_df.empty and "Deal currency" in base.columns:
+        prev_pnl = _filter_total(prev_df[(prev_df["Indice"] == "PnL") & (prev_df["Shock"] == "0")])
+        if not prev_pnl.empty and "Deal currency" in prev_pnl.columns:
+            curr_by_ccy = base.groupby("Deal currency")["Value"].sum()
+            prev_by_ccy = prev_pnl.groupby("Deal currency")["Value"].sum()
+            bridge_rows = []
+            all_ccys = sorted(set(curr_by_ccy.index) | set(prev_by_ccy.index))
+            total_prev = 0.0
+            total_curr = 0.0
+            for ccy in all_ccys:
+                c = float(curr_by_ccy.get(ccy, 0))
+                p = float(prev_by_ccy.get(ccy, 0))
+                total_prev += p
+                total_curr += c
+                bridge_rows.append({
+                    "currency": ccy,
+                    "previous": round(p, 0),
+                    "current": round(c, 0),
+                    "delta": round(c - p, 0),
+                    "color": CURRENCY_COLORS.get(ccy, "#8b949e"),
+                })
+            bridge_rows.append({
+                "currency": "Total",
+                "previous": round(total_prev, 0),
+                "current": round(total_curr, 0),
+                "delta": round(total_curr - total_prev, 0),
+                "color": "#e6edf3",
+            })
+            dod_bridge = bridge_rows
+
+    return {"kpis": kpis, "donut": donut, "waterfall": waterfall, "top5": top5, "coc_ytd": coc_ytd, "dod_bridge": dod_bridge}
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +202,9 @@ def _build_coc(df: pd.DataFrame) -> dict:
     coc_rows = df[df["Indice"].isin(coc_indices)].copy()
     if coc_rows.empty:
         return {"months": [], "by_currency": {}, "table": []}
+
+    # Filter to Total PnL_Type to avoid double-counting with Realized+Forecast
+    coc_rows = _filter_total(coc_rows)
 
     months = sorted(coc_rows["Month"].unique()) if "Month" in coc_rows.columns else []
     month_labels = _month_labels(months)
@@ -190,7 +252,23 @@ def _build_coc(df: pd.DataFrame) -> dict:
                 row[indice] = all_by_shock["shock_0"].get(indice, [0.0] * len(months))[i]
             table.append(row)
 
-    return {"months": month_labels, "by_currency": by_currency, "table": table}
+    # Carry vs Roll-down decomposition (shock=0)
+    # Carry = CoC_Simple (spread income), Roll-down = Total PnL - Carry
+    carry_rolldown = None
+    pnl_base = _filter_total(df[(df["Indice"] == "PnL") & (df["Shock"] == "0")])
+    if not pnl_base.empty and "shock_0" in all_by_shock:
+        total_pnl_by_month = pnl_base.groupby("Month")["Value"].sum()
+        pnl_vals = [round(float(total_pnl_by_month.get(m, 0)), 0) for m in months]
+        carry = all_by_shock["shock_0"].get("CoC_Simple", [0.0] * len(months))
+        rolldown = [round(p - c, 0) for p, c in zip(pnl_vals, carry)]
+        carry_rolldown = {
+            "months": month_labels,
+            "total_pnl": pnl_vals,
+            "carry": [round(c, 0) for c in carry],
+            "rolldown": rolldown,
+        }
+
+    return {"months": month_labels, "by_currency": by_currency, "table": table, "carry_rolldown": carry_rolldown}
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +296,9 @@ def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
         by_shock = {}
         for shock in sorted(ccy_data["Shock"].unique()) if "Shock" in ccy_data.columns else ["0"]:
             shock_data = ccy_data[ccy_data["Shock"] == shock]
-            total = shock_data.groupby("Month")["Value"].sum()
+
+            # Use Total PnL_Type for the main series (avoid summing Total+Realized+Forecast)
+            total = _filter_total(shock_data).groupby("Month")["Value"].sum()
             by_shock[f"shock_{shock}"] = [round(float(total.get(m, 0.0)), 0) for m in months]
 
             # Realized/forecast split for this shock
@@ -231,9 +311,10 @@ def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
 
         by_currency[ccy] = by_shock
 
-    # Product breakdown (shock=0 only)
+    # Product breakdown (shock=0 only, Total PnL_Type)
     by_product = {}
     base = pnl_rows[pnl_rows["Shock"] == "0"] if "Shock" in pnl_rows.columns else pnl_rows
+    base = _filter_total(base)
     if "Product2BuyBack" in base.columns:
         for prod in sorted(base["Product2BuyBack"].unique()):
             prod_data = base[base["Product2BuyBack"] == prod]
@@ -264,6 +345,9 @@ def _build_sensitivity(df: pd.DataFrame) -> dict:
     if pnl_rows.empty or "Shock" not in pnl_rows.columns:
         return {"months": [], "rows": [], "totals": {}}
 
+    # Filter to Total PnL_Type only to avoid double-counting with Realized+Forecast
+    pnl_rows = _filter_total(pnl_rows)
+
     base = pnl_rows[pnl_rows["Shock"] == "0"]
     shock50 = pnl_rows[pnl_rows["Shock"] == "50"]
     wirp = pnl_rows[pnl_rows["Shock"] == "wirp"]
@@ -277,17 +361,17 @@ def _build_sensitivity(df: pd.DataFrame) -> dict:
         if "Deal currency" not in df_a.columns or "Product2BuyBack" not in df_a.columns:
             return rows
 
-        a_grouped = df_a.groupby(["Deal currency", "Product2BuyBack", "Month"])["Value"].sum()
-        b_grouped = df_b.groupby(["Deal currency", "Product2BuyBack", "Month"])["Value"].sum()
+        a_dict = df_a.groupby(["Deal currency", "Product2BuyBack", "Month"])["Value"].sum().to_dict()
+        b_dict = df_b.groupby(["Deal currency", "Product2BuyBack", "Month"])["Value"].sum().to_dict()
 
-        keys = set(a_grouped.index) | set(b_grouped.index)
+        keys = set(a_dict.keys()) | set(b_dict.keys())
         combos = sorted({(k[0], k[1]) for k in keys})
 
         for ccy, prod in combos:
             values = []
             for m in months:
-                val_a = a_grouped.get((ccy, prod, m), 0.0)
-                val_b = b_grouped.get((ccy, prod, m), 0.0)
+                val_a = a_dict.get((ccy, prod, m), 0.0)
+                val_b = b_dict.get((ccy, prod, m), 0.0)
                 values.append(round(float(val_a - val_b), 0))
             rows.append({
                 "currency": ccy,
@@ -368,9 +452,33 @@ def _build_strategy(df: pd.DataFrame) -> dict:
 
     for leg in sorted(strategy_legs):
         pnl_total = base[base["Product2BuyBack"] == leg]["Value"].sum()
-        nom_total = nom_rows[nom_rows["Product2BuyBack"] == leg]["Value"].mean() if not nom_rows.empty else 0
-        rate_avg = rate_rows[rate_rows["Product2BuyBack"] == leg]["Value"].mean() if not rate_rows.empty else 0
-        ois_avg = ois_rows[ois_rows["Product2BuyBack"] == leg]["Value"].mean() if not ois_rows.empty else 0
+        leg_nom = nom_rows[nom_rows["Product2BuyBack"] == leg]["Value"]
+        leg_rate = rate_rows[rate_rows["Product2BuyBack"] == leg]
+        leg_ois = ois_rows[ois_rows["Product2BuyBack"] == leg]
+
+        # Nominal-weighted averages for rates (avoid NaN on empty groups)
+        nom_avg = float(leg_nom.mean()) if not leg_nom.empty else 0.0
+        if not leg_rate.empty and not leg_nom.empty and len(leg_rate) == len(leg_nom):
+            weights = leg_nom.abs().values
+            w_sum = weights.sum()
+            rate_avg = float((leg_rate["Value"].values * weights).sum() / w_sum) if w_sum > 0 else 0.0
+        else:
+            rate_avg = float(leg_rate["Value"].mean()) if not leg_rate.empty else 0.0
+
+        if not leg_ois.empty and not leg_nom.empty and len(leg_ois) == len(leg_nom):
+            weights = leg_nom.abs().values
+            w_sum = weights.sum()
+            ois_avg = float((leg_ois["Value"].values * weights).sum() / w_sum) if w_sum > 0 else 0.0
+        else:
+            ois_avg = float(leg_ois["Value"].mean()) if not leg_ois.empty else 0.0
+
+        # Sanitize NaN → 0
+        if np.isnan(nom_avg):
+            nom_avg = 0.0
+        if np.isnan(rate_avg):
+            rate_avg = 0.0
+        if np.isnan(ois_avg):
+            ois_avg = 0.0
 
         currencies = base[base["Product2BuyBack"] == leg]["Deal currency"].unique() if "Deal currency" in base.columns else []
         directions = base[base["Product2BuyBack"] == leg]["Direction"].unique() if "Direction" in base.columns else []
@@ -380,9 +488,9 @@ def _build_strategy(df: pd.DataFrame) -> dict:
             "currency": ", ".join(sorted(currencies)),
             "direction": ", ".join(sorted(directions)),
             "pnl": round(float(pnl_total), 0),
-            "nominal": round(float(nom_total), 0),
-            "rate_ref": round(float(rate_avg), 6),
-            "ois_fwd": round(float(ois_avg), 6),
+            "nominal": round(nom_avg, 0),
+            "rate_ref": round(rate_avg, 6),
+            "ois_fwd": round(ois_avg, 6),
         })
 
     return {"has_data": True, "months": month_labels, "legs": legs, "table": table}
@@ -499,8 +607,8 @@ def _build_currency_mismatch(df: pd.DataFrame) -> dict:
     if nom_rows.empty or "Direction" not in nom_rows.columns:
         return {"has_data": False, "months": [], "by_currency": {}}
 
-    # Map direction to asset/liability
-    nom_rows["_side"] = nom_rows["Direction"].map({"B": "asset", "D": "asset", "L": "liability", "S": "liability"})
+    # Map direction to asset/liability: L(end)/B(uy) = asset, D(eposit)/S(ell) = liability
+    nom_rows["_side"] = nom_rows["Direction"].map({"L": "asset", "B": "asset", "D": "liability", "S": "liability"})
     nom_rows["_side"] = nom_rows["_side"].fillna("asset")
 
     months = sorted(nom_rows["Month"].unique())
@@ -526,7 +634,34 @@ def _build_currency_mismatch(df: pd.DataFrame) -> dict:
         "gap": [a - l for a, l in zip(all_assets, all_liabs)],
     }
 
-    return {"has_data": True, "months": month_labels, "by_currency": by_currency}
+    # Basis risk: OIS forward spread between currencies (e.g., EUR-CHF, USD-CHF)
+    basis_risk = {}
+    ois_rows = _filter_total(df[(df["Indice"] == "OISfwd") & (df["Shock"] == "0")])
+    if not ois_rows.empty and "Deal currency" in ois_rows.columns:
+        ois_by_ccy = {}
+        for ccy in currencies:
+            ccy_ois = ois_rows[ois_rows["Deal currency"] == ccy]
+            # Nominal-weighted OIS per month
+            nom_ccy = nom_rows[(nom_rows["Deal currency"] == ccy)]
+            ois_monthly = ccy_ois.groupby("Month")["Value"].mean()
+            ois_by_ccy[ccy] = {m: float(ois_monthly.get(m, 0)) for m in months}
+
+        # Compute spreads relative to CHF (home currency)
+        home = "CHF"
+        if home in ois_by_ccy:
+            for ccy in currencies:
+                if ccy == home:
+                    continue
+                spread = []
+                for m in months:
+                    s = (ois_by_ccy.get(ccy, {}).get(m, 0) - ois_by_ccy[home].get(m, 0)) * 10_000
+                    spread.append(round(s, 1))
+                basis_risk[f"{ccy}-{home}"] = {
+                    "values": spread,
+                    "color": CURRENCY_COLORS.get(ccy, "#8b949e"),
+                }
+
+    return {"has_data": True, "months": month_labels, "by_currency": by_currency, "basis_risk": basis_risk}
 
 
 # ---------------------------------------------------------------------------
@@ -691,8 +826,9 @@ def _build_eve(
     eve_results: Optional[pd.DataFrame] = None,
     eve_scenarios: Optional[pd.DataFrame] = None,
     eve_krd: Optional[pd.DataFrame] = None,
+    limits: Optional[pd.DataFrame] = None,
 ) -> dict:
-    """Build EVE dashboard data: base EVE, ΔEVE heatmap, duration, KRD."""
+    """Build EVE dashboard data: base EVE, ΔEVE heatmap, duration, KRD, IRRBB outlier test."""
     if eve_results is None or eve_results.empty:
         return {"has_data": False, "total_eve": 0, "by_currency": {},
                 "scenarios": {}, "krd": {}, "duration": {}}
@@ -780,6 +916,135 @@ def _build_eve(
             dur_colors.append(by_currency[ccy]["color"])
         duration_data = {"labels": dur_labels, "values": dur_values, "colors": dur_colors}
 
+    # --- EVE Tenor Ladder (bucket by deal maturity into BCBS tenor bands) ---
+    tenor_ladder = {}
+    if ccy_col and "duration" in eve_results.columns:
+        # BCBS tenor buckets based on modified duration as proxy for maturity
+        tenor_buckets = [
+            ("O/N", 0, 0.01),
+            ("≤3M", 0.01, 0.25),
+            ("3M-6M", 0.25, 0.5),
+            ("6M-1Y", 0.5, 1.0),
+            ("1Y-2Y", 1.0, 2.0),
+            ("2Y-3Y", 2.0, 3.0),
+            ("3Y-5Y", 3.0, 5.0),
+            ("5Y-10Y", 5.0, 10.0),
+            ("10Y-20Y", 10.0, 20.0),
+            (">20Y", 20.0, 999.0),
+        ]
+        bucket_labels = [b[0] for b in tenor_buckets]
+        currencies_in_eve = sorted(by_currency.keys())
+        datasets = []
+        for ccy in currencies_in_eve:
+            ccy_deals = eve_results[eve_results[ccy_col] == ccy]
+            bucket_values = []
+            for _, lo, hi in tenor_buckets:
+                mask = (ccy_deals["duration"] >= lo) & (ccy_deals["duration"] < hi)
+                bucket_values.append(round(float(ccy_deals.loc[mask, "eve"].sum()), 0))
+            datasets.append({
+                "label": str(ccy),
+                "data": bucket_values,
+                "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+            })
+        tenor_ladder = {"buckets": bucket_labels, "datasets": datasets}
+
+    # --- IRRBB Outlier Test (BCBS 368: ΔEVE / Tier1 > 15% = outlier) ---
+    outlier_test = None
+    tier1 = None
+    if limits is not None and not limits.empty:
+        t1_rows = limits[limits["metric"].str.strip() == "tier1_capital"]
+        if not t1_rows.empty:
+            tier1 = float(t1_rows.iloc[0]["limit_value"])
+
+    if tier1 and tier1 > 0 and scenarios_data:
+        outlier_rows = []
+        worst_pct = 0.0
+        is_outlier = False
+        for row in scenarios_data.get("heatmap", []):
+            delta = abs(float(row.get("total", 0)))
+            pct_of_t1 = (delta / tier1) * 100
+            passed = pct_of_t1 <= 15.0
+            if pct_of_t1 > worst_pct:
+                worst_pct = pct_of_t1
+            if not passed:
+                is_outlier = True
+            outlier_rows.append({
+                "scenario": row["scenario"],
+                "delta_eve": round(float(row.get("total", 0)), 0),
+                "pct_of_tier1": round(pct_of_t1, 2),
+                "passed": passed,
+            })
+        outlier_test = {
+            "tier1_capital": round(tier1, 0),
+            "threshold_pct": 15.0,
+            "is_outlier": is_outlier,
+            "worst_pct": round(worst_pct, 2),
+            "scenarios": outlier_rows,
+        }
+
+    # --- Convexity / Gamma measurement from parallel scenarios ---
+    convexity = None
+    if scenarios_data and scenarios_data.get("heatmap"):
+        hm = scenarios_data["heatmap"]
+        # Find parallel_up and parallel_down scenarios
+        up_row = next((r for r in hm if "parallel" in r["scenario"].lower() and "up" in r["scenario"].lower()), None)
+        down_row = next((r for r in hm if "parallel" in r["scenario"].lower() and "down" in r["scenario"].lower()), None)
+        if up_row and down_row and total_eve != 0:
+            delta_r = 0.02  # 200bp standard parallel shock
+            delta_eve_up = float(up_row.get("total", 0))
+            delta_eve_down = float(down_row.get("total", 0))
+            # Duration ≈ -ΔEVE / (EVE × Δr), using average of up/down
+            eff_duration = -(delta_eve_up - delta_eve_down) / (2 * total_eve * delta_r)
+            # Convexity = (ΔEVE_up + ΔEVE_down) / (EVE × Δr²)
+            eff_convexity = (delta_eve_up + delta_eve_down) / (total_eve * delta_r ** 2)
+            # Per-currency convexity
+            ccy_convexity = []
+            currencies_sc = scenarios_data.get("currencies", [])
+            for ccy in currencies_sc:
+                ccy_eve = by_currency.get(ccy, {}).get("eve", 0)
+                if ccy_eve == 0:
+                    continue
+                ccy_up = float(up_row.get(ccy, 0))
+                ccy_down = float(down_row.get(ccy, 0))
+                ccy_dur = -(ccy_up - ccy_down) / (2 * ccy_eve * delta_r)
+                ccy_conv = (ccy_up + ccy_down) / (ccy_eve * delta_r ** 2)
+                ccy_convexity.append({
+                    "currency": ccy,
+                    "eve": round(ccy_eve, 0),
+                    "delta_eve_up": round(ccy_up, 0),
+                    "delta_eve_down": round(ccy_down, 0),
+                    "effective_duration": round(ccy_dur, 2),
+                    "convexity": round(ccy_conv, 2),
+                    "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+                })
+            convexity = {
+                "delta_eve_up": round(delta_eve_up, 0),
+                "delta_eve_down": round(delta_eve_down, 0),
+                "effective_duration": round(eff_duration, 2),
+                "convexity": round(eff_convexity, 2),
+                "by_currency": ccy_convexity,
+            }
+
+    # --- DV01/PV01 Ladder (sensitivity per 1bp per tenor bucket) ---
+    dv01 = None
+    if convexity and total_eve != 0:
+        # DV01 = ΔEVE per 1bp ≈ Effective Duration × EVE × 0.0001
+        total_dv01 = abs(convexity["effective_duration"]) * abs(total_eve) * 0.0001
+        dv01_by_ccy = []
+        for cc in (convexity.get("by_currency") or []):
+            ccy_dv01 = abs(cc["effective_duration"]) * abs(cc["eve"]) * 0.0001
+            dv01_by_ccy.append({
+                "currency": cc["currency"],
+                "eve": cc["eve"],
+                "duration": cc["effective_duration"],
+                "dv01": round(ccy_dv01, 0),
+                "color": cc.get("color", "#8b949e"),
+            })
+        dv01 = {
+            "total_dv01": round(total_dv01, 0),
+            "by_currency": dv01_by_ccy,
+        }
+
     return {
         "has_data": True,
         "total_eve": total_eve,
@@ -787,6 +1052,10 @@ def _build_eve(
         "scenarios": scenarios_data,
         "krd": krd_data,
         "duration": duration_data,
+        "outlier_test": outlier_test,
+        "tenor_ladder": tenor_ladder,
+        "convexity": convexity,
+        "dv01": dv01,
     }
 
 
@@ -805,7 +1074,7 @@ def _build_limit_utilization(
     Matches actual metric values against board-approved limits.
     """
     if limits is None or limits.empty:
-        return {"has_data": False, "items": []}
+        return {"has_data": False, "limit_items": []}
 
     items = []
 
@@ -873,7 +1142,667 @@ def _build_limit_utilization(
             "status": status,
         })
 
-    return {"has_data": len(items) > 0, "items": items}
+    # Build breach log: items currently breaching or in warning zone
+    breaches = [it for it in items if it["status"] == "red"]
+    warnings = [it for it in items if it["status"] == "yellow"]
+    breach_log = {
+        "breach_count": len(breaches),
+        "warning_count": len(warnings),
+        "breaches": breaches,
+        "warnings": warnings,
+    }
+
+    return {"has_data": len(items) > 0, "limit_items": items, "breach_log": breach_log}
+
+
+# ---------------------------------------------------------------------------
+# FTP & Business Unit P&L
+# ---------------------------------------------------------------------------
+
+PERIMETER_COLORS = {
+    "CC": "#58a6ff",
+    "WM": "#3fb950",
+    "CIB": "#d29922",
+}
+
+
+def _build_ftp(
+    df: pd.DataFrame,
+    deals: Optional[pd.DataFrame] = None,
+    pnl_by_deal: Optional[pd.DataFrame] = None,
+    date_run: Optional[datetime] = None,
+) -> dict:
+    """FTP margin decomposition by perimeter and currency.
+
+    3-way split: Client Margin (ClientRate - FTP), ALM Margin (FTP - OIS),
+    Total NII (ClientRate - OIS).
+    """
+    if deals is None or deals.empty or "FTP" not in deals.columns:
+        return {"has_data": False, "perimeters": {}, "by_currency": {}, "top_deals": []}
+
+    ftp_deals = deals[deals["FTP"].notna() & (deals["FTP"] != 0)].copy()
+    if ftp_deals.empty:
+        return {"has_data": False, "perimeters": {}, "by_currency": {}, "top_deals": []}
+
+    # Use pnl_by_deal for deal-level P&L if available
+    source = None
+    if pnl_by_deal is not None and not pnl_by_deal.empty and "Dealid" in pnl_by_deal.columns:
+        source = pnl_by_deal[pnl_by_deal["Shock"] == "0"].copy()
+
+    # Compute per-deal FTP metrics
+    records = []
+    for _, deal in ftp_deals.iterrows():
+        deal_id = deal.get("Dealid")
+        ccy = str(deal.get("Currency", ""))
+        perimeter = str(deal.get("Périmètre TOTAL", "CC"))
+        product = str(deal.get("Product", ""))
+        counterparty = str(deal.get("Counterparty", ""))
+        client_rate = float(deal.get("Clientrate", 0) or 0)
+        ftp_rate = float(deal.get("FTP", 0) or 0)
+        eq_ois = float(deal.get("EqOisRate", 0) or 0)
+        ytm = float(deal.get("YTM", 0) or 0)
+        amount = float(deal.get("Amount", 0) or 0)
+
+        # Rate used for OIS comparison depends on product
+        ref_rate = ytm if product == "BND" else eq_ois
+
+        # Margins in bps
+        client_margin_bps = (client_rate - ftp_rate) * 10_000
+        alm_margin_bps = (ftp_rate - ref_rate) * 10_000
+
+        # Remaining maturity fraction (cap at 1.0 for annualized view)
+        year_frac = 1.0
+        mat_raw = deal.get("Maturity Date", deal.get("Maturitydate"))
+        if mat_raw is not None and date_run is not None:
+            try:
+                mat_dt = pd.Timestamp(mat_raw)
+                if pd.notna(mat_dt):
+                    remaining = (mat_dt - pd.Timestamp(date_run)).days
+                    year_frac = min(max(remaining / 365.0, 0.0), 1.0)
+            except Exception:
+                pass
+
+        # P&L contribution pro-rated by remaining maturity (capped at 12 months)
+        client_margin_pnl = amount * (client_rate - ftp_rate) * year_frac
+        alm_margin_pnl = amount * (ftp_rate - ref_rate) * year_frac
+        total_nii = client_margin_pnl + alm_margin_pnl
+
+        # Get actual P&L from engine if available
+        actual_pnl = 0.0
+        if source is not None:
+            match = source[source["Dealid"] == deal_id]
+            if not match.empty:
+                actual_pnl = float(match["PnL"].sum())
+
+        records.append({
+            "deal_id": str(int(deal_id)) if pd.notna(deal_id) else "",
+            "currency": ccy,
+            "perimeter": perimeter,
+            "product": product,
+            "counterparty": counterparty,
+            "amount": round(amount, 0),
+            "client_rate": round(client_rate * 100, 4),
+            "ftp_rate": round(ftp_rate * 100, 4),
+            "ref_rate": round(ref_rate * 100, 4),
+            "client_margin_bps": round(client_margin_bps, 1),
+            "alm_margin_bps": round(alm_margin_bps, 1),
+            "client_margin_pnl": round(client_margin_pnl, 0),
+            "alm_margin_pnl": round(alm_margin_pnl, 0),
+            "total_nii": round(total_nii, 0),
+            "actual_pnl": round(actual_pnl, 0),
+        })
+
+    if not records:
+        return {"has_data": False, "perimeters": {}, "by_currency": {}, "top_deals": []}
+
+    rdf = pd.DataFrame(records)
+
+    # Aggregate by perimeter
+    perimeters = {}
+    for peri, grp in rdf.groupby("perimeter"):
+        perimeters[str(peri)] = {
+            "client_margin": round(float(grp["client_margin_pnl"].sum()), 0),
+            "alm_margin": round(float(grp["alm_margin_pnl"].sum()), 0),
+            "total_nii": round(float(grp["total_nii"].sum()), 0),
+            "deal_count": len(grp),
+            "avg_client_margin_bps": round(float(grp["client_margin_bps"].mean()), 1),
+            "avg_alm_margin_bps": round(float(grp["alm_margin_bps"].mean()), 1),
+            "color": PERIMETER_COLORS.get(str(peri), "#8b949e"),
+        }
+
+    # Aggregate by currency
+    by_currency = {}
+    for ccy, grp in rdf.groupby("currency"):
+        by_currency[str(ccy)] = {
+            "client_margin": round(float(grp["client_margin_pnl"].sum()), 0),
+            "alm_margin": round(float(grp["alm_margin_pnl"].sum()), 0),
+            "total_nii": round(float(grp["total_nii"].sum()), 0),
+            "deal_count": len(grp),
+            "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+        }
+
+    # Top 10 deals by absolute FTP margin (contributors + detractors)
+    rdf["abs_alm_margin"] = rdf["alm_margin_pnl"].abs()
+    top = rdf.nlargest(10, "abs_alm_margin").drop(columns=["abs_alm_margin"])
+    top_deals = top.to_dict("records")
+
+    # Totals
+    total_client = round(float(rdf["client_margin_pnl"].sum()), 0)
+    total_alm = round(float(rdf["alm_margin_pnl"].sum()), 0)
+    total_nii = round(float(rdf["total_nii"].sum()), 0)
+
+    return {
+        "has_data": True,
+        "totals": {
+            "client_margin": total_client,
+            "alm_margin": total_alm,
+            "total_nii": total_nii,
+            "deal_count": len(rdf),
+        },
+        "perimeters": perimeters,
+        "by_currency": by_currency,
+        "top_deals": top_deals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Liquidity Forecast
+# ---------------------------------------------------------------------------
+
+def _build_liquidity(
+    liquidity_schedule: Optional[pd.DataFrame] = None,
+    deals: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Liquidity forecast from daily/monthly cash flow schedule.
+
+    Input: wide DataFrame with Dealid, Direction, Currency, and date columns
+    (YYYY/MM or YYYY/MM/DD) containing cash flow amounts.
+    """
+    import re
+
+    if liquidity_schedule is None or liquidity_schedule.empty:
+        return {"has_data": False, "by_currency": {}, "summary": {}, "top_maturities": []}
+
+    df = liquidity_schedule.copy()
+    date_col_re = re.compile(r"^\d{4}/\d{2}(/\d{2})?$")
+    date_cols = [c for c in df.columns if isinstance(c, str) and date_col_re.match(c)]
+
+    if not date_cols:
+        return {"has_data": False, "by_currency": {}, "summary": {}, "top_maturities": []}
+
+    # Parse date columns to timestamps for aggregation
+    def _parse_col(c):
+        parts = c.split("/")
+        if len(parts) == 3:
+            return pd.Timestamp(int(parts[0]), int(parts[1]), int(parts[2]))
+        return pd.Timestamp(int(parts[0]), int(parts[1]), 1)
+
+    col_dates = {c: _parse_col(c) for c in date_cols}
+    sorted_cols = sorted(date_cols, key=lambda c: col_dates[c])
+
+    # Identify asset vs liability by direction
+    # L(end)/B(uy) = asset (inflow at maturity), D(eposit)/S(ell) = liability (outflow)
+    if "Direction" in df.columns:
+        df["_is_asset"] = df["Direction"].isin(["L", "B"])
+    else:
+        df["_is_asset"] = True  # default
+
+    currencies = sorted(df["Currency"].unique()) if "Currency" in df.columns else ["ALL"]
+
+    # Build per-currency time series
+    by_currency = {}
+    for ccy in currencies:
+        ccy_df = df[df["Currency"] == ccy] if "Currency" in df.columns else df
+
+        labels = []
+        inflows = []
+        outflows = []
+        net = []
+        cumulative = []
+        cum = 0.0
+
+        for col in sorted_cols:
+            dt = col_dates[col]
+            labels.append(dt.strftime("%Y-%m-%d") if "/" in col and col.count("/") == 2 else dt.strftime("%Y-%m"))
+
+            # Assets (L/B): principal returning = inflow; Liabilities (D/S): repayment = outflow
+            inflow = float(ccy_df.loc[ccy_df["_is_asset"], col].sum())
+            outflow = float(-ccy_df.loc[~ccy_df["_is_asset"], col].sum())  # negate: unsigned → negative
+
+            inflows.append(round(float(inflow), 0))
+            outflows.append(round(float(outflow), 0))
+            n = round(float(inflow + outflow), 0)
+            net.append(n)
+            cum += n
+            cumulative.append(round(float(cum), 0))
+
+        by_currency[ccy] = {
+            "labels": labels,
+            "inflows": inflows,
+            "outflows": outflows,
+            "net": net,
+            "cumulative": cumulative,
+            "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
+        }
+
+    # Summary KPIs: aggregate across all currencies
+    all_labels = []
+    all_net = []
+    cum = 0.0
+    all_cumulative = []
+    for col in sorted_cols:
+        dt = col_dates[col]
+        all_labels.append(dt)
+        n = float(df[col].sum())
+        all_net.append(n)
+        cum += n
+        all_cumulative.append(cum)
+
+    # Net outflows for 7d, 30d, 90d windows
+    now = pd.Timestamp.now()
+    net_7d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=7))
+    net_30d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=30))
+    net_90d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=90))
+
+    # Survival days: first date where cumulative goes negative
+    survival_days = None
+    for dt, c in zip(all_labels, all_cumulative):
+        if c < 0:
+            survival_days = max(0, (dt - now).days)
+            break
+
+    # Top 10 largest single-date cash flows (maturities) in next 30 days
+    top_maturities = []
+    for _, row in df.iterrows():
+        for col in sorted_cols:
+            dt = col_dates[col]
+            if dt > now + pd.Timedelta(days=30):
+                break
+            val = float(row[col])
+            if abs(val) > 0:
+                top_maturities.append({
+                    "deal_id": str(int(row["Dealid"])) if pd.notna(row.get("Dealid")) else "",
+                    "currency": str(row.get("Currency", "")),
+                    "direction": str(row.get("Direction", "")),
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "amount": round(val, 0),
+                })
+
+    # Sort by absolute amount descending, keep top 10
+    top_maturities.sort(key=lambda x: abs(x["amount"]), reverse=True)
+    top_maturities = top_maturities[:10]
+
+    # Reinvestment what-if: maturing assets in 30/90d, book rate vs current OIS
+    reinvestment = []
+    if deals is not None and not deals.empty and "Currency" in deals.columns:
+        ois_col = "EqOisRate"
+        rate_col = "Clientrate"
+        for _ois in [ois_col, "EqOISRate", "eqoisrate"]:
+            if _ois in deals.columns:
+                ois_col = _ois
+                break
+        if ois_col in deals.columns and rate_col in deals.columns:
+            asset_mask = deals.get("Direction", pd.Series()).isin(["L", "B"])
+            asset_deals = deals[asset_mask].copy()
+            for ccy in currencies:
+                ccy_deals = asset_deals[asset_deals["Currency"] == ccy]
+                if ccy_deals.empty:
+                    continue
+                avg_book = float(ccy_deals[rate_col].mean()) if not ccy_deals[rate_col].isna().all() else 0
+                avg_ois = float(ccy_deals[ois_col].mean()) if not ccy_deals[ois_col].isna().all() else 0
+                # Volume maturing in 30d/90d (from top_maturities)
+                vol_30d = sum(abs(m["amount"]) for m in top_maturities if m["currency"] == ccy and m["direction"] in ("L", "B"))
+                if vol_30d > 0 and avg_ois != 0:
+                    spread_bps = (avg_ois - avg_book) * 10_000
+                    nii_impact = vol_30d * (avg_ois - avg_book)
+                    reinvestment.append({
+                        "currency": ccy,
+                        "maturing_volume": round(vol_30d, 0),
+                        "book_rate_pct": round(avg_book * 100, 4),
+                        "market_rate_pct": round(avg_ois * 100, 4),
+                        "spread_bps": round(spread_bps, 1),
+                        "nii_impact": round(nii_impact, 0),
+                    })
+
+    return {
+        "has_data": True,
+        "by_currency": by_currency,
+        "all_currencies": currencies,
+        "summary": {
+            "net_7d": round(float(net_7d), 0),
+            "net_30d": round(float(net_30d), 0),
+            "net_90d": round(float(net_90d), 0),
+            "survival_days": survival_days,
+        },
+        "top_maturities": top_maturities,
+        "reinvestment": reinvestment,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NMD Audit Trail
+# ---------------------------------------------------------------------------
+
+def _build_nmd_audit(
+    deals: Optional[pd.DataFrame],
+    nmd_profiles: Optional[pd.DataFrame],
+) -> dict:
+    """Build NMD matching audit trail for dashboard display.
+
+    Shows which deals matched which NMD profile tier, with key parameters.
+    """
+    if deals is None or nmd_profiles is None or nmd_profiles.empty:
+        return {"has_data": False}
+
+    profiles = nmd_profiles.copy()
+    for col in ["product", "currency", "direction"]:
+        if col in profiles.columns:
+            profiles[col] = profiles[col].str.strip().str.upper()
+
+    match_log = []
+    for i in range(len(deals)):
+        deal = deals.iloc[i]
+        deal_id = str(deal.get("Dealid", f"idx_{i}"))
+        product = str(deal.get("Product", "")).strip().upper()
+        currency = str(deal.get("Currency", "")).strip().upper()
+        direction = str(deal.get("Direction", "")).strip().upper()
+        nominal = float(deal.get("Nominal", 0))
+
+        mask = pd.Series([True] * len(profiles))
+        if "product" in profiles.columns:
+            mask &= profiles["product"] == product
+        if "currency" in profiles.columns:
+            mask &= profiles["currency"] == currency
+        if "direction" in profiles.columns:
+            mask &= profiles["direction"] == direction
+
+        matched = profiles[mask]
+        if matched.empty:
+            continue
+
+        profile = matched.iloc[0]
+        tier = str(profile.get("tier", "unknown"))
+        decay_rate = float(profile.get("decay_rate", 0.0))
+        deposit_beta = float(profile.get("deposit_beta", 1.0))
+        floor_rate = float(profile.get("floor_rate", 0.0))
+        behavioral_maturity = float(profile.get("behavioral_maturity_years", 0.0))
+
+        match_log.append({
+            "deal_id": deal_id,
+            "product": product,
+            "currency": currency,
+            "direction": direction,
+            "nominal": nominal,
+            "tier": tier,
+            "decay_rate": decay_rate,
+            "deposit_beta": deposit_beta,
+            "floor_rate": floor_rate,
+            "behavioral_maturity_years": behavioral_maturity,
+        })
+
+    if not match_log:
+        return {"has_data": False}
+
+    match_df = pd.DataFrame(match_log)
+
+    # Summary by tier
+    tier_summary = []
+    for tier, grp in match_df.groupby("tier"):
+        tier_summary.append({
+            "tier": tier,
+            "deal_count": len(grp),
+            "total_nominal": float(grp["nominal"].sum()),
+            "avg_decay_rate": float(grp["decay_rate"].mean()),
+            "avg_beta": float(grp["deposit_beta"].mean()),
+            "avg_behavioral_maturity": float(grp["behavioral_maturity_years"].mean()),
+        })
+
+    # Summary by currency × tier
+    ccy_tier_summary = []
+    for (ccy, tier), grp in match_df.groupby(["currency", "tier"]):
+        ccy_tier_summary.append({
+            "currency": ccy,
+            "tier": tier,
+            "deal_count": len(grp),
+            "total_nominal": float(grp["nominal"].sum()),
+            "avg_beta": float(grp["deposit_beta"].mean()),
+        })
+
+    # Chart data: stacked bar by currency, colored by tier
+    tier_colors = {
+        "CORE": "#3fb950",
+        "VOLATILE": "#d29922",
+        "TERM": "#58a6ff",
+    }
+    currencies = sorted(match_df["currency"].unique())
+    tiers = sorted(match_df["tier"].unique())
+    chart_datasets = []
+    for tier in tiers:
+        data = []
+        for ccy in currencies:
+            sub = match_df[(match_df["currency"] == ccy) & (match_df["tier"] == tier)]
+            data.append(float(sub["nominal"].sum()))
+        chart_datasets.append({
+            "label": tier.title(),
+            "data": data,
+            "color": tier_colors.get(tier, "#8b949e"),
+        })
+
+    # Unmatched deals count
+    total_deals = len(deals)
+    matched_deals = len(match_log)
+    unmatched_deals = total_deals - matched_deals
+
+    # Deal-level detail (first 50 for display)
+    deal_details = match_log[:50]
+
+    return {
+        "has_data": True,
+        "total_deals": total_deals,
+        "matched_deals": matched_deals,
+        "unmatched_deals": unmatched_deals,
+        "tier_summary": tier_summary,
+        "ccy_tier_summary": ccy_tier_summary,
+        "chart": {
+            "currencies": currencies,
+            "datasets": chart_datasets,
+        },
+        "deal_details": deal_details,
+        "profiles": [
+            {
+                "product": str(r.get("product", "")),
+                "currency": str(r.get("currency", "")),
+                "direction": str(r.get("direction", "")),
+                "tier": str(r.get("tier", "")),
+                "decay_rate": float(r.get("decay_rate", 0)),
+                "deposit_beta": float(r.get("deposit_beta", 1)),
+                "floor_rate": float(r.get("floor_rate", 0)),
+                "behavioral_maturity_years": float(r.get("behavioral_maturity_years", 0)),
+            }
+            for _, r in nmd_profiles.iterrows()
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# ALCO Risk Summary (reads from all other tabs)
+# ---------------------------------------------------------------------------
+
+def _build_alco(result: dict) -> dict:
+    """Single-screen ALCO risk dashboard consolidating all key metrics.
+
+    This runs AFTER all other tab builders, reading from the result dict.
+    """
+    metrics = []
+    lim_items = result.get("limits", {}).get("limit_items", [])
+
+    # 1. Total NII (base)
+    summary = result.get("summary", {})
+    kpis = summary.get("kpis", {})
+    shock_0 = kpis.get("shock_0", {})
+    if shock_0:
+        dod = summary.get("dod_bridge", [])
+        total_row = next((r for r in (dod or []) if r["currency"] == "Total"), None)
+        metrics.append({
+            "metric": "Total NII (Base)",
+            "value": shock_0.get("total", 0),
+            "delta_1d": total_row["delta"] if total_row else None,
+            "limit": None,
+            "utilization": None,
+            "status": "neutral",
+        })
+
+    # 2. NII Sensitivity (+50bp)
+    delta_50 = kpis.get("delta_50_0", 0)
+    if delta_50 != 0:
+        nii_sens_lim = next((i for i in lim_items if i["metric"] == "nii_sensitivity_50bp"), None)
+        metrics.append({
+            "metric": "NII Sensitivity (+50bp)",
+            "value": delta_50,
+            "delta_1d": None,
+            "limit": nii_sens_lim["limit"] if nii_sens_lim else None,
+            "utilization": nii_sens_lim["utilization_pct"] if nii_sens_lim else None,
+            "status": nii_sens_lim["status"] if nii_sens_lim else "neutral",
+        })
+
+    # 3. Worst ΔNII (BCBS scenarios)
+    nii_risk = result.get("nii_at_risk", {})
+    if nii_risk.get("has_data"):
+        wc = nii_risk.get("worst_case", {})
+        nii_risk_lim = next((i for i in lim_items if i["metric"] == "nii_at_risk_worst"), None)
+        metrics.append({
+            "metric": f"Worst ΔNII ({wc.get('scenario', '')})",
+            "value": wc.get("delta", 0),
+            "delta_1d": None,
+            "limit": nii_risk_lim["limit"] if nii_risk_lim else None,
+            "utilization": nii_risk_lim["utilization_pct"] if nii_risk_lim else None,
+            "status": nii_risk_lim["status"] if nii_risk_lim else "neutral",
+        })
+
+    # 4. Worst ΔEVE (BCBS scenarios)
+    eve = result.get("eve", {})
+    if eve.get("has_data"):
+        sc = eve.get("scenarios", {})
+        if sc:
+            eve_lim = next((i for i in lim_items if i["metric"] == "eve_change_worst"), None)
+            metrics.append({
+                "metric": f"Worst ΔEVE ({sc.get('worst_scenario', '')})",
+                "value": sc.get("worst_delta", 0),
+                "delta_1d": None,
+                "limit": eve_lim["limit"] if eve_lim else None,
+                "utilization": eve_lim["utilization_pct"] if eve_lim else None,
+                "status": eve_lim["status"] if eve_lim else "neutral",
+            })
+
+        # 5. Effective Duration & DGAP
+        by_ccy = eve.get("by_currency", {})
+        conv = eve.get("convexity", {})
+        if conv:
+            eff_dur = conv.get("effective_duration", 0)
+            metrics.append({
+                "metric": "Effective Duration",
+                "value": eff_dur,
+                "delta_1d": None,
+                "limit": None,
+                "utilization": None,
+                "status": "green" if abs(eff_dur) < 3 else "yellow" if abs(eff_dur) < 5 else "red",
+                "unit": "Y",
+            })
+            # DGAP approximation: ΔEVE per 100bp / Total EVE gives duration sensitivity
+            total_eve = eve.get("total_eve", 0)
+            if total_eve and sc:
+                delta_eve_up = sc.get("parallel_up_delta", sc.get("worst_delta", 0))
+                dgap = abs(delta_eve_up) / abs(total_eve) / 0.02 if total_eve != 0 else 0
+                dgap_lim = next((i for i in lim_items if i["metric"] == "dgap"), None)
+                metrics.append({
+                    "metric": "DGAP (Duration Gap)",
+                    "value": round(dgap, 2),
+                    "delta_1d": None,
+                    "limit": dgap_lim["limit"] if dgap_lim else None,
+                    "utilization": dgap_lim["utilization_pct"] if dgap_lim else None,
+                    "status": dgap_lim["status"] if dgap_lim else ("green" if dgap < 2 else "yellow" if dgap < 4 else "red"),
+                    "unit": "Y",
+                })
+        elif by_ccy:
+            total_dur = sum(d["duration"] * abs(d["eve"]) for d in by_ccy.values()) / max(sum(abs(d["eve"]) for d in by_ccy.values()), 1e-6)
+            metrics.append({
+                "metric": "Portfolio Duration",
+                "value": round(total_dur, 2),
+                "delta_1d": None,
+                "limit": None,
+                "utilization": None,
+                "status": "neutral",
+                "unit": "Y",
+            })
+
+    # 6. HHI (counterparty concentration)
+    cpty = result.get("counterparty_pnl", {})
+    if cpty.get("has_data"):
+        metrics.append({
+            "metric": "Counterparty HHI",
+            "value": cpty.get("hhi", 0),
+            "delta_1d": None,
+            "limit": None,
+            "utilization": None,
+            "status": "green" if cpty.get("hhi", 0) < 1500 else "yellow" if cpty.get("hhi", 0) < 2500 else "red",
+        })
+
+    # 7. Hedge effectiveness
+    hedge = result.get("hedge", {})
+    if hedge.get("has_data"):
+        h_sum = hedge.get("summary", {})
+        failing = h_sum.get("fail", 0)
+        total_pairs = h_sum.get("total", 0)
+        metrics.append({
+            "metric": "Hedge Pairs Failing",
+            "value": failing,
+            "delta_1d": None,
+            "limit": 0,
+            "utilization": None,
+            "status": "red" if failing > 0 else "green",
+            "display": f"{failing}/{total_pairs}",
+        })
+
+    # 8. Liquidity 30d
+    liq = result.get("liquidity", {})
+    if liq.get("has_data"):
+        liq_sum = liq.get("summary", {})
+        metrics.append({
+            "metric": "Liquidity Net 30d",
+            "value": liq_sum.get("net_30d", 0),
+            "delta_1d": None,
+            "limit": None,
+            "utilization": None,
+            "status": "red" if liq_sum.get("net_30d", 0) < 0 else "green",
+        })
+
+    # 9. FTP ALM Margin
+    ftp = result.get("ftp", {})
+    if ftp.get("has_data"):
+        metrics.append({
+            "metric": "ALM Margin (FTP)",
+            "value": ftp["totals"].get("alm_margin", 0),
+            "delta_1d": None,
+            "limit": None,
+            "utilization": None,
+            "status": "red" if ftp["totals"].get("alm_margin", 0) < 0 else "green",
+        })
+
+    # 10. Alert counts
+    alerts = result.get("pnl_alerts", {})
+    if alerts.get("has_data"):
+        a_sum = alerts.get("summary", {})
+        metrics.append({
+            "metric": "Active Alerts",
+            "value": a_sum.get("critical", 0) + a_sum.get("high", 0) + a_sum.get("medium", 0),
+            "delta_1d": None,
+            "limit": None,
+            "utilization": None,
+            "status": "red" if a_sum.get("critical", 0) > 0 else "yellow" if a_sum.get("high", 0) > 0 else "green",
+            "display": f"{a_sum.get('critical', 0)}C / {a_sum.get('high', 0)}H / {a_sum.get('medium', 0)}M",
+        })
+
+    return {"has_data": len(metrics) > 0, "metrics": metrics}
 
 
 # ---------------------------------------------------------------------------
@@ -908,6 +1837,10 @@ def build_pnl_dashboard_data(
     limits: Optional[pd.DataFrame] = None,
     # P&L Explain
     pnl_explain: Optional[dict] = None,
+    # Liquidity & FTP
+    liquidity_schedule: Optional[pd.DataFrame] = None,
+    # NMD profiles (for audit trail)
+    nmd_profiles: Optional[pd.DataFrame] = None,
 ) -> dict:
     """Build all chart data for the P&L dashboard."""
     df = _safe_stacked(pnl_all_s)
@@ -915,7 +1848,7 @@ def build_pnl_dashboard_data(
 
     result = {
         # Original 7 tabs
-        "summary": _build_summary(df, dr),
+        "summary": _build_summary(df, dr, _safe_stacked(prev_pnl_all_s) if prev_pnl_all_s is not None else None),
         "coc": _build_coc(df),
         "pnl_series": _build_pnl_series(df, dr),
         "sensitivity": _build_sensitivity(df),
@@ -929,19 +1862,74 @@ def build_pnl_dashboard_data(
         "pnl_alerts": _build_pnl_alerts(df, alert_thresholds),
         # Wave 2
         "budget": _build_budget(df, budget),
-        "hedge": _build_hedge_effectiveness(df, hedge_pairs, pnl_by_deal),
+        "hedge": _build_hedge_effectiveness(df, hedge_pairs, pnl_by_deal, scenarios_data),
         # Wave 3 (placeholders)
         "nii_at_risk": _build_nii_at_risk(df, scenarios_data),
         "forecast_tracking": _build_forecast_tracking(forecast_history),
         "attribution": _build_attribution(df, prev_pnl_all_s, pnl_explain),
         # EVE (Phase 2)
-        "eve": _build_eve(eve_results, eve_scenarios, eve_krd),
+        "eve": _build_eve(eve_results, eve_scenarios, eve_krd, limits),
+        # FTP & Liquidity
+        "ftp": _build_ftp(df, deals, pnl_by_deal, date_run=date_run),
+        "liquidity": _build_liquidity(liquidity_schedule, deals),
+        # NMD audit trail
+        "nmd_audit": _build_nmd_audit(deals, nmd_profiles),
     }
 
     # Limit utilization (needs eve + nii_at_risk computed first)
     result["limits"] = _build_limit_utilization(
         df, limits, result["eve"], result["nii_at_risk"],
     )
+
+    # Inject FTP & liquidity alerts into existing alerts tab
+    extra_alerts = []
+    if result["liquidity"].get("has_data"):
+        liq_sum = result["liquidity"]["summary"]
+        if liq_sum.get("survival_days") is not None:
+            extra_alerts.append({
+                "type": "liquidity_deficit",
+                "severity": "critical",
+                "metric": "Liquidity Survival",
+                "current": liq_sum["survival_days"],
+                "threshold": 0,
+                "message": f"Cumulative liquidity deficit in {liq_sum['survival_days']} days",
+                "recommendation": "Review funding maturities and arrange contingent liquidity",
+            })
+        if liq_sum.get("net_30d", 0) < 0:
+            extra_alerts.append({
+                "type": "liquidity_30d",
+                "severity": "high",
+                "metric": "30-Day Net Outflow",
+                "current": round(float(liq_sum["net_30d"]), 0),
+                "threshold": 0,
+                "message": f"Net cash outflow of {liq_sum['net_30d']:,.0f} in next 30 days",
+                "recommendation": "Secure funding to cover upcoming maturities",
+            })
+
+    if result["ftp"].get("has_data"):
+        ftp_totals = result["ftp"]["totals"]
+        if ftp_totals.get("alm_margin", 0) < 0:
+            extra_alerts.append({
+                "type": "ftp_alm_negative",
+                "severity": "high",
+                "metric": "ALM Margin (FTP - OIS)",
+                "current": round(float(ftp_totals["alm_margin"]), 0),
+                "threshold": 0,
+                "message": f"ALM margin is negative ({ftp_totals['alm_margin']:,.0f}): FTP below market funding cost",
+                "recommendation": "Review FTP methodology or adjust transfer pricing rates",
+            })
+
+    if extra_alerts:
+        alerts_data = result["pnl_alerts"]
+        alerts_data["alerts"].extend(extra_alerts)
+        alerts_data["has_data"] = True
+        for a in extra_alerts:
+            sev = a.get("severity", "medium")
+            if sev in alerts_data["summary"]:
+                alerts_data["summary"][sev] += 1
+
+    # ALCO risk summary (reads from all other computed results)
+    result["alco"] = _build_alco(result)
 
     return result
 
@@ -1009,6 +1997,7 @@ def _build_hedge_effectiveness(
     df: pd.DataFrame,
     hedge_pairs: Optional[pd.DataFrame] = None,
     pnl_by_deal: Optional[pd.DataFrame] = None,
+    scenarios_data: Optional[pd.DataFrame] = None,
 ) -> dict:
     """Hedge effectiveness per pair.
 
@@ -1090,10 +2079,45 @@ def _build_hedge_effectiveness(
             "instrument_pnl": round(float(cum_instrument), 0),
         })
 
+    # --- Scenario cross-reference: hedge effectiveness under stress ---
+    scenario_xref = []
+    if scenarios_data is not None and isinstance(scenarios_data, pd.DataFrame) and not scenarios_data.empty:
+        sc_df = scenarios_data.copy()
+        if isinstance(sc_df.index, pd.MultiIndex):
+            sc_df = sc_df.reset_index()
+        sc_pnl = sc_df[sc_df["Indice"] == "PnL"] if "Indice" in sc_df.columns else sc_df
+        if "Shock" in sc_pnl.columns and "Dealid" in sc_pnl.columns:
+            scenarios_list = sorted(sc_pnl["Shock"].unique())
+            for pair_info in pairs:
+                pair_row_match = hedge_pairs[
+                    hedge_pairs.get("pair_id", hedge_pairs.index).astype(str) == pair_info["pair_id"]
+                ]
+                if pair_row_match.empty:
+                    continue
+                pr = pair_row_match.iloc[0]
+                hedged_ids = _parse_deal_ids(pr.get("hedged_item_deal_ids", ""))
+                instrument_ids = _parse_deal_ids(pr.get("hedging_instrument_deal_ids", ""))
+
+                for sc in scenarios_list:
+                    sc_slice = sc_pnl[sc_pnl["Shock"] == sc]
+                    h_pnl = float(sc_slice[sc_slice["Dealid"].isin(hedged_ids)]["Value"].sum()) if "Value" in sc_slice.columns else 0
+                    i_pnl = float(sc_slice[sc_slice["Dealid"].isin(instrument_ids)]["Value"].sum()) if "Value" in sc_slice.columns else 0
+                    ratio = (i_pnl / h_pnl) if abs(h_pnl) > 0 else 0.0
+                    net = h_pnl + i_pnl
+                    scenario_xref.append({
+                        "pair_name": pair_info["pair_name"],
+                        "scenario": sc,
+                        "hedged_pnl": round(h_pnl, 0),
+                        "instrument_pnl": round(i_pnl, 0),
+                        "net_pnl": round(net, 0),
+                        "ratio": round(ratio, 4),
+                    })
+
     return {
         "has_data": len(pairs) > 0,
         "pairs": pairs,
         "summary": {"pass": n_pass, "fail": n_fail, "total": n_pass + n_fail},
+        "scenario_xref": scenario_xref,
     }
 
 
@@ -1168,6 +2192,30 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
     # Worst case
     worst = min(tornado, key=lambda x: x["nii"]) if tornado else {}
 
+    # --- Parametric Earnings-at-Risk ---
+    # Approximate EaR from scenario deltas: assume normal distribution of NII outcomes
+    ear = None
+    if len(tornado) >= 3 and base_total != 0:
+        deltas = [t["delta"] for t in tornado]
+        mean_delta = float(np.mean(deltas))
+        std_delta = float(np.std(deltas, ddof=0))
+        if std_delta > 0:
+            # 95% and 99% VaR (1-sided)
+            ear_95 = mean_delta - 1.645 * std_delta
+            ear_99 = mean_delta - 2.326 * std_delta
+            ear = {
+                "mean_delta": round(mean_delta, 0),
+                "std_delta": round(std_delta, 0),
+                "ear_95": round(ear_95, 0),
+                "ear_99": round(ear_99, 0),
+                "ear_95_pct": round(ear_95 / abs(base_total) * 100, 2) if base_total else 0,
+                "ear_99_pct": round(ear_99 / abs(base_total) * 100, 2) if base_total else 0,
+                "n_scenarios": len(tornado),
+                "min_delta": round(float(min(deltas)), 0),
+                "max_delta": round(float(max(deltas)), 0),
+                "scenario_nii": [{"scenario": t["scenario"], "nii": t["nii"], "delta": t["delta"]} for t in tornado],
+            }
+
     return {
         "has_data": True,
         "scenarios": scenarios,
@@ -1176,6 +2224,7 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
         "tornado": tornado,
         "worst_case": worst,
         "base_total": round(base_total, 0),
+        "ear": ear,
     }
 
 
@@ -1240,6 +2289,7 @@ def _build_attribution(
     by_currency = {}
     total_rate = 0
     total_volume = 0
+    total_cross = 0
 
     for ccy in currencies:
         nom_old = prev_nom.get(ccy, 0)
@@ -1249,6 +2299,7 @@ def _build_attribution(
 
         rate_effect = nom_old * (rate_new - rate_old)
         volume_effect = (nom_new - nom_old) * rate_old
+        cross_term = (nom_new - nom_old) * (rate_new - rate_old)
 
         by_currency[ccy] = {
             "ois_prev": round(float(rate_old) * 10000, 1),
@@ -1258,16 +2309,18 @@ def _build_attribution(
         }
         total_rate += rate_effect
         total_volume += volume_effect
+        total_cross += cross_term
 
     prev_total = float(prev_pnl.sum())
     curr_total = float(curr_pnl.sum())
-    residual = (curr_total - prev_total) - total_rate - total_volume
+    residual = (curr_total - prev_total) - total_rate - total_volume - total_cross
 
     waterfall = [
         {"label": "Prev NII", "value": round(prev_total, 0), "type": "base"},
         {"label": "Rate Effect", "value": round(float(total_rate), 0), "type": "effect"},
         {"label": "Volume Effect", "value": round(float(total_volume), 0), "type": "effect"},
-        {"label": "Other", "value": round(float(residual), 0), "type": "effect"},
+        {"label": "Rate\u00d7Volume", "value": round(float(total_cross), 0), "type": "effect"},
+        {"label": "Residual", "value": round(float(residual), 0), "type": "effect"},
         {"label": "Current NII", "value": round(curr_total, 0), "type": "total"},
     ]
 

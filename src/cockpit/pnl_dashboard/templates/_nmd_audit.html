@@ -1,0 +1,238 @@
+<!-- Tab: NMD Audit Trail -->
+<div id="tab-nmd-audit" class="tab-content">
+{% if has_nmd_audit %}
+<h2>NMD Behavioral Model &mdash; Audit Trail</h2>
+
+<!-- KPI Cards -->
+<div class="grid-4" style="margin-bottom: 16px;">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Deals</div>
+    <div class="kpi-value">{{ nmd_audit.total_deals }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">NMD Matched</div>
+    <div class="kpi-value" style="color: var(--accent-green);">{{ nmd_audit.matched_deals }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Unmatched</div>
+    <div class="kpi-value" style="color: var(--text-secondary);">{{ nmd_audit.unmatched_deals }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Coverage</div>
+    <div class="kpi-value">
+      {% if nmd_audit.total_deals > 0 %}
+        {{ "%.1f"|format(nmd_audit.matched_deals / nmd_audit.total_deals * 100) }}%
+      {% else %}
+        &mdash;
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <!-- Tier Summary Table -->
+  <div class="card">
+    <h3>Summary by Tier</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Deals</th>
+          <th>Total Nominal</th>
+          <th>Avg Decay Rate</th>
+          <th>Avg Beta</th>
+          <th>Avg Behav. Maturity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in nmd_audit.tier_summary %}
+        <tr>
+          <td>
+            <span style="color:
+              {% if row.tier == 'CORE' %}var(--accent-green)
+              {% elif row.tier == 'VOLATILE' %}var(--accent-yellow)
+              {% else %}var(--accent-blue){% endif %};
+              font-weight: 600;">{{ row.tier }}</span>
+          </td>
+          <td>{{ row.deal_count }}</td>
+          <td>{{ "{:,.0f}".format(row.total_nominal) }}</td>
+          <td>{{ "%.3f"|format(row.avg_decay_rate) }}</td>
+          <td>{{ "%.2f"|format(row.avg_beta) }}</td>
+          <td>{{ "%.1f"|format(row.avg_behavioral_maturity) }}Y</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Nominal by Currency × Tier Chart -->
+  <div class="card">
+    <h3>NMD Nominal by Currency &times; Tier</h3>
+    <canvas id="nmdTierChart" height="250"></canvas>
+  </div>
+</div>
+
+<!-- Currency × Tier Breakdown -->
+{% if nmd_audit.ccy_tier_summary %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Currency &times; Tier Detail</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Currency</th>
+        <th>Tier</th>
+        <th>Deals</th>
+        <th>Total Nominal</th>
+        <th>Avg Beta</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in nmd_audit.ccy_tier_summary %}
+      <tr>
+        <td>{{ row.currency }}</td>
+        <td>
+          <span style="color:
+            {% if row.tier == 'CORE' %}var(--accent-green)
+            {% elif row.tier == 'VOLATILE' %}var(--accent-yellow)
+            {% else %}var(--accent-blue){% endif %};">{{ row.tier }}</span>
+        </td>
+        <td>{{ row.deal_count }}</td>
+        <td>{{ "{:,.0f}".format(row.total_nominal) }}</td>
+        <td>{{ "%.2f"|format(row.avg_beta) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Profile Definitions -->
+{% if nmd_audit.profiles %}
+<div class="card" style="margin-top: 16px;">
+  <h3>NMD Profile Definitions</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th>Currency</th>
+        <th>Direction</th>
+        <th>Tier</th>
+        <th>Decay Rate</th>
+        <th>Deposit Beta</th>
+        <th>Floor Rate</th>
+        <th>Behav. Maturity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in nmd_audit.profiles %}
+      <tr>
+        <td>{{ p.product }}</td>
+        <td>{{ p.currency }}</td>
+        <td>{{ p.direction }}</td>
+        <td>
+          <span style="color:
+            {% if p.tier|upper == 'CORE' %}var(--accent-green)
+            {% elif p.tier|upper == 'VOLATILE' %}var(--accent-yellow)
+            {% else %}var(--accent-blue){% endif %};
+            font-weight: 600;">{{ p.tier }}</span>
+        </td>
+        <td>{{ "%.3f"|format(p.decay_rate) }}</td>
+        <td>{{ "%.2f"|format(p.deposit_beta) }}</td>
+        <td>{{ "%.2f"|format(p.floor_rate * 100) }}%</td>
+        <td>{{ "%.1f"|format(p.behavioral_maturity_years) }}Y</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Deal-Level Detail (first 50) -->
+{% if nmd_audit.deal_details %}
+<div class="card" style="margin-top: 16px;">
+  <h3>Deal-Level Matching (first {{ nmd_audit.deal_details|length }})</h3>
+  <div style="max-height: 400px; overflow-y: auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Deal ID</th>
+        <th>Product</th>
+        <th>Currency</th>
+        <th>Direction</th>
+        <th>Nominal</th>
+        <th>Tier</th>
+        <th>Decay</th>
+        <th>Beta</th>
+        <th>Floor</th>
+        <th>Behav. Mat.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in nmd_audit.deal_details %}
+      <tr>
+        <td style="font-family: monospace; font-size: 0.8rem;">{{ d.deal_id }}</td>
+        <td>{{ d.product }}</td>
+        <td>{{ d.currency }}</td>
+        <td>{{ d.direction }}</td>
+        <td>{{ "{:,.0f}".format(d.nominal) }}</td>
+        <td>
+          <span style="color:
+            {% if d.tier == 'CORE' %}var(--accent-green)
+            {% elif d.tier == 'VOLATILE' %}var(--accent-yellow)
+            {% else %}var(--accent-blue){% endif %};
+            font-weight: 600;">{{ d.tier }}</span>
+        </td>
+        <td>{{ "%.3f"|format(d.decay_rate) }}</td>
+        <td>{{ "%.2f"|format(d.deposit_beta) }}</td>
+        <td>{{ "%.2f"|format(d.floor_rate * 100) }}%</td>
+        <td>{{ "%.1f"|format(d.behavioral_maturity_years) }}Y</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+<p class="footnote" style="margin-top: 12px; color: var(--text-secondary); font-size: 0.75rem;">
+  NMD behavioral model: nominal(t) = nominal(0) &times; exp(-decay &times; t). Deposit beta: effective_rate = floor + &beta; &times; max(0, OIS - floor).
+</p>
+
+<script>
+(function() {
+  {% if nmd_audit.chart and nmd_audit.chart.currencies %}
+  var nmdDatasets = [];
+  {% for ds in nmd_audit.chart.datasets %}
+  nmdDatasets.push({
+    label: {{ ds.label | tojson_safe }},
+    data: {{ ds.data | tojson_safe }},
+    backgroundColor: {{ ds.color | tojson_safe }} + 'cc',
+    borderWidth: 0,
+    borderRadius: 3,
+  });
+  {% endfor %}
+  new Chart(document.getElementById('nmdTierChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ nmd_audit.chart.currencies | tojson_safe }},
+      datasets: nmdDatasets,
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#e6edf3' } } },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: '#e6edf3' } },
+        y: { stacked: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' }, title: { display: true, text: 'Nominal', color: '#8b949e' } },
+      }
+    }
+  });
+  {% endif %}
+})();
+</script>
+
+{% else %}
+<div class="card" style="text-align: center; padding: 48px;">
+  <p style="color: var(--text-secondary);">No NMD profiles loaded. Place an <code>nmd_profiles.xlsx</code> file in the input directory.</p>
+</div>
+{% endif %}
+</div>

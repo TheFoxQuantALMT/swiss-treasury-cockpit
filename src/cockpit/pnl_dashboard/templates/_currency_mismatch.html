@@ -89,6 +89,49 @@
   })();
   </script>
 
+  <!-- Basis Risk: Cross-Currency OIS Spread -->
+  {% if currency_mismatch.basis_risk %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Basis Risk &mdash; Cross-Currency OIS Spread (bps)</h3>
+    <div class="chart-container chart-sm">
+      <canvas id="chart-basis-risk"></canvas>
+    </div>
+    <p class="footnote">OIS forward rate spread vs CHF. Widening spread = increased cross-currency funding cost.</p>
+  </div>
+  <script>
+  (function() {
+    const basis = {{ currency_mismatch.basis_risk | tojson_safe }};
+    const months = {{ currency_mismatch.months | tojson_safe }};
+    const ctx = document.getElementById('chart-basis-risk');
+    if (!ctx || typeof Chart === 'undefined' || !Object.keys(basis).length) return;
+    const datasets = [];
+    for (const [pair, d] of Object.entries(basis)) {
+      datasets.push({
+        label: pair,
+        data: d.values,
+        borderColor: d.color,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.3,
+      });
+    }
+    new Chart(ctx, {
+      type: 'line',
+      data: { labels: months, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#e6edf3' } } },
+        scales: {
+          x: { ticks: { color: '#8b949e', maxRotation: 45 } },
+          y: { title: { display: true, text: 'Spread (bps)', color: '#8b949e' }, ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
+        }
+      }
+    });
+  })();
+  </script>
+  {% endif %}
+
   {% else %}
   <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
     <p>No currency mismatch data available.</p>

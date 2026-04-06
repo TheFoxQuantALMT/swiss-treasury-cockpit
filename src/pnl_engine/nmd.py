@@ -32,7 +32,7 @@ def apply_nmd_decay(
     nominal_daily: np.ndarray,
     days: pd.DatetimeIndex,
     date_run: datetime,
-) -> np.ndarray:
+) -> tuple[np.ndarray, list[dict]]:
     """Replace contractual nominal schedule with behavioral decay profile.
 
     For NMD deals (matched by product/currency/direction/tier):
@@ -50,10 +50,11 @@ def apply_nmd_decay(
         date_run: Reference date.
 
     Returns:
-        Modified nominal_daily with behavioral decay applied to NMD deals.
+        Tuple of (modified nominal_daily, match_log) where match_log is a list
+        of dicts with deal-level NMD matching details for audit trail.
     """
     if nmd_profiles is None or nmd_profiles.empty:
-        return nominal_daily
+        return nominal_daily, []
 
     result = nominal_daily.copy()
     date_run_ts = pd.Timestamp(date_run)
@@ -67,10 +68,14 @@ def apply_nmd_decay(
             profiles[col] = profiles[col].str.strip().str.upper()
 
     matched_count = 0
+    match_log: list[dict] = []
+
     for i in range(len(deals)):
-        product = str(deals.iloc[i].get("Product", "")).strip().upper()
-        currency = str(deals.iloc[i].get("Currency", "")).strip().upper()
-        direction = str(deals.iloc[i].get("Direction", "")).strip().upper()
+        deal = deals.iloc[i]
+        deal_id = str(deal.get("Dealid", f"idx_{i}"))
+        product = str(deal.get("Product", "")).strip().upper()
+        currency = str(deal.get("Currency", "")).strip().upper()
+        direction = str(deal.get("Direction", "")).strip().upper()
 
         # Match against NMD profiles
         mask = pd.Series([True] * len(profiles))
@@ -87,9 +92,20 @@ def apply_nmd_decay(
 
         # Use the first matching profile (could be core/volatile — use weighted if multiple)
         profile = matched.iloc[0]
+        tier = str(profile.get("tier", "unknown"))
         decay_rate = float(profile.get("decay_rate", 0.0))
+        deposit_beta = float(profile.get("deposit_beta", 1.0))
+        floor_rate = float(profile.get("floor_rate", 0.0))
+        behavioral_maturity = float(profile.get("behavioral_maturity_years", 0.0))
 
         if decay_rate <= 0:
+            match_log.append({
+                "deal_id": deal_id, "product": product, "currency": currency,
+                "direction": direction, "tier": tier, "decay_rate": 0.0,
+                "deposit_beta": deposit_beta, "floor_rate": floor_rate,
+                "behavioral_maturity_years": behavioral_maturity,
+                "applied": False, "reason": "decay_rate <= 0",
+            })
             continue
 
         # Get initial nominal (first non-zero value)
@@ -98,6 +114,13 @@ def apply_nmd_decay(
             # Find first non-zero
             nonzero = np.nonzero(nominal_daily[i])[0]
             if len(nonzero) == 0:
+                match_log.append({
+                    "deal_id": deal_id, "product": product, "currency": currency,
+                    "direction": direction, "tier": tier, "decay_rate": decay_rate,
+                    "deposit_beta": deposit_beta, "floor_rate": floor_rate,
+                    "behavioral_maturity_years": behavioral_maturity,
+                    "applied": False, "reason": "zero_nominal",
+                })
                 continue
             initial_nominal = nominal_daily[i, nonzero[0]]
 
@@ -109,8 +132,17 @@ def apply_nmd_decay(
         result[i] = np.where(alive, np.sign(nominal_daily[i]) * np.abs(decayed), 0.0)
         matched_count += 1
 
+        match_log.append({
+            "deal_id": deal_id, "product": product, "currency": currency,
+            "direction": direction, "tier": tier, "decay_rate": decay_rate,
+            "deposit_beta": deposit_beta, "floor_rate": floor_rate,
+            "behavioral_maturity_years": behavioral_maturity,
+            "initial_nominal": float(initial_nominal),
+            "applied": True, "reason": "ok",
+        })
+
     logger.info("apply_nmd_decay: applied to %d / %d deals", matched_count, len(deals))
-    return result
+    return result, match_log
 
 
 def apply_deposit_beta(

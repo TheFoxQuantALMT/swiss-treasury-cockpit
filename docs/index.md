@@ -24,7 +24,7 @@ The system consolidates two internal projects:
 | [Portfolio Snapshot](portfolio-snapshot.md) | Liquidity ladder, positions, counterparty exposure |
 | [Data Ingestion](data-ingestion.md) | Fetchers, parsers, DataManager, circuit breakers |
 | [LLM Agents](llm-agents.md) | Analyst, reviewer, reporter -- daily brief generation |
-| [Rendering](rendering.md) | Jinja2 templates, Plotly charts, 5-tab dashboard |
+| [Rendering](rendering.md) | Jinja2 templates, 5-tab macro cockpit + 21-tab P&L dashboard |
 | [Configuration](configuration.md) | All constants, thresholds, mappings |
 | [Testing](testing.md) | Test structure, fixtures, running tests |
 | [Regulatory Reference](regulatory-reference.md) | ISDA, IFRS 9, BCBS 368, FINMA standards applied |

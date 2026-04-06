@@ -97,6 +97,48 @@
   })();
   </script>
 
+  <!-- Parametric Earnings-at-Risk (indicative) -->
+  {% if nii_at_risk.ear %}
+  <div class="card" style="margin-top: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">Parametric Earnings-at-Risk (EaR) &mdash; <span style="color: var(--accent-yellow);">Indicative</span></h3>
+    <div class="grid-4" style="margin-bottom: 12px;">
+      <div class="kpi-card">
+        <div class="kpi-label">Scenario Range</div>
+        <div class="kpi-value">
+          <span class="negative">{{ "{:,.0f}".format(nii_at_risk.ear.min_delta) }}</span>
+          <span style="color: var(--text-secondary); font-size: 0.85rem;"> to </span>
+          <span class="positive">{{ "{:+,.0f}".format(nii_at_risk.ear.max_delta) }}</span>
+        </div>
+        <div class="sub">{{ nii_at_risk.ear.n_scenarios }} BCBS scenarios</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Mean &Delta;NII / Std Dev</div>
+        <div class="kpi-value {{ 'negative' if nii_at_risk.ear.mean_delta < 0 else 'positive' }}">
+          {{ "{:,.0f}".format(nii_at_risk.ear.mean_delta) }}
+        </div>
+        <div class="sub">&sigma; = {{ "{:,.0f}".format(nii_at_risk.ear.std_delta) }}</div>
+      </div>
+      <div class="kpi-card" style="border-left: 3px solid var(--accent-orange);">
+        <div class="kpi-label">EaR 95% (1.645&sigma;)</div>
+        <div class="kpi-value negative">{{ "{:,.0f}".format(nii_at_risk.ear.ear_95) }}</div>
+        <div class="sub">{{ nii_at_risk.ear.ear_95_pct }}% of base NII</div>
+      </div>
+      <div class="kpi-card" style="border-left: 3px solid var(--accent-red);">
+        <div class="kpi-label">EaR 99% (2.326&sigma;)</div>
+        <div class="kpi-value negative">{{ "{:,.0f}".format(nii_at_risk.ear.ear_99) }}</div>
+        <div class="sub">{{ nii_at_risk.ear.ear_99_pct }}% of base NII</div>
+      </div>
+    </div>
+    <p style="font-size: 0.75rem; color: var(--accent-yellow); margin-bottom: 4px;">
+      &#9888; Indicative only — parametric EaR from {{ nii_at_risk.ear.n_scenarios }} discrete scenarios is statistically limited.
+    </p>
+    <p style="font-size: 0.75rem; color: var(--text-secondary);">
+      EaR = &mu; &minus; z&sigma; assuming normal distribution. For robust tail risk, use historical simulation with full curve time series.
+      Observed scenario &Delta;NII range: {{ "{:,.0f}".format(nii_at_risk.ear.min_delta) }} to {{ "{:+,.0f}".format(nii_at_risk.ear.max_delta) }}.
+    </p>
+  </div>
+  {% endif %}
+
   <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 12px;">
     BCBS 368 standard interest rate shock scenarios: parallel &plusmn;200bp, short-rate &plusmn;300bp, steepener, flattener.
     NII impact computed over 12-month horizon. Tornado shows delta from base (shock=0) NII.

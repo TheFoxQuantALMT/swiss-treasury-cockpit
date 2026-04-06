@@ -44,6 +44,8 @@ def render_pnl_dashboard(
     eve_krd: Optional[pd.DataFrame] = None,
     limits: Optional[pd.DataFrame] = None,
     pnl_explain: Optional[dict] = None,
+    liquidity_schedule: Optional[pd.DataFrame] = None,
+    nmd_profiles: Optional[pd.DataFrame] = None,
 ) -> Path:
     """Render the P&L dashboard HTML from engine output.
 
@@ -95,6 +97,8 @@ def render_pnl_dashboard(
         eve_krd=eve_krd,
         limits=limits,
         pnl_explain=pnl_explain,
+        liquidity_schedule=liquidity_schedule,
+        nmd_profiles=nmd_profiles,
     )
 
     context = {
@@ -137,6 +141,17 @@ def render_pnl_dashboard(
         # Limits
         "limits": data["limits"],
         "has_limits": data["limits"].get("has_data", False),
+        # FTP & Liquidity
+        "ftp": data["ftp"],
+        "has_ftp": data["ftp"].get("has_data", False),
+        "liquidity": data["liquidity"],
+        "has_liquidity": data["liquidity"].get("has_data", False),
+        # NMD audit trail
+        "nmd_audit": data["nmd_audit"],
+        "has_nmd_audit": data["nmd_audit"].get("has_data", False),
+        # ALCO risk summary
+        "alco": data["alco"],
+        "has_alco": data["alco"].get("has_data", False),
     }
 
     template = env.get_template("pnl_dashboard.html")

@@ -81,8 +81,8 @@ td:first-child, th:first-child { text-align: left; }
   border-radius: 8px; padding: 16px;
   text-align: center;
 }
-.kpi-card .value { font-size: 1.5rem; font-weight: 700; }
-.kpi-card .label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px; }
+.kpi-card .value, .kpi-card .kpi-value { font-size: 1.5rem; font-weight: 700; }
+.kpi-card .label, .kpi-card .kpi-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 4px; }
 .kpi-card .sub { font-size: 0.7rem; color: var(--text-secondary); margin-top: 4px; }
 .positive { color: var(--accent-green); }
 .negative { color: var(--accent-red); }
@@ -103,14 +103,20 @@ canvas { max-width: 100%; }
 .ctrl-btn.active { color: var(--accent-blue); border-color: var(--accent-blue); }
 .footnote { font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px; font-style: italic; }
 @media print {
-  body { background: #fff; color: #000; }
+  body { background: #fff; color: #000; font-size: 10pt; }
   .tabs { display: none; }
-  .tab-content { display: block !important; page-break-before: always; }
+  .tab-content { display: block !important; page-break-before: always; page-break-inside: avoid; }
+  .tab-content:first-of-type { page-break-before: avoid; }
   .header { background: #fff; border-bottom: 2px solid #000; }
-  .card { border-color: #ccc; }
+  .card { border-color: #ccc; page-break-inside: avoid; }
   .kpi-card { border-color: #ccc; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
   th { background: #f0f0f0; color: #333; }
-  .ctrl-btn { display: none; }
+  .ctrl-btn, .controls { display: none; }
+  .chart-container { height: 250px !important; page-break-inside: avoid; }
+  .positive { color: #006600; }
+  .negative { color: #cc0000; }
+  table { font-size: 9pt; }
 }
 </style>
 </head>
@@ -122,31 +128,39 @@ canvas { max-width: 100%; }
 </div>
 
 <div class="tabs">
+  <!-- ALCO -->
+  <button class="tab-btn" onclick="switchTab('alco', event)">ALCO</button>
   <!-- NII Core -->
-  <button class="tab-btn active" onclick="switchTab('summary')">Summary</button>
-  <button class="tab-btn" onclick="switchTab('coc')">CoC Decomposition</button>
-  <button class="tab-btn" onclick="switchTab('pnl-series')">P&amp;L Series</button>
-  <button class="tab-btn" onclick="switchTab('sensitivity')">Shock Sensitivity</button>
+  <button class="tab-btn active" onclick="switchTab('summary', event)">Summary</button>
+  <button class="tab-btn" onclick="switchTab('coc', event)">CoC Decomposition</button>
+  <button class="tab-btn" onclick="switchTab('pnl-series', event)">P&amp;L Series</button>
+  <button class="tab-btn" onclick="switchTab('sensitivity', event)">Shock Sensitivity</button>
   <!-- Risk -->
-  <button class="tab-btn" onclick="switchTab('eve')">EVE</button>
-  <button class="tab-btn" onclick="switchTab('nii-at-risk')">NII-at-Risk</button>
-  <button class="tab-btn" onclick="switchTab('repricing-gap')">Repricing Gap</button>
-  <button class="tab-btn" onclick="switchTab('currency-mismatch')">FX Mismatch</button>
+  <button class="tab-btn" onclick="switchTab('eve', event)">EVE</button>
+  <button class="tab-btn" onclick="switchTab('nii-at-risk', event)">NII-at-Risk</button>
+  <button class="tab-btn" onclick="switchTab('repricing-gap', event)">Repricing Gap</button>
+  <button class="tab-btn" onclick="switchTab('currency-mismatch', event)">FX Mismatch</button>
+  <button class="tab-btn" onclick="switchTab('nmd-audit', event)">NMD Audit</button>
   <!-- Attribution -->
-  <button class="tab-btn" onclick="switchTab('budget')">Budget vs Actual</button>
-  <button class="tab-btn" onclick="switchTab('attribution')">P&amp;L Attribution</button>
-  <button class="tab-btn" onclick="switchTab('forecast-tracking')">Forecast Tracking</button>
+  <button class="tab-btn" onclick="switchTab('budget', event)">Budget vs Actual</button>
+  <button class="tab-btn" onclick="switchTab('attribution', event)">P&amp;L Attribution</button>
+  <button class="tab-btn" onclick="switchTab('forecast-tracking', event)">Forecast Tracking</button>
   <!-- Structure -->
-  <button class="tab-btn" onclick="switchTab('strategy')">Strategy IAS</button>
-  <button class="tab-btn" onclick="switchTab('counterparty')">Counterparty</button>
-  <button class="tab-btn" onclick="switchTab('hedge')">Hedge Effectiveness</button>
+  <button class="tab-btn" onclick="switchTab('strategy', event)">Strategy IAS</button>
+  <button class="tab-btn" onclick="switchTab('counterparty', event)">Counterparty</button>
+  <button class="tab-btn" onclick="switchTab('hedge', event)">Hedge Effectiveness</button>
+  <!-- FTP & Liquidity -->
+  <button class="tab-btn" onclick="switchTab('ftp', event)">FTP</button>
+  <button class="tab-btn" onclick="switchTab('liquidity', event)">Liquidity</button>
   <!-- Market -->
-  <button class="tab-btn" onclick="switchTab('book2')">BOOK2 MTM</button>
-  <button class="tab-btn" onclick="switchTab('curves')">Rate Curves</button>
+  <button class="tab-btn" onclick="switchTab('book2', event)">BOOK2 MTM</button>
+  <button class="tab-btn" onclick="switchTab('curves', event)">Rate Curves</button>
   <!-- Monitoring -->
-  <button class="tab-btn" onclick="switchTab('pnl-alerts')">Alerts</button>
+  <button class="tab-btn" onclick="switchTab('pnl-alerts', event)">Alerts</button>
 </div>
 
+<!-- ALCO -->
+{% include '_alco.html' %}
 <!-- NII Core -->
 {% include '_summary.html' %}
 {% include '_coc.html' %}
@@ -157,6 +171,7 @@ canvas { max-width: 100%; }
 {% include '_nii_at_risk.html' %}
 {% include '_repricing_gap.html' %}
 {% include '_currency_mismatch.html' %}
+{% include '_nmd_audit.html' %}
 <!-- Attribution -->
 {% include '_budget.html' %}
 {% include '_attribution.html' %}
@@ -165,6 +180,9 @@ canvas { max-width: 100%; }
 {% include '_strategy.html' %}
 {% include '_counterparty.html' %}
 {% include '_hedge.html' %}
+<!-- FTP & Liquidity -->
+{% include '_ftp.html' %}
+{% include '_liquidity.html' %}
 <!-- Market -->
 {% include '_book2.html' %}
 {% include '_curves.html' %}
@@ -172,11 +190,13 @@ canvas { max-width: 100%; }
 {% include '_pnl_alerts.html' %}
 
 <script>
-function switchTab(id) {
+function switchTab(id, evt) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + id).classList.add('active');
-  event.target.classList.add('active');
+  var tab = document.getElementById('tab-' + id);
+  if (tab) tab.classList.add('active');
+  var btn = (evt && evt.target) ? evt.target.closest('.tab-btn') : null;
+  if (btn) btn.classList.add('active');
 }
 function fmt(n) {
   if (n == null || isNaN(n)) return '—';
@@ -187,6 +207,40 @@ function fmtPct(n) {
   return Number(n).toFixed(4) + '%';
 }
 function valClass(n) { return n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'; }
+
+// CSV export for any table element
+function exportTableCsv(tableEl, filename) {
+  if (!tableEl) return;
+  var csv = [];
+  tableEl.querySelectorAll('tr').forEach(function(row) {
+    var cols = [];
+    row.querySelectorAll('th, td').forEach(function(cell) {
+      var text = cell.innerText.replace(/"/g, '""').replace(/\s+/g, ' ').trim();
+      cols.push('"' + text + '"');
+    });
+    csv.push(cols.join(','));
+  });
+  var blob = new Blob([csv.join('\n')], {type: 'text/csv;charset=utf-8;'});
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename || 'export.csv';
+  link.click();
+}
+
+// Add export buttons to all tables on load
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.tab-content table').forEach(function(tbl, idx) {
+    var tabEl = tbl.closest('.tab-content');
+    var tabName = tabEl ? tabEl.id.replace('tab-', '') : 'table';
+    var btn = document.createElement('button');
+    btn.className = 'ctrl-btn';
+    btn.style.cssText = 'float: right; margin: 4px 0; font-size: 0.7rem; padding: 3px 8px;';
+    btn.textContent = 'CSV';
+    btn.title = 'Export table to CSV';
+    btn.onclick = function() { exportTableCsv(tbl, tabName + '_' + idx + '.csv'); };
+    tbl.parentElement.insertBefore(btn, tbl);
+  });
+});
 </script>
 
 </body>

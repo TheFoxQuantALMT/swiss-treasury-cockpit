@@ -42,6 +42,7 @@ tests/
     test_invariants.py              Tier 2: Property invariant tests
     test_reconciliation.py          Tier 3: Cross-system reconciliation
 
+  test_pnl_dashboard.py              P&L dashboard chart builders (21 tabs)
   test_eve.py                       EVE computation, scenario ΔEVE, key rate durations
   test_nmd.py                       NMD decay profiles, deposit beta, behavioral maturity
   test_pnl_explain.py               P&L explain waterfall decomposition
@@ -188,6 +189,27 @@ Validates all 4 ideal-format input file parsers using generated mock Excel files
 | `TestLimitsParser` | 1 | Parser reads limits.xlsx correctly |
 | `TestAlertThresholdsParser` | 1 | Parser reads alert_thresholds.xlsx correctly |
 
+### P&L Dashboard (`test_pnl_dashboard.py`)
+
+| Test Class | Tests | Validates |
+|---|---|---|
+| `TestEmptyData` | 2 | All 21 tab keys present, summary returns empty KPIs |
+| `TestSummary` | 6 | KPI extraction, currency breakdown, top5 deals |
+| `TestCoc` | 4 | CoC decomposition, monthly series, totals |
+| `TestSensitivity` | 3 | Shock sensitivity matrix, currency heatmap |
+| `TestCurrencyMismatch` | 3 | Cross-currency NII exposure |
+| `TestRepricingGap` | 3 | Time-bucket repricing analysis |
+| `TestCounterparty` | 3 | Counterparty P&L concentration |
+| `TestAlerts` | 4 | Alert generation, threshold matching |
+| `TestBudget` | 3 | Budget vs actual comparison |
+| `TestHedge` | 3 | Hedge effectiveness, dollar offset, R² |
+| `TestNiiAtRisk` | 3 | Scenario NII, tornado, parametric EaR |
+| `TestEveChart` | 2 | EVE chart data, empty handling |
+| `TestFtp` | 3 | FTP margin split, perimeter aggregation |
+| `TestLiquidity` | 3 | Cash flow projection, survival horizon |
+| `TestAlco` | 2 | ALCO risk summary consolidation |
+| `TestNmdAudit` | 2 | NMD audit trail matching |
+
 ### P&L Explain (`test_pnl_explain.py`)
 
 | Test Class | Tests | Validates |
@@ -262,4 +284,4 @@ After code changes, verify:
 15. NMD decay reduces nominal over time, deposit beta reduces rate passthrough
 16. P&L explain waterfall reconciles: `Prev + effects = Current`
 17. Limit utilization bars render green/yellow/red based on % of limit
-18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 17 tabs render
+18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 21 tabs render

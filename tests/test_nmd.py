@@ -43,26 +43,33 @@ class TestNmdDecay:
         return pd.date_range("2026-04-05", periods=365, freq="D")
 
     def test_decay_applied_to_deposit(self, deals, nmd_profiles, nominal_daily, days):
-        result = apply_nmd_decay(deals, nmd_profiles, nominal_daily, days, datetime(2026, 4, 5))
+        result, match_log = apply_nmd_decay(deals, nmd_profiles, nominal_daily, days, datetime(2026, 4, 5))
         # First deal (deposit, CHF, D) should decay
         assert result[0, 0] == 1_000_000  # Initial unchanged
         assert result[0, -1] < 1_000_000  # End should be decayed
         # Exponential decay: at 1 year, value ≈ 1M * exp(-0.20 * 1) ≈ 818,731
         expected_1y = 1_000_000 * np.exp(-0.20 * 1.0)
         np.testing.assert_allclose(result[0, -1], expected_1y, rtol=0.02)
+        # Match log should contain the matched deal
+        assert len(match_log) == 1
+        assert match_log[0]["applied"] is True
+        assert match_log[0]["tier"] == "core"
+        assert match_log[0]["decay_rate"] == 0.20
 
     def test_loan_not_decayed(self, deals, nmd_profiles, nominal_daily, days):
-        result = apply_nmd_decay(deals, nmd_profiles, nominal_daily, days, datetime(2026, 4, 5))
+        result, match_log = apply_nmd_decay(deals, nmd_profiles, nominal_daily, days, datetime(2026, 4, 5))
         # Second deal (loan) should not be touched
         np.testing.assert_array_equal(result[1], nominal_daily[1])
 
     def test_empty_profiles_no_change(self, deals, nominal_daily, days):
-        result = apply_nmd_decay(deals, pd.DataFrame(), nominal_daily, days, datetime(2026, 4, 5))
+        result, match_log = apply_nmd_decay(deals, pd.DataFrame(), nominal_daily, days, datetime(2026, 4, 5))
         np.testing.assert_array_equal(result, nominal_daily)
+        assert match_log == []
 
     def test_none_profiles_no_change(self, deals, nominal_daily, days):
-        result = apply_nmd_decay(deals, None, nominal_daily, days, datetime(2026, 4, 5))
+        result, match_log = apply_nmd_decay(deals, None, nominal_daily, days, datetime(2026, 4, 5))
         np.testing.assert_array_equal(result, nominal_daily)
+        assert match_log == []
 
 
 class TestDepositBeta:

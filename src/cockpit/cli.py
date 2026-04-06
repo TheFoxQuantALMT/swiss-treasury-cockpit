@@ -325,6 +325,8 @@ def cmd_render_pnl(
     eve_scenarios = None
     eve_krd = None
     limits = None
+    liquidity_schedule = None
+    nmd_profiles = None
 
     if input_dir:
         input_path = Path(input_dir)
@@ -375,7 +377,7 @@ def cmd_render_pnl(
             try:
                 from cockpit.data.parsers.nmd_profiles import parse_nmd_profiles
                 nmd_profiles = parse_nmd_profiles(nmd_candidates[0])
-                # Inject into engine for next computation
+                # Inject into engine for EVE computation
                 if pnl._engine:
                     pnl._engine._nmd_profiles = nmd_profiles
                     print(f"[render-pnl] Loaded NMD profiles from {nmd_candidates[0]} ({len(nmd_profiles)} profiles)")
@@ -414,6 +416,16 @@ def cmd_render_pnl(
                 print(f"[render-pnl] Loaded alert thresholds from {threshold_candidates[0]}")
             except Exception as e:
                 print(f"[render-pnl] Warning: could not load alert thresholds: {e}")
+
+        # Auto-discover liquidity schedule
+        liq_candidates = list(input_path.glob("*liquidity*"))
+        if liq_candidates:
+            try:
+                from cockpit.data.parsers.liquidity_schedule import parse_liquidity_schedule
+                liquidity_schedule = parse_liquidity_schedule(liq_candidates[0])
+                print(f"[render-pnl] Loaded liquidity schedule from {liq_candidates[0]} ({len(liquidity_schedule)} deals)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load liquidity schedule: {e}")
 
     # Load previous day's P&L for attribution / explain
     pnl_explain = None
@@ -486,6 +498,8 @@ def cmd_render_pnl(
         eve_krd=eve_krd,
         limits=limits,
         pnl_explain=pnl_explain,
+        liquidity_schedule=liquidity_schedule,
+        nmd_profiles=nmd_profiles,
     )
     print(f"[render-pnl] Output: {output_path}")
 
