@@ -13,6 +13,57 @@ import numpy as np
 REPLICATION_TENORS: list[float] = [1.0, 2.0, 3.0, 5.0, 7.0]
 
 
+def _constrained_nnls(A: np.ndarray, b: np.ndarray, max_iter: int = 100, tol: float = 1e-8) -> np.ndarray:
+    """Non-negative least squares via iterative clip-normalize-resolve.
+
+    Starts from unconstrained solution, then iterates: clip negatives,
+    resolve LS on the active (positive) set, normalize. Converges to a
+    good non-negative approximation without scipy.
+
+    Falls back to single-step clip-normalize if iteration does not converge.
+    """
+    n = A.shape[1]
+
+    # Start from unconstrained solution
+    ATA = A.T @ A
+    ATb = A.T @ b
+    try:
+        weights = np.linalg.solve(ATA, ATb)
+    except np.linalg.LinAlgError:
+        weights, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+
+    for _ in range(max_iter):
+        prev = weights.copy()
+        # Clip negatives
+        weights = np.maximum(weights, 0.0)
+        # Identify active set (positive weights)
+        active = weights > 0
+        if not active.any():
+            weights = np.ones(n) / n
+            break
+        # Re-solve LS on active columns only
+        A_active = A[:, active]
+        ATA_a = A_active.T @ A_active
+        ATb_a = A_active.T @ b
+        try:
+            w_active = np.linalg.solve(ATA_a, ATb_a)
+        except np.linalg.LinAlgError:
+            break
+        weights = np.zeros(n)
+        weights[active] = w_active
+        # Check convergence
+        if np.max(np.abs(weights - prev)) < tol:
+            break
+
+    # Final clip and normalize
+    weights = np.maximum(weights, 0.0)
+    s = weights.sum()
+    if s > 0:
+        weights = weights / s
+
+    return weights
+
+
 def build_replication_portfolio(
     behavioral_cashflows: np.ndarray,
     day_years: np.ndarray,
@@ -48,23 +99,10 @@ def build_replication_portfolio(
     for j, tenor in enumerate(tenors):
         A[:, j] = np.where(day_years <= tenor, 1.0, 0.0)
 
-    # Least-squares fit with non-negativity constraint (via clipping)
-    # Using normal equations: (A^T A) w = A^T cf
-    ATA = A.T @ A
-    ATb = A.T @ cf
-
-    try:
-        weights = np.linalg.solve(ATA, ATb)
-    except np.linalg.LinAlgError:
-        # Fallback to least-squares
-        weights, _, _, _ = np.linalg.lstsq(A, cf, rcond=None)
-
-    # Clip negative weights and re-normalize
-    weights = np.maximum(weights, 0.0)
+    # Non-negative least squares via projected gradient descent (numpy only)
+    weights = _constrained_nnls(A, cf)
     w_sum = weights.sum()
-    if w_sum > 0:
-        weights = weights / w_sum
-    else:
+    if w_sum <= 0:
         # Equal allocation fallback
         weights = np.ones(len(tenors)) / len(tenors)
 

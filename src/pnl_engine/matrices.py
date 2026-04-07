@@ -133,10 +133,10 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
                 curve_dates = idx_data.index.values.astype("datetime64[D]")
                 curve_vals = idx_data.values
 
-                # Map daily rates from curve
-                sorter = np.searchsorted(curve_dates, day_dates, side="right") - 1
-                sorter = np.clip(sorter, 0, len(curve_vals) - 1)
-                daily_rates = curve_vals[sorter]
+                # Map daily rates from curve via linear interpolation
+                curve_dates_num = curve_dates.astype("datetime64[D]").astype(np.int64)
+                day_dates_num = day_dates.astype(np.int64)
+                daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
 
                 # Apply SARON/SONIA lookback shift (ISDA 2021 observation shift)
                 lookback = LOOKBACK_DAYS.get(ccy, 0)

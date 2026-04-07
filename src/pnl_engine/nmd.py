@@ -192,12 +192,21 @@ def apply_nmd_decay(
                 continue
             initial_nominal = nominal_daily[i, nonzero[0]]
 
-        # Apply exponential decay
-        decayed = initial_nominal * np.exp(-decay_rate * day_years)
-
-        # Only apply where deal is alive (non-zero in original)
+        # Apply exponential decay at month boundaries (constant within each month)
+        month_periods = days.to_period("M")
+        unique_months = month_periods.unique()
         alive = nominal_daily[i] != 0
-        result[i] = np.where(alive, np.sign(nominal_daily[i]) * np.abs(decayed), 0.0)
+        for m in unique_months:
+            month_mask = (month_periods == m)
+            if not month_mask.any():
+                continue
+            m_start_years = max(0.0, (m.start_time - date_run_ts).days / 365.25)
+            m_decay = initial_nominal * np.exp(-decay_rate * m_start_years)
+            result[i, month_mask] = np.where(
+                alive[month_mask],
+                np.sign(nominal_daily[i, month_mask]) * np.abs(m_decay),
+                0.0,
+            )
         matched_count += 1
 
         match_log.append({
