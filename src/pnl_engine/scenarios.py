@@ -76,7 +76,7 @@ def interpolate_scenario_shifts(
 
     # Convert days to year fractions from date_run
     date_run_ts = pd.Timestamp(date_run)
-    day_years = np.array([(d - date_run_ts).days / 365.25 for d in days])
+    day_years = np.array([(d - date_run_ts).days / 365.0 for d in days])
 
     # Interpolate shifts to daily grid (extrapolate flat at boundaries)
     daily_shifts_bps = np.interp(day_years, tenor_years, shifts_bps)
