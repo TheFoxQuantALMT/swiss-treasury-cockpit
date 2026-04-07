@@ -116,3 +116,13 @@ FUNDING_SPREAD_BY_PRODUCT: dict[str, float] = {
 
 SNB_RESERVE_RATIO: float = 0.025       # 2.5% on sight liabilities
 HQLA_DEDUCTION: float = 0.20           # 20% of HQLA offsets requirement
+
+# ---------------------------------------------------------------------------
+# Validation sets for deal data ingestion
+# ---------------------------------------------------------------------------
+
+VALID_PRODUCTS: set[str] = {"IAM/LD", "BND", "FXS", "IRS", "IRS-MTM", "HCD"}
+VALID_DIRECTIONS: set[str] = {"B", "L", "D", "S"}
+VALID_BOOKS: set[str] = {"BOOK1", "BOOK2"}
+VALID_PERIMETERS: set[str] = {"CC", "WM", "CIB"}
+VALID_FLOAT_INDICES: set[str] = {"SARON", "ESTR", "SOFR", "SONIA", ""}

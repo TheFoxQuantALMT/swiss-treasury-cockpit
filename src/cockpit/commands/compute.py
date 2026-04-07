@@ -36,6 +36,7 @@ def cmd_compute(
         funding_source=funding_source,
     )
     pnl.run()
+    print("[compute] P&L engine complete.")
 
     # Save NII forecast snapshot for forecast tracking
     if pnl.pnlAllS is not None and not dry_run:

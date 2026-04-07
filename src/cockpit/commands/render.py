@@ -93,7 +93,7 @@ def cmd_render_pnl(
             pnl_cfg.SHOCKS = [s.strip() for s in shocks.split(",")]
         print(f"[render-pnl] Using shocks: {pnl_cfg.SHOCKS}")
 
-    print(f"[render-pnl] Running P&L engine for {date}...")
+    print(f"[render-pnl] Step 1/4: Building P&L for {date}...")
     pnl = ForecastRatePnL(
         dateRun=date_dt,
         dateRates=date_dt,
@@ -191,6 +191,7 @@ def cmd_render_pnl(
                 _optional_warnings += 1
 
         # Run all scenarios (BCBS + FINMA + custom)
+        print("[render-pnl] Step 2/4: Running scenarios & EVE...")
         if scenarios_def is not None and pnl._engine:
             try:
                 scenarios_data = pnl._engine.run_scenarios(scenarios_def)
@@ -338,6 +339,7 @@ def cmd_render_pnl(
 
     output_path = output_dir / f"{date}_pnl_dashboard.html"
 
+    print("[render-pnl] Step 3/4: Computing enrichment data...")
     # Compute enrichment data (locked-in NII, beta sensitivity) from engine matrices
     locked_in_nii_data = None
     beta_sensitivity_data = None
@@ -382,7 +384,7 @@ def cmd_render_pnl(
         beta_sensitivity_data=beta_sensitivity_data,
     )
 
-    print("[render-pnl] Rendering P&L dashboard...")
+    print("[render-pnl] Step 4/4: Rendering P&L dashboard...")
     render_pnl_dashboard(
         **dashboard_kwargs,
         output_path=output_path,

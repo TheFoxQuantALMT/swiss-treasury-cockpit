@@ -8,6 +8,13 @@ import numpy as np
 import pandas as pd
 
 from cockpit.config import SUPPORTED_CURRENCIES
+from pnl_engine.config import (
+    VALID_PRODUCTS,
+    VALID_DIRECTIONS,
+    VALID_BOOKS,
+    VALID_PERIMETERS,
+    VALID_FLOAT_INDICES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +51,11 @@ _DEALS_RENAME = {
     "ftp": "FTP",
 }
 
-_VALID_PRODUCTS = {"IAM/LD", "BND", "FXS", "IRS", "IRS-MTM", "HCD"}
-_VALID_DIRECTIONS = {"B", "L", "D", "S"}
-_VALID_BOOKS = {"BOOK1", "BOOK2"}
-_VALID_PERIMETERS = {"CC", "WM", "CIB"}
-_VALID_FLOAT_INDICES = {"SARON", "ESTR", "SOFR", "SONIA", ""}
+_VALID_PRODUCTS = VALID_PRODUCTS
+_VALID_DIRECTIONS = VALID_DIRECTIONS
+_VALID_BOOKS = VALID_BOOKS
+_VALID_PERIMETERS = VALID_PERIMETERS
+_VALID_FLOAT_INDICES = VALID_FLOAT_INDICES
 
 
 def parse_deals(path: Path) -> pd.DataFrame:
