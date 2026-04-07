@@ -188,17 +188,13 @@ def apply_cpr_rate_dependent(
                 continue
             current_nom = nominal_daily[i, nonzero[0]]
 
-        # Apply day-by-day survival
-        for d in range(len(days)):
-            if not alive[d]:
-                result[i, d] = 0.0
-                continue
-
-            market_rate = float(ois_matrix[i, d])
-            cpr_adj = rate_dependent_cpr(base_cpr, deal_rate, market_rate)
-            monthly_survival = (1.0 - cpr_adj) ** (1.0 / 12.0)
-            survival = monthly_survival ** month_fracs[d]
-            result[i, d] = current_nom * survival * np.sign(nominal_daily[i, d])
+        # Vectorized rate-dependent survival computation
+        market_rates = ois_matrix[i]
+        incentive = np.maximum(0.0, deal_rate - market_rates - 0.005)
+        cpr_adj = np.minimum(base_cpr * (1.0 + 2.0 * incentive), 0.40)
+        monthly_survival = (1.0 - cpr_adj) ** (1.0 / 12.0)
+        survival = monthly_survival ** month_fracs
+        result[i] = np.where(alive, current_nom * survival * np.sign(nominal_daily[i]), 0.0)
 
         n_applied += 1
         deal_id = str(deal.get("Dealid", f"idx_{i}"))
