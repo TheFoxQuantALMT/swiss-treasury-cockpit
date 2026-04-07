@@ -39,7 +39,7 @@ def compute_locked_in_nii(
     mm_2d = mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
 
     # Full NII
-    daily_pnl = nominal_daily[:, :n_days] * (ois_matrix[:, :n_days] - rate_matrix[:, :n_days]) / mm_2d[:, :n_days] if mm_2d.ndim == 2 else nominal_daily[:, :n_days] * (ois_matrix[:, :n_days] - rate_matrix[:, :n_days]) / mm_2d
+    daily_pnl = nominal_daily[:, :n_days] * (ois_matrix[:, :n_days] - rate_matrix[:, :n_days]) / mm_2d[:, :n_days]
     total_nii = float(np.nansum(daily_pnl))
 
     # Fixed-rate mask
