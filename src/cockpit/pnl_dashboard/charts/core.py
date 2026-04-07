@@ -1,6 +1,7 @@
 """Core chart data builders: Summary, CoC, P&L Series, Sensitivity, Strategy, BOOK2, Curves."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -14,6 +15,8 @@ from cockpit.pnl_dashboard.charts.constants import (
 )
 from cockpit.pnl_dashboard.charts.helpers import _filter_total, _month_labels
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Tab 1: Executive Summary
@@ -26,11 +29,11 @@ def _build_summary(
 ) -> dict:
     """KPIs, currency donut, realized/forecast waterfall, top 5 contributors, DoD bridge."""
     if df.empty:
-        return {"kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
+        return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
     pnl_rows = df[df["Indice"] == "PnL"].copy()
     if pnl_rows.empty:
-        return {"kpis": {}, "donut": {}, "waterfall": {}, "top5": []}
+        return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": []}
 
     # KPI cards: total P&L per shock (12-month horizon)
     kpis = {}
@@ -149,12 +152,12 @@ def _build_summary(
 def _build_coc(df: pd.DataFrame) -> dict:
     """CoC measures by currency \u00d7 month \u00d7 shock."""
     if df.empty:
-        return {"months": [], "by_currency": {}, "table": []}
+        return {"has_data": False, "months": [], "by_currency": {}, "table": []}
 
     coc_indices = {"GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"}
     coc_rows = df[df["Indice"].isin(coc_indices)].copy()
     if coc_rows.empty:
-        return {"months": [], "by_currency": {}, "table": []}
+        return {"has_data": False, "months": [], "by_currency": {}, "table": []}
 
     # Filter to Total PnL_Type to avoid double-counting with Realized+Forecast
     coc_rows = _filter_total(coc_rows)
@@ -231,11 +234,11 @@ def _build_coc(df: pd.DataFrame) -> dict:
 def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
     """Monthly P&L by currency \u00d7 shock, with realized/forecast split."""
     if df.empty:
-        return {"months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
 
     pnl_rows = df[df["Indice"] == "PnL"].copy()
     if pnl_rows.empty:
-        return {"months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
+        return {"has_data": False, "months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
 
     months = sorted(pnl_rows["Month"].unique()) if "Month" in pnl_rows.columns else []
     month_labels = _month_labels(months)
@@ -292,11 +295,11 @@ def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
 def _build_sensitivity(df: pd.DataFrame) -> dict:
     """Delta P&L heatmap: shock=50 minus shock=0, per currency \u00d7 product \u00d7 month."""
     if df.empty:
-        return {"months": [], "rows": [], "totals": {}}
+        return {"has_data": False, "months": [], "rows": [], "totals": {}}
 
     pnl_rows = df[df["Indice"] == "PnL"].copy()
     if pnl_rows.empty or "Shock" not in pnl_rows.columns:
-        return {"months": [], "rows": [], "totals": {}}
+        return {"has_data": False, "months": [], "rows": [], "totals": {}}
 
     # Filter to Total PnL_Type only to avoid double-counting with Realized+Forecast
     pnl_rows = _filter_total(pnl_rows)
@@ -425,13 +428,20 @@ def _build_strategy(df: pd.DataFrame) -> dict:
         else:
             ois_avg = float(leg_ois["Value"].mean()) if not leg_ois.empty else 0.0
 
-        # Sanitize NaN -> 0
+        # Sanitize NaN -> 0 (log warning so users know data is missing)
+        _nan_fields = []
         if np.isnan(nom_avg):
             nom_avg = 0.0
+            _nan_fields.append("nominal")
         if np.isnan(rate_avg):
             rate_avg = 0.0
+            _nan_fields.append("rate_ref")
         if np.isnan(ois_avg):
             ois_avg = 0.0
+            _nan_fields.append("ois_fwd")
+        if _nan_fields:
+            logger.warning("Strategy IAS leg %s has NaN for %s — defaulting to 0.0 (missing data?)",
+                           leg, ", ".join(_nan_fields))
 
         currencies = base[base["Product2BuyBack"] == leg]["Deal currency"].unique() if "Deal currency" in base.columns else []
         directions = base[base["Product2BuyBack"] == leg]["Direction"].unique() if "Direction" in base.columns else []
