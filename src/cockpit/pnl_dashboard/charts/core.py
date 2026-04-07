@@ -33,7 +33,7 @@ def _build_summary(
 
     pnl_rows = df[df["Indice"] == "PnL"].copy()
     if pnl_rows.empty:
-        return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": []}
+        return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
     # KPI cards: total P&L per shock (12-month horizon)
     kpis = {}
