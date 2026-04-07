@@ -117,6 +117,7 @@ def reverse_stress_eve(
     tier1_capital: float,
     dv01: float,
     threshold_pct: float = 15.0,
+    convexity: float | None = None,
     **kwargs,
 ) -> dict:
     """Simplified reverse stress for ΔEVE/Tier1 using DV01 approximation.
@@ -128,6 +129,9 @@ def reverse_stress_eve(
         tier1_capital: Tier 1 capital.
         dv01: DV01 (EVE change per 1bp).
         threshold_pct: IRRBB outlier threshold (default 15%).
+        convexity: Optional convexity (second-order term). When provided,
+            ΔEVE ≈ DV01 × shock + 0.5 × convexity × shock². Units: EVE
+            change per bp² (same scale as dv01 per bp).
 
     Returns:
         Bisection result dict.
@@ -138,7 +142,10 @@ def reverse_stress_eve(
     limit_delta_eve = tier1_capital * threshold_pct / 100.0
 
     def eval_fn(shock_bp: float) -> float:
-        # ΔEVE ≈ DV01 × shock_bp, return the headroom
-        return limit_delta_eve - abs(dv01 * shock_bp)
+        # ΔEVE ≈ DV01 × shock + 0.5 × convexity × shock²
+        delta = dv01 * shock_bp
+        if convexity is not None:
+            delta += 0.5 * convexity * shock_bp ** 2
+        return limit_delta_eve - abs(delta)
 
     return bisect_breach_shock(eval_fn, 0.0, direction="below", **kwargs)
