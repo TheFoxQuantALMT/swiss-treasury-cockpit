@@ -1,10 +1,13 @@
 """Orchestrator: main entry point that calls all chart data builders."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from cockpit.pnl_dashboard.charts.helpers import _safe_stacked, _auto_pnl_explain
 from cockpit.pnl_dashboard.charts.core import (
@@ -280,8 +283,8 @@ def build_pnl_dashboard_data(
                 if recs.get("has_data"):
                     result["hedge_strategy"]["recommendations"] = recs.get("recommendations", [])
                     result["hedge_strategy"]["has_recommendations"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not compute hedge recommendations: %s", e)
 
     # Sensitivity explain → Sensitivity tab (extract per-currency dicts)
     try:
@@ -306,8 +309,8 @@ def build_pnl_dashboard_data(
                 explain = explain_sensitivity_change(current_sens, previous_sens, deals)
                 if explain.get("has_data"):
                     result["sensitivity"]["explain"] = explain
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not compute sensitivity explain: %s", e)
 
     # Replication portfolio → NMD Audit tab (generate behavioral cashflows from NMD profiles)
     try:
@@ -335,7 +338,7 @@ def build_pnl_dashboard_data(
                 repl = build_replication_portfolio(total_cf, day_years, total_nominal=actual_nominal)
                 if repl.get("has_data"):
                     result["nmd_audit"]["replication"] = repl
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Could not compute replication portfolio: %s", e)
 
     return result

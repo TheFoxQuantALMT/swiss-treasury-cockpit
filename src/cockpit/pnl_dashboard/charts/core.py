@@ -139,7 +139,7 @@ def _build_summary(
             })
             dod_bridge = bridge_rows
 
-    return {"kpis": kpis, "donut": donut, "waterfall": waterfall, "top5": top5, "coc_ytd": coc_ytd, "dod_bridge": dod_bridge}
+    return {"has_data": True, "kpis": kpis, "donut": donut, "waterfall": waterfall, "top5": top5, "coc_ytd": coc_ytd, "dod_bridge": dod_bridge}
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def _build_coc(df: pd.DataFrame) -> dict:
             "rolldown": rolldown,
         }
 
-    return {"months": month_labels, "by_currency": by_currency, "table": table, "carry_rolldown": carry_rolldown}
+    return {"has_data": True, "months": month_labels, "by_currency": by_currency, "table": table, "carry_rolldown": carry_rolldown}
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +278,7 @@ def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
             }
 
     return {
+        "has_data": True,
         "months": month_labels,
         "by_currency": by_currency,
         "by_product": by_product,

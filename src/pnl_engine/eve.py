@@ -264,7 +264,7 @@ def compute_eve_convexity(
 
         if abs(base) > 1e-6:
             eff_dur = -(up - down) / (2.0 * base * delta_r)
-            conv = (up + down - 2.0 * base) / (base * delta_r ** 2)
+            conv = (up + down - 2.0 * base) / (abs(base) * delta_r ** 2)
         else:
             eff_dur = 0.0
             conv = 0.0
@@ -282,7 +282,7 @@ def compute_eve_convexity(
     # Portfolio total
     if abs(total_base) > 1e-6:
         total_dur = -(total_up - total_down) / (2.0 * total_base * delta_r)
-        total_conv = (total_up + total_down - 2.0 * total_base) / (total_base * delta_r ** 2)
+        total_conv = (total_up + total_down - 2.0 * total_base) / (abs(total_base) * delta_r ** 2)
     else:
         total_dur = 0.0
         total_conv = 0.0

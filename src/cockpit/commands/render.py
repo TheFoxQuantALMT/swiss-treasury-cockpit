@@ -176,7 +176,10 @@ def cmd_render_pnl(
                 custom_sc = parse_custom_scenarios(custom_sc_path)
                 if custom_sc is not None and not custom_sc.empty:
                     n_custom = custom_sc["scenario"].nunique()
-                    scenarios_def = pd.concat([scenarios_def, custom_sc], ignore_index=True)
+                    if scenarios_def is not None:
+                        scenarios_def = pd.concat([scenarios_def, custom_sc], ignore_index=True)
+                    else:
+                        scenarios_def = custom_sc
                     print(f"[render-pnl] Merged {n_custom} custom scenarios from {custom_sc_path}")
             except Exception as e:
                 print(f"[render-pnl] Warning: could not load custom scenarios: {e}")
