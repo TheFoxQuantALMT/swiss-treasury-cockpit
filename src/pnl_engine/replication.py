@@ -6,7 +6,11 @@ optimization. This determines the optimal maturity mix for hedging NMD exposure.
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # Standard replication tenors (years)
@@ -48,6 +52,7 @@ def _constrained_nnls(A: np.ndarray, b: np.ndarray, max_iter: int = 100, tol: fl
         try:
             w_active = np.linalg.solve(ATA_a, ATb_a)
         except np.linalg.LinAlgError:
+            logger.warning("replication NNLS: singular matrix on active set, using clipped weights")
             break
         weights = np.zeros(n)
         weights[active] = w_active

@@ -26,6 +26,30 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _match_profile(profiles: pd.DataFrame, product: str, currency: str, direction: str) -> pd.DataFrame:
+    """Match NMD profiles by deal attributes."""
+    mask = pd.Series([True] * len(profiles), index=profiles.index)
+    if "product" in profiles.columns:
+        mask &= profiles["product"] == product
+    if "currency" in profiles.columns:
+        mask &= profiles["currency"] == currency
+    if "direction" in profiles.columns:
+        mask &= profiles["direction"] == direction
+    return profiles[mask]
+
+
+def _profile_weights(matched: pd.DataFrame) -> pd.Series:
+    """Compute normalized weights for matched NMD profiles."""
+    if len(matched) <= 1:
+        return pd.Series([1.0], index=matched.index)
+    if "share" in matched.columns:
+        shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
+        total = shares.sum()
+        if total > 0:
+            return shares / total
+    return pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+
+
 def compute_stressed_beta(
     beta_base: float,
     shock_bps: float,
@@ -134,31 +158,12 @@ def apply_nmd_decay(
         direction = str(deal.get("Direction", "")).strip().upper()
 
         # Match against NMD profiles
-        mask = pd.Series([True] * len(profiles))
-        if "product" in profiles.columns:
-            mask &= profiles["product"] == product
-        if "currency" in profiles.columns:
-            mask &= profiles["currency"] == currency
-        if "direction" in profiles.columns:
-            mask &= profiles["direction"] == direction
-
-        matched = profiles[mask]
+        matched = _match_profile(profiles, product, currency, direction)
         if matched.empty:
             continue
 
         # Weighted blend of multiple profiles (e.g., core + volatile tiers)
-        # Weight by share column if present, else equal weight
-        if len(matched) > 1 and "share" in matched.columns:
-            shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
-            total_share = shares.sum()
-            if total_share > 0:
-                weights = shares / total_share
-            else:
-                weights = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
-        elif len(matched) > 1:
-            weights = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
-        else:
-            weights = pd.Series([1.0], index=matched.index)
+        weights = _profile_weights(matched)
 
         decay_rate = float((pd.to_numeric(matched.get("decay_rate", 0), errors="coerce").fillna(0) * weights).sum())
         deposit_beta = float((pd.to_numeric(matched.get("deposit_beta", 1), errors="coerce").fillna(1) * weights).sum())
@@ -265,27 +270,12 @@ def apply_deposit_beta(
         currency = str(deals.iloc[i].get("Currency", "")).strip().upper()
         direction = str(deals.iloc[i].get("Direction", "")).strip().upper()
 
-        mask = pd.Series([True] * len(profiles))
-        if "product" in profiles.columns:
-            mask &= profiles["product"] == product
-        if "currency" in profiles.columns:
-            mask &= profiles["currency"] == currency
-        if "direction" in profiles.columns:
-            mask &= profiles["direction"] == direction
-
-        matched = profiles[mask]
+        matched = _match_profile(profiles, product, currency, direction)
         if matched.empty:
             continue
 
         # Weighted blend of multiple profiles
-        if len(matched) > 1 and "share" in matched.columns:
-            shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
-            total_share = shares.sum()
-            w = shares / total_share if total_share > 0 else pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
-        elif len(matched) > 1:
-            w = pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
-        else:
-            w = pd.Series([1.0], index=matched.index)
+        w = _profile_weights(matched)
 
         beta = float((pd.to_numeric(matched.get("deposit_beta", 1), errors="coerce").fillna(1) * w).sum())
         floor_rate = float((pd.to_numeric(matched.get("floor_rate", 0), errors="coerce").fillna(0) * w).sum())
@@ -416,21 +406,11 @@ def get_behavioral_maturity(
         currency = str(deals.iloc[i].get("Currency", "")).strip().upper()
         direction = str(deals.iloc[i].get("Direction", "")).strip().upper()
 
-        mask = pd.Series([True] * len(profiles))
-        if "product" in profiles.columns:
-            mask &= profiles["product"] == product
-        if "currency" in profiles.columns:
-            mask &= profiles["currency"] == currency
-        if "direction" in profiles.columns:
-            mask &= profiles["direction"] == direction
-
-        matched = profiles[mask]
+        matched = _match_profile(profiles, product, currency, direction)
         if not matched.empty:
             bm_values = pd.to_numeric(matched.get("behavioral_maturity_years", np.nan), errors="coerce")
-            if len(matched) > 1 and "share" in matched.columns:
-                shares = pd.to_numeric(matched["share"], errors="coerce").fillna(0)
-                total_share = shares.sum()
-                w = shares / total_share if total_share > 0 else pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+            if len(matched) > 1:
+                w = _profile_weights(matched)
                 result.iloc[i] = float((bm_values.fillna(0) * w).sum())
             else:
                 result.iloc[i] = float(bm_values.iloc[0]) if pd.notna(bm_values.iloc[0]) else np.nan
