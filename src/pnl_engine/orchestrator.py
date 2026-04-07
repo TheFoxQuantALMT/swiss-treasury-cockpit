@@ -305,7 +305,13 @@ class PnlEngine:
         Returns wide DataFrame (months as columns) with rows indexed by
         (Perimetre TOTAL, Deal currency, Product2BuyBack, Direction, Indice, Shock).
         """
-        if dateRates is not None:
+        if self._deals_use is None:
+            self._build_static_matrices()
+
+        if dateRates is not None and dateRates != self.dateRates:
+            self.dateRates = dateRates
+            self.clear_fwd_cache()
+        elif dateRates is not None:
             self.dateRates = dateRates
 
         # --- Curves & matrices for this shock ---

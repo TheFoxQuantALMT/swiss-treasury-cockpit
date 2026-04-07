@@ -260,8 +260,8 @@ def build_pnl_dashboard_data(
 
     # NMD beta sensitivity → Deposit Behavior tab (pre-computed in CLI — needs engine matrices)
     if beta_sensitivity_data and beta_sensitivity_data.get("by_currency"):
-        beta_sensitivity_data["has_data"] = True
-        result["deposit_behavior"]["beta_sensitivity"] = beta_sensitivity_data
+        beta_data = {**beta_sensitivity_data, "has_data": True}
+        result["deposit_behavior"]["beta_sensitivity"] = beta_data
 
     # Hedge optimizer → Hedge Strategy tab (derive DV01 from sensitivity totals)
     try:
