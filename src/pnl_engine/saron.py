@@ -16,19 +16,23 @@ def compound_saron_daily(
     daily_rates: np.ndarray,
     notional: float = 1.0,
     day_count_basis: int = 360,
+    accrual_days: np.ndarray | None = None,
 ) -> dict:
     """Compute compounded SARON rate from daily fixings.
 
     Uses the ISDA 2021 compounding formula:
         CompoundedRate = (∏(1 + r_i × d_i / DCB) - 1) × DCB / D
 
-    where r_i is the daily SARON, d_i is 1 (daily), DCB is 360, and D is
-    the total number of calendar days.
+    where r_i is the daily SARON, d_i is the number of calendar days each
+    fixing accrues for, DCB is the day count basis (360 for CHF), and D is
+    the total number of calendar days (sum of d_i).
 
     Args:
         daily_rates: Array of daily SARON fixings (annualized, decimal).
         notional: Notional amount (default 1.0 for rate computation).
         day_count_basis: Day count convention (360 for CHF).
+        accrual_days: Array of calendar days each fixing accrues for (d_i).
+            When None, defaults to 1 for all days (backward compatible).
 
     Returns:
         Dict with compounded_rate, accrued_interest, n_days.
@@ -37,12 +41,15 @@ def compound_saron_daily(
         return {"compounded_rate": 0.0, "accrued_interest": 0.0, "n_days": 0}
 
     n = len(daily_rates)
-    # Daily accrual factors: 1 + r_i / DCB
-    daily_factors = 1.0 + daily_rates / day_count_basis
+    d_i = accrual_days if accrual_days is not None else np.ones(n)
+    # Daily accrual factors: 1 + r_i × d_i / DCB
+    daily_factors = 1.0 + daily_rates * d_i / day_count_basis
     # Compounded product
     compound_factor = float(np.prod(daily_factors))
+    # Total calendar days
+    total_days = float(np.sum(d_i))
     # Annualized compounded rate
-    compounded_rate = (compound_factor - 1.0) * day_count_basis / n
+    compounded_rate = (compound_factor - 1.0) * day_count_basis / total_days if total_days > 0 else 0.0
 
     accrued = notional * (compound_factor - 1.0)
 

@@ -591,10 +591,14 @@ class TestAccrualDays:
         assert d_i[0] == 1.0  # Fri→Sat in daily grid
 
     def test_sum_equals_calendar_span(self):
-        """Sum of d_i over a month should equal the calendar span."""
+        """Sum of d_i over a month equals span to next business day.
+
+        April 2026: 29 daily gaps of 1 day + last day (Apr 30, Thursday)
+        accrues 4 days to next business day (May 4, Monday — May 1 is
+        Labour Day, May 2-3 is weekend).  Sum = 29 + 4 = 33.
+        """
         days = build_date_grid(pd.Timestamp("2026-04-01"), months=1)
         d_i = build_accrual_days(days)
-        # April has 30 days → 30 grid points, d_i sums to 30
-        # (29 gaps of 1 day each + last day's d_i)
-        # Last day of April: April 30, 2026 is a Thursday → d_i = 1
-        assert abs(d_i.sum() - 30) < 0.01
+        # Last day: Apr 30 (Thu) → next BD is May 4 (Mon) → d_i = 4
+        assert d_i[-1] == 4.0
+        assert abs(d_i.sum() - 33) < 0.01

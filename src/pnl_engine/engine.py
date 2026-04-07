@@ -164,8 +164,10 @@ def aggregate_to_monthly(
             forecast_within = np.zeros(len(days), dtype=bool)
             forecast_within[month_mask] = days[month_mask] > date_rates
 
-            agg_real = _aggregate_slice(mask=realized_within, n_cal_days=n_cal_days, **common_kw)
-            agg_fore = _aggregate_slice(mask=forecast_within, n_cal_days=n_cal_days, **common_kw)
+            n_realized_days = int(realized_within.sum())
+            n_forecast_days = int(forecast_within.sum())
+            agg_real = _aggregate_slice(mask=realized_within, n_cal_days=n_realized_days, **common_kw)
+            agg_fore = _aggregate_slice(mask=forecast_within, n_cal_days=n_forecast_days, **common_kw)
 
             for deal_i in range(n_deals):
                 for pnl_type, agg in [("Total", agg_total), ("Realized", agg_real), ("Forecast", agg_fore)]:

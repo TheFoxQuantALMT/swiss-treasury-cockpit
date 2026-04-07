@@ -63,7 +63,7 @@ def compute_eve(
     date_run_ts = pd.Timestamp(date_run)
 
     # Year fractions from date_run for each day
-    day_years = np.array([(d - date_run_ts).days / 365.25 for d in days])
+    day_years = np.array([(d - date_run_ts).days / 365.0 for d in days])
     day_years = np.maximum(day_years, 0.0)  # no negative time
 
     # Discount factors: exp(-∫OIS dt) using cumulative forward rates
@@ -331,7 +331,7 @@ def compute_key_rate_durations(
     )
 
     date_run_ts = pd.Timestamp(date_run)
-    day_years = np.array([(d - date_run_ts).days / 365.25 for d in days])
+    day_years = np.array([(d - date_run_ts).days / 365.0 for d in days])
 
     currencies = deals["Currency"].unique() if "Currency" in deals.columns else []
     results = []

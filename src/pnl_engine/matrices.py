@@ -78,13 +78,15 @@ def build_mm_vector(deals: pd.DataFrame) -> np.ndarray:
 def build_accrual_days(days: pd.DatetimeIndex) -> np.ndarray:
     """Calendar days each fixing accrues for (ISDA 2021 §6.9).
 
-    Weekdays accrue 1 day; Fridays accrue 3 (Fri->Mon).
-    Holiday adjustments require a ``BusinessDayCalendar`` — without one,
-    this function uses the standard Sat/Sun weekend convention.
+    Uses the Swiss business day calendar from ``cockpit.calendar`` to
+    compute the gap to the next business day for the last day in the
+    grid (handles weekends and Swiss public holidays correctly).
 
     Returns:
         (n_days,) array of integers >= 1.
     """
+    from cockpit.calendar import next_business_day
+
     n = len(days)
     if n == 0:
         return np.array([], dtype=np.float64)
@@ -93,9 +95,12 @@ def build_accrual_days(days: pd.DatetimeIndex) -> np.ndarray:
     day_arr = days.values.astype("datetime64[D]")
     for j in range(n - 1):
         d_i[j] = float((day_arr[j + 1] - day_arr[j]) / np.timedelta64(1, "D"))
-    # Last day: assume 1 (or weekend weight if Friday)
-    if n > 0 and days[-1].weekday() == 4:  # Friday
-        d_i[-1] = 3.0
+    # Last day: compute gap to next business day using Swiss calendar
+    if n > 0:
+        last_date = days[-1].date()
+        from datetime import timedelta
+        next_bd = next_business_day(last_date + timedelta(days=1))
+        d_i[-1] = float((next_bd - last_date).days)
     return d_i
 
 
