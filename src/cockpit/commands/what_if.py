@@ -42,7 +42,7 @@ def cmd_what_if(
             pass
 
     # Map CLI direction to what-if direction: D/S (deposit/sell = liability) -> L, B (bond) -> B
-    wif_direction = "L" if direction.upper() in ("D", "S", "L") else "B"
+    wif_direction = "L" if direction.upper() in ("D", "L") else "B"
 
     # Determine day-count convention from currency
     from pnl_engine.config import MM_BY_CURRENCY

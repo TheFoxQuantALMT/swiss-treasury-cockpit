@@ -8,12 +8,16 @@ Regulatory references:
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from pnl_engine.config import MM_BY_CURRENCY, LOOKBACK_DAYS
 from pnl_engine.models import get_day_count
 from pnl_engine.saron import apply_lookback_shift
+
+logger = logging.getLogger(__name__)
 
 
 def build_date_grid(start: pd.Timestamp, months: int = 60) -> pd.DatetimeIndex:
@@ -137,6 +141,15 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
                 lookback = LOOKBACK_DAYS.get(ccy, 0)
                 if lookback > 0:
                     daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+
+                # Warn if curve ends before the date grid (flat extrapolation)
+                if len(curve_dates) > 0 and len(day_dates) > 0:
+                    if day_dates[-1] > curve_dates[-1]:
+                        extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
+                        logger.warning(
+                            "Rate curve for %s ends before date grid; flat-extrapolating %d days",
+                            indice, extrap_days,
+                        )
 
                 result[i] = daily_rates + spread
             except KeyError:

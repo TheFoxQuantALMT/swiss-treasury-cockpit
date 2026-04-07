@@ -225,11 +225,12 @@ def check_duplicate_deals(deals: Optional[pd.DataFrame]) -> QualityCheck:
     dups = deals["Dealid"].dropna()
     dup_ids = dups[dups.duplicated(keep=False)].unique()
     n = len(dup_ids)
-    status = "pass" if n == 0 else "warn" if n <= 3 else "fail"
+    n_dup_rows = len(dups[dups.duplicated(keep=False)])
+    status = "pass" if n_dup_rows == 0 else "warn" if n_dup_rows <= 3 else "fail"
     detail = f"{n} duplicate Dealid(s)"
     if 0 < n <= 5:
         detail += f": {sorted(dup_ids)[:5]}"
-    return QualityCheck("Duplicate Deals", status, n, detail)
+    return QualityCheck("Duplicate Deals", status, n_dup_rows, detail)
 
 
 def check_maturity_consistency(deals: Optional[pd.DataFrame]) -> QualityCheck:

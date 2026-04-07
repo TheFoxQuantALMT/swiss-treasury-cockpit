@@ -147,7 +147,7 @@ class TestCheckDuplicateDeals:
     def test_with_duplicates(self):
         deals = pd.DataFrame({"Dealid": [1, 2, 1, 3, 2]})
         result = check_duplicate_deals(deals)
-        assert result.value == 2  # deals 1 and 2 are duplicated
+        assert result.value == 4  # 4 total duplicated rows (deal 1 x2 + deal 2 x2)
 
     def test_no_deals(self):
         result = check_duplicate_deals(None)

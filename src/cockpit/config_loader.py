@@ -70,7 +70,7 @@ DEFAULTS: dict[str, Any] = {
     "shocks": ["0", "50", "wirp"],
 }
 
-_cached_config: dict[str, Any] | None = None
+_cached_configs: dict[str, dict[str, Any]] = {}
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -96,15 +96,15 @@ def load_config(path: Path | str | None = None, *, use_cache: bool = True) -> di
         If *True* (default), re-use a previously loaded config for the same
         default path. Pass *False* to force a re-read (useful in tests).
     """
-    global _cached_config
-
     if path is None:
         resolved = DEFAULT_CONFIG_PATH
     else:
-        resolved = Path(path)
+        resolved = Path(path).resolve()
 
-    if use_cache and _cached_config is not None and path is None:
-        return _cached_config
+    cache_key = str(resolved)
+
+    if use_cache and cache_key in _cached_configs:
+        return _cached_configs[cache_key]
 
     if resolved.exists():
         try:
@@ -121,13 +121,11 @@ def load_config(path: Path | str | None = None, *, use_cache: bool = True) -> di
 
     merged = _deep_merge(DEFAULTS, user_cfg)
 
-    if path is None:
-        _cached_config = merged
+    _cached_configs[cache_key] = merged
 
     return merged
 
 
 def reset_cache() -> None:
     """Clear the cached config (for testing)."""
-    global _cached_config
-    _cached_config = None
+    _cached_configs.clear()
