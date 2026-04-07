@@ -51,7 +51,7 @@ def engine_result():
     """
     deals_all = parse_deals(FIXTURES / "deals.xlsx")
     book1 = deals_all[deals_all["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
-    schedule = parse_schedule(FIXTURES / "schedule.xlsx")
+    schedule = parse_schedule(FIXTURES / "rate_schedule.xlsx")
 
     deals = _resolve_rate_ref(book1)
 

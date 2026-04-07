@@ -104,7 +104,7 @@ The renderer handles missing data gracefully -- each tab renders a placeholder i
 
 ### `render-pnl` -- Render Dedicated P&L Dashboard
 
-Renders the 35-tab ALM/Treasury P&L dashboard from Excel inputs. Auto-discovers optional ALM files (budget, scenarios, hedge pairs, NMD profiles, limits, alert thresholds, liquidity schedule, custom scenarios).
+Renders the 35-tab ALM/Treasury P&L dashboard from Excel inputs. Auto-discovers optional ALM files (budget, scenarios, NMD profiles, limits, alert thresholds, liquidity schedule, custom scenarios). Hedge pairs are derived automatically from ``strategy_ias`` in deals.
 
 ```bash
 uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels
@@ -122,7 +122,6 @@ uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels --custom-
 | `--input-dir` | No | Directory containing Excel input files |
 | `--funding-source` | No | `ois` (default) or `coc` |
 | `--budget` | No | Explicit path to budget file (overrides auto-discovery) |
-| `--hedge-pairs` | No | Explicit path to hedge pairs file |
 | `--prev-date` | No | Previous date for DoD attribution and P&L explain |
 | `--prev-input-dir` | No | Directory for previous date's Excel inputs (defaults to `--input-dir`) |
 | `--shocks` | No | Comma-separated shock list (e.g. `-200,-100,0,50,100,200,wirp`) or `extended` for full grid |
@@ -175,7 +174,7 @@ uv run cockpit validate --input-dir path/to/excels
 |------|--------|--------|
 | deals/MTD | Required | Required columns (`Dealid`, `Product`, `Direction`), known products |
 | echeancier/schedule | Required | Parseable |
-| budget, hedge pairs, scenarios, NMD profiles, limits, liquidity, WIRP, IRS stock | Optional | Presence reported |
+| budget, scenarios, NMD profiles, limits, liquidity, WIRP, IRS stock | Optional | Presence reported |
 
 Exits with code 1 if any errors are found.
 

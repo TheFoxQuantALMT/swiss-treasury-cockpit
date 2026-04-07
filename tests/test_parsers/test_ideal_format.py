@@ -90,8 +90,9 @@ class TestParseDeals:
 
     def test_strategy_deal_present(self, deals):
         strat = deals[deals["Strategy IAS"].notna()]
-        assert len(strat) == 1
-        assert strat.iloc[0]["Dealid"] == 100006
+        assert len(strat) == 6  # 3 hedged items + 3 IRS instruments
+        strategies = strat["Strategy IAS"].unique()
+        assert len(strategies) == 3  # STRAT_CHF_001, STRAT_CHF_002, STRAT_EUR_001
 
     def test_floating_deal(self, deals):
         floating = deals[deals["Floating Rates Short Name"] != ""]
@@ -114,13 +115,13 @@ class TestParseMtdAutoDetect:
 
 
 # ---------------------------------------------------------------------------
-# schedule.xlsx
+# rate_schedule.xlsx
 # ---------------------------------------------------------------------------
 
 class TestParseSchedule:
     @pytest.fixture()
     def schedule(self):
-        return parse_schedule(FIXTURES / "schedule.xlsx")
+        return parse_schedule(FIXTURES / "rate_schedule.xlsx")
 
     def test_row_count(self, schedule):
         assert len(schedule) == 10
@@ -161,7 +162,7 @@ class TestParseSchedule:
 
 class TestParseEcheancierAutoDetect:
     def test_auto_detects_ideal_format(self):
-        result = parse_echeancier(FIXTURES / "schedule.xlsx")
+        result = parse_echeancier(FIXTURES / "rate_schedule.xlsx")
         assert len(result) == 10
         assert "Dealid" in result.columns
 
@@ -245,7 +246,7 @@ class TestCrossFileConsistency:
 
     @pytest.fixture()
     def schedule(self):
-        return parse_schedule(FIXTURES / "schedule.xlsx")
+        return parse_schedule(FIXTURES / "rate_schedule.xlsx")
 
     def test_book1_deals_have_schedule(self, deals, schedule):
         """Every BOOK1 deal should have a matching schedule row."""

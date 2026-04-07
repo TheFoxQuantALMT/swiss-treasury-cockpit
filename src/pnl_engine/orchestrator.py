@@ -87,6 +87,7 @@ class PnlEngine:
         *,
         funding_source: str = FUNDING_SOURCE,
         nmd_profiles: Optional[pd.DataFrame] = None,
+        production_plans: Optional[list] = None,
     ):
         self.deals = deals
         self.schedule = schedule
@@ -97,6 +98,7 @@ class PnlEngine:
 
         self._funding_source = funding_source
         self._nmd_profiles = nmd_profiles
+        self._production_plans = production_plans or []
         self._fwd_cache = CurveCache()
 
         # Public result attributes (populated by run)
@@ -108,7 +110,9 @@ class PnlEngine:
         self.eve_results: Optional[pd.DataFrame] = None
         self.eve_scenarios: Optional[pd.DataFrame] = None
         self.eve_krd: Optional[pd.DataFrame] = None
+        self.eve_convexity: Optional[dict] = None
         self.nmd_match_log: list[dict] = []
+        self.projection_log: list[dict] = []
 
         # Precomputed matrices (built once, reused across shocks)
         self._deals_use: Optional[pd.DataFrame] = None
@@ -166,6 +170,24 @@ class PnlEngine:
                 self._deals_use, self._nmd_profiles, self._nominal_daily,
                 self._days, self.dateRun,
             )
+
+        # Apply CPR-based prepayment to fixed-rate mortgages
+        from pnl_engine.prepayment import apply_cpr
+        self._nominal_daily, cpr_log = apply_cpr(
+            self._deals_use, self._nominal_daily, self._days,
+        )
+        if cpr_log:
+            logger.info("_build_static_matrices: CPR applied to %d deals", len(cpr_log))
+
+        # Apply dynamic balance sheet (reinvestment of maturing volumes)
+        if self._production_plans:
+            from pnl_engine.dynamic_balance_sheet import project_balance_sheet
+            self._nominal_daily, self._deals_use, self.projection_log = project_balance_sheet(
+                self._deals_use, self._nominal_daily, self._days,
+                self._month_cols, self._production_plans, self.dateRun,
+            )
+            if self.projection_log:
+                logger.info("_build_static_matrices: dynamic BS added %d synthetic deals", len(self.projection_log))
 
         self._mm = build_mm_vector(self._deals_use)
         self._accrual_days = build_accrual_days(self._days)
@@ -299,8 +321,14 @@ class PnlEngine:
         # Apply NMD deposit beta if profiles provided
         if self._nmd_profiles is not None and not self._nmd_profiles.empty:
             from pnl_engine.nmd import apply_deposit_beta
+            # Parse shock magnitude for stress-adjusted beta
+            try:
+                shock_bps = float(Shock) if Shock not in ("wirp",) else 0.0
+            except (ValueError, TypeError):
+                shock_bps = 0.0
             rate_matrix = apply_deposit_beta(
                 rate_matrix, self._deals_use, self._nmd_profiles, ois_matrix,
+                shock_bps=shock_bps,
             )
 
         n_days = len(self._days)
@@ -627,10 +655,17 @@ class PnlEngine:
 
         # Scenario ΔEVE
         if scenarios is not None and not scenarios.empty:
+            # Build nominal adjuster for rate-dependent CPR under scenarios
+            from pnl_engine.prepayment import apply_cpr_rate_dependent
+            nominal_adjuster = lambda deals, nom, days, ois: apply_cpr_rate_dependent(
+                deals, nom, days, ois,
+            )
+
             self.eve_scenarios = compute_eve_scenarios(
                 self._nominal_daily, ois_matrix, rate_matrix, self._mm,
                 self._days, self._deals_use, self.dateRun,
                 scenarios, self.fwdOIS0,
+                nominal_adjuster=nominal_adjuster,
             )
             logger.info("run_eve: %d scenario results", len(self.eve_scenarios))
 
@@ -641,6 +676,26 @@ class PnlEngine:
                 self.fwdOIS0,
             )
             logger.info("run_eve: KRD computed (%d points)", len(self.eve_krd))
+
+            # Convexity from parallel_up / parallel_down scenarios
+            from pnl_engine.eve import compute_eve_convexity
+
+            eve_base_by_ccy = (
+                self.eve_results.groupby("Currency")["eve"].sum().to_dict()
+                if "Currency" in self.eve_results.columns else {}
+            )
+            up_rows = self.eve_scenarios[self.eve_scenarios["scenario"] == "parallel_up"]
+            down_rows = self.eve_scenarios[self.eve_scenarios["scenario"] == "parallel_down"]
+            eve_up_by_ccy = dict(zip(up_rows["currency"], up_rows["eve_shocked"])) if not up_rows.empty else {}
+            eve_down_by_ccy = dict(zip(down_rows["currency"], down_rows["eve_shocked"])) if not down_rows.empty else {}
+
+            if eve_base_by_ccy and eve_up_by_ccy and eve_down_by_ccy:
+                self.eve_convexity = compute_eve_convexity(
+                    eve_base_by_ccy, eve_up_by_ccy, eve_down_by_ccy,
+                )
+                logger.info("run_eve: convexity computed (eff_dur=%.4f, conv=%.4f)",
+                            self.eve_convexity["total"]["effective_duration"],
+                            self.eve_convexity["total"]["convexity"])
 
         return self.eve_results
 

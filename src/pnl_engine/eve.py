@@ -132,6 +132,7 @@ def compute_eve_scenarios(
     date_run: datetime,
     scenarios: pd.DataFrame,
     base_curves: pd.DataFrame,
+    nominal_adjuster: Optional[object] = None,
 ) -> pd.DataFrame:
     """Compute ΔEVE for each BCBS 368 scenario.
 
@@ -145,6 +146,10 @@ def compute_eve_scenarios(
         date_run: Reference date.
         scenarios: BCBS scenario definitions.
         base_curves: Base OIS forward curves DataFrame.
+        nominal_adjuster: Optional callable(deals, nominal_daily, days, ois_matrix)
+            -> np.ndarray. Called per scenario with the shocked OIS matrix to
+            adjust nominals (e.g., rate-dependent CPR). If None, nominals are
+            unchanged across scenarios.
 
     Returns:
         DataFrame: scenario, currency, eve_base, eve_shocked, delta_eve, pct_change.
@@ -180,9 +185,18 @@ def compute_eve_scenarios(
         # Build shocked OIS matrix
         ois_matrix_shocked = _build_ois_matrix(deals, shifted_curves, days)
 
+        # Adjust nominals for this scenario (e.g., rate-dependent CPR)
+        scenario_nominal = nominal_daily
+        if nominal_adjuster is not None:
+            try:
+                adjusted, _ = nominal_adjuster(deals, nominal_daily, days, ois_matrix_shocked)
+                scenario_nominal = adjusted
+            except Exception:
+                logger.warning("nominal_adjuster failed for scenario %s, using base nominals", sc_name)
+
         # Compute shocked EVE
         eve_shocked = compute_eve(
-            nominal_daily, ois_matrix_shocked, rate_matrix, mm_vector,
+            scenario_nominal, ois_matrix_shocked, rate_matrix, mm_vector,
             days, deals, date_run,
         )
 
@@ -206,6 +220,85 @@ def compute_eve_scenarios(
             })
 
     return pd.DataFrame(results)
+
+
+def compute_eve_convexity(
+    eve_base_by_ccy: dict[str, float],
+    eve_up_by_ccy: dict[str, float],
+    eve_down_by_ccy: dict[str, float],
+    delta_r: float = 0.02,
+) -> dict:
+    """Compute effective duration and convexity from parallel ±shock EVE.
+
+    Uses second-order finite difference from BCBS 368 parallel_up/down
+    scenarios (default ±200bp).
+
+    Formulas:
+      effective_duration = -(EVE_up - EVE_down) / (2 × EVE_base × Δr)
+      convexity = (EVE_up + EVE_down - 2×EVE_base) / (EVE_base × Δr²)
+
+    Args:
+        eve_base_by_ccy: Base EVE by currency {"CHF": 1000000, ...}.
+        eve_up_by_ccy: EVE under parallel_up scenario.
+        eve_down_by_ccy: EVE under parallel_down scenario.
+        delta_r: Shock size in decimal (0.02 = 200bp).
+
+    Returns:
+        Dict with "total" and "by_currency" convexity metrics.
+    """
+    by_currency = {}
+    total_base = 0.0
+    total_up = 0.0
+    total_down = 0.0
+
+    all_ccys = sorted(set(eve_base_by_ccy) | set(eve_up_by_ccy) | set(eve_down_by_ccy))
+
+    for ccy in all_ccys:
+        base = eve_base_by_ccy.get(ccy, 0.0)
+        up = eve_up_by_ccy.get(ccy, 0.0)
+        down = eve_down_by_ccy.get(ccy, 0.0)
+
+        total_base += base
+        total_up += up
+        total_down += down
+
+        if abs(base) > 1e-6:
+            eff_dur = -(up - down) / (2.0 * base * delta_r)
+            conv = (up + down - 2.0 * base) / (base * delta_r ** 2)
+        else:
+            eff_dur = 0.0
+            conv = 0.0
+
+        by_currency[ccy] = {
+            "eve_base": round(base, 0),
+            "eve_up": round(up, 0),
+            "eve_down": round(down, 0),
+            "effective_duration": round(eff_dur, 4),
+            "convexity": round(conv, 4),
+            "delta_eve_up": round(up - base, 0),
+            "delta_eve_down": round(down - base, 0),
+        }
+
+    # Portfolio total
+    if abs(total_base) > 1e-6:
+        total_dur = -(total_up - total_down) / (2.0 * total_base * delta_r)
+        total_conv = (total_up + total_down - 2.0 * total_base) / (total_base * delta_r ** 2)
+    else:
+        total_dur = 0.0
+        total_conv = 0.0
+
+    return {
+        "total": {
+            "eve_base": round(total_base, 0),
+            "eve_up": round(total_up, 0),
+            "eve_down": round(total_down, 0),
+            "effective_duration": round(total_dur, 4),
+            "convexity": round(total_conv, 4),
+            "delta_eve_up": round(total_up - total_base, 0),
+            "delta_eve_down": round(total_down - total_base, 0),
+        },
+        "by_currency": by_currency,
+    }
 
 
 def compute_key_rate_durations(

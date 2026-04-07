@@ -41,7 +41,7 @@ def cmd_what_if(
         except Exception:
             pass
 
-    # Map CLI direction to what-if direction: D/S (deposit/sell = liability) -> L, B (buy) -> B
+    # Map CLI direction to what-if direction: D/S (deposit/sell = liability) -> L, B (bond) -> B
     wif_direction = "L" if direction.upper() in ("D", "S", "L") else "B"
 
     # Determine day-count convention from currency

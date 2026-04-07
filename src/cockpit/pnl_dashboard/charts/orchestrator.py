@@ -122,7 +122,7 @@ def build_pnl_dashboard_data(
         "counterparty_pnl": _build_counterparty_pnl(df, pnl_by_deal),
         "pnl_alerts": _build_pnl_alerts(df, alert_thresholds),
         # Wave 2
-        "budget": _build_budget(df, budget),
+        "budget": _build_budget(df, budget, deals=deals, pnl_by_deal=pnl_by_deal),
         "hedge": _build_hedge_effectiveness(df, hedge_pairs, pnl_by_deal, scenarios_data),
         # Wave 3
         "nii_at_risk": _build_nii_at_risk(df, scenarios_data),

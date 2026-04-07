@@ -463,6 +463,49 @@ class TestBudget:
         assert "ytd" in result
         assert result["ytd"]["budget"] != 0
 
+    def test_variance_waterfall_with_decomposition(self, sample_stacked):
+        budget = pd.DataFrame({
+            "currency": ["CHF", "CHF"],
+            "month": ["2026-04", "2026-05"],
+            "budget_nii": [80, 90],
+            "budget_nominal": [1e6, 1e6],
+            "budget_rate": [0.02, 0.02],
+        })
+        pnl_by_deal = pd.DataFrame({
+            "Deal currency": ["CHF", "CHF"],
+            "Shock": ["0", "0"],
+            "Nominal": [1.1e6, 1.1e6],
+            "PnL": [90, 100],
+        })
+        deals = pd.DataFrame({
+            "Currency": ["CHF"],
+            "Dealid": [1],
+        })
+        result = _build_budget(sample_stacked, budget, deals=deals, pnl_by_deal=pnl_by_deal)
+        assert result["has_data"] is True
+        chf = result["by_currency"]["CHF"]
+        assert "volume_effect" in chf
+        assert "rate_effect" in chf
+        assert "new_deal_effect" in chf
+        assert "matured_effect" in chf
+        # Waterfall present
+        assert "variance_waterfall" in result
+        wf = result["variance_waterfall"]
+        assert wf[0]["label"] == "Budget NII"
+        assert wf[-1]["label"] == "Actual NII"
+
+    def test_backward_compat_no_decomposition(self, sample_stacked):
+        """Without budget_nominal/budget_rate, falls back to simple variance."""
+        budget = pd.DataFrame({
+            "currency": ["CHF"],
+            "month": ["2026-04"],
+            "budget_nii": [80],
+        })
+        result = _build_budget(sample_stacked, budget)
+        assert result["has_data"] is True
+        # No waterfall without decomposition columns
+        assert "variance_waterfall" not in result
+
 
 # ---------------------------------------------------------------------------
 # Tests: ALM Enhancement — Hedge Effectiveness (F5)

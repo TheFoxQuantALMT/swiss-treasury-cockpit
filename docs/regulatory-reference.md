@@ -341,18 +341,18 @@ Direction filtering ensures valid combinations:
 **Where applied:**
 - `src/cockpit/pnl_dashboard/charts.py` -- `_build_hedge_effectiveness()` computes per-pair metrics
 - `src/cockpit/pnl_dashboard/templates/_hedge.html` -- Dashboard tab rendering
-- Input: `hedge_pairs.xlsx` parsed by `parse_hedge_pairs()`
+- Input: Hedge pairs derived from `strategy_ias` column in `deals.xlsx` via `derive_hedge_pairs()`
 
-**Input format (`hedge_pairs.xlsx`):**
+**Input format (columns in `deals.xlsx`):**
 
 | Column | Description |
 |--------|-------------|
-| `pair_id` | Unique pair identifier |
-| `pair_name` | Display name |
+| `strategy_ias` | Groups deals into hedge relationships (same value = same pair) |
 | `hedge_type` | `cash_flow` or `fair_value` |
 | `ias_standard` | `IAS39` or `IFRS9` — determines which test applies |
-| `hedged_item_deal_ids` | Comma-separated Dealid list for the hedged exposure |
-| `hedging_instrument_deal_ids` | Comma-separated Dealid list for the hedging instrument |
+| `designation_date` | Date the hedge was formally designated |
+
+Hedged items (IAM/LD, BND, FXS) vs instruments (IRS, IRS-MTM, HCD) are determined by product type.
 
 **How applied:**
 

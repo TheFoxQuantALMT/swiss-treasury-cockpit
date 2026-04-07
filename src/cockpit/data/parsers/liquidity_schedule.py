@@ -1,6 +1,6 @@
 """Parser for liquidity schedule — daily cash flows (90 days) + monthly thereafter.
 
-Same wide format as schedule.xlsx: Dealid, Direction, Currency, then date columns.
+Same wide format as rate_schedule.xlsx: Dealid, Direction, Currency, then date columns.
 Date columns can be YYYY/MM (monthly) or YYYY/MM/DD (daily).
 Values represent cash flows (interest + principal), not outstanding balances.
 """

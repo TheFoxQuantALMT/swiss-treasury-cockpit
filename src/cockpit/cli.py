@@ -65,7 +65,6 @@ def main() -> None:
     p_render_pnl.add_argument("--funding-source", choices=["ois", "coc"], default="ois",
                               help="Funding rate source: OIS curve (default) or deal-level CocRate")
     p_render_pnl.add_argument("--budget", dest="budget_file", help="Path to budget.xlsx")
-    p_render_pnl.add_argument("--hedge-pairs", dest="hedge_pairs_file", help="Path to hedge_pairs.xlsx")
     p_render_pnl.add_argument("--prev-date", help="Previous date for P&L attribution (YYYY-MM-DD)")
     p_render_pnl.add_argument("--prev-input-dir", help="Directory for previous date's Excel inputs (defaults to --input-dir)")
     p_render_pnl.add_argument("--shocks", help="Comma-separated shock list (e.g. '-200,-100,0,50,100,200,wirp') or 'extended' for full grid")
@@ -142,7 +141,7 @@ def main() -> None:
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
     elif args.command == "render-pnl":
         from cockpit.commands.render import cmd_render_pnl
-        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source, budget_file=args.budget_file, hedge_pairs_file=args.hedge_pairs_file, prev_date=args.prev_date, prev_input_dir=getattr(args, 'prev_input_dir', None), shocks=getattr(args, 'shocks', None), format=getattr(args, 'format', 'html'), custom_scenarios=getattr(args, 'custom_scenarios', None))
+        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source, budget_file=args.budget_file, prev_date=args.prev_date, prev_input_dir=getattr(args, 'prev_input_dir', None), shocks=getattr(args, 'shocks', None), format=getattr(args, 'format', 'html'), custom_scenarios=getattr(args, 'custom_scenarios', None))
     elif args.command == "backfill":
         from cockpit.commands.backfill import cmd_backfill
         cmd_backfill(from_date=args.from_date, to_date=args.to_date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source)

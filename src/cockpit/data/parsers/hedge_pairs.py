@@ -1,49 +1,73 @@
-"""Parser for hedge_pairs.xlsx — IAS hedge relationship definitions."""
+"""Derive hedge pairs from strategy_ias grouping in deals.
+
+Deals sharing the same ``Strategy IAS`` value form a hedge relationship.
+Hedged items (IAM/LD, BND, FXS) vs hedging instruments (IRS, IRS-MTM, HCD)
+are determined by product type.
+"""
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
+_HEDGED_PRODUCTS = {"IAM/LD", "BND", "FXS"}
+_INSTRUMENT_PRODUCTS = {"IRS", "IRS-MTM", "HCD"}
 
-def parse_hedge_pairs(path: Path | str) -> pd.DataFrame:
-    """Parse hedge pairs Excel file.
 
-    Expected sheet: "HedgePairs" with columns:
-        pair_id, pair_name, hedged_item_deal_ids (comma-separated),
-        hedging_instrument_deal_ids (comma-separated),
-        hedge_type (fair_value|cash_flow), designation_date,
-        ias_standard (IAS39|IFRS9)
+def derive_hedge_pairs(deals: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Build hedge pairs DataFrame from deals with Strategy IAS.
 
-    Returns:
-        DataFrame with standardized columns.
+    Groups deals by ``Strategy IAS`` and splits each group into hedged items
+    (IAM/LD, BND, FXS) and hedging instruments (IRS, IRS-MTM, HCD).
+
+    Returns DataFrame with columns: pair_id, pair_name, hedged_item_deal_ids,
+    hedging_instrument_deal_ids, hedge_type, ias_standard.
+    Returns None if no deals have Strategy IAS set.
     """
-    path = Path(path)
-    try:
-        df = pd.read_excel(path, sheet_name="HedgePairs", engine="openpyxl")
-    except ValueError:
-        df = pd.read_excel(path, sheet_name=0, engine="openpyxl")
+    if deals is None or deals.empty:
+        return None
 
-    # Normalize column names
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    strat_col = "Strategy IAS"
+    if strat_col not in deals.columns:
+        return None
 
-    required = {"pair_id", "hedged_item_deal_ids", "hedging_instrument_deal_ids"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"hedge_pairs.xlsx missing columns: {missing}")
+    strat_deals = deals[deals[strat_col].notna() & (deals[strat_col].astype(str).str.strip() != "")].copy()
+    if strat_deals.empty:
+        return None
 
-    # Fill defaults
-    if "pair_name" not in df.columns:
-        df["pair_name"] = df["pair_id"].apply(lambda x: f"Pair {x}")
-    if "hedge_type" not in df.columns:
-        df["hedge_type"] = "cash_flow"
-    if "ias_standard" not in df.columns:
-        df["ias_standard"] = "IFRS9"
-    if "designation_date" not in df.columns:
-        df["designation_date"] = ""
+    product_col = "Product"
+    dealid_col = "Dealid" if "Dealid" in strat_deals.columns else "deal_id"
+    ccy_col = "Currency" if "Currency" in strat_deals.columns else "currency"
 
-    # Ensure string types for deal ID columns
-    df["hedged_item_deal_ids"] = df["hedged_item_deal_ids"].astype(str)
-    df["hedging_instrument_deal_ids"] = df["hedging_instrument_deal_ids"].astype(str)
+    pairs = []
+    for strat_name, group in strat_deals.groupby(strat_col):
+        hedged_mask = group[product_col].isin(_HEDGED_PRODUCTS)
+        instrument_mask = group[product_col].isin(_INSTRUMENT_PRODUCTS)
 
-    return df.reset_index(drop=True)
+        hedged_ids = group.loc[hedged_mask, dealid_col].astype(str).tolist()
+        instrument_ids = group.loc[instrument_mask, dealid_col].astype(str).tolist()
+
+        if not hedged_ids or not instrument_ids:
+            continue
+
+        # Currency from hedged items for pair name
+        currencies = group.loc[hedged_mask, ccy_col].unique() if ccy_col in group.columns else []
+        ccy_label = "/".join(sorted(currencies)) if len(currencies) > 0 else ""
+
+        # Hedge metadata — take from first deal in group (all should be identical)
+        hedge_type = group["hedge_type"].dropna().iloc[0] if "hedge_type" in group.columns and group["hedge_type"].notna().any() else "cash_flow"
+        ias_standard = group["ias_standard"].dropna().iloc[0] if "ias_standard" in group.columns and group["ias_standard"].notna().any() else "IFRS9"
+
+        pairs.append({
+            "pair_id": str(strat_name),
+            "pair_name": f"{ccy_label} {strat_name}".strip(),
+            "hedged_item_deal_ids": ",".join(hedged_ids),
+            "hedging_instrument_deal_ids": ",".join(instrument_ids),
+            "hedge_type": str(hedge_type),
+            "ias_standard": str(ias_standard),
+        })
+
+    if not pairs:
+        return None
+
+    return pd.DataFrame(pairs)

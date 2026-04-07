@@ -116,7 +116,7 @@ Each data source has two parsers: an **ideal-format** parser (clean schema, thin
 | File | Sheet | Parser | Description |
 |------|-------|--------|-------------|
 | `deals.xlsx` | Deals | `parse_deals()` | Unified BOOK1 + BOOK2 deals |
-| `schedule.xlsx` | Schedule | `parse_schedule()` | Monthly nominal balances |
+| `rate_schedule.xlsx` | Schedule | `parse_schedule()` | Monthly nominal balances |
 | `wirp.xlsx` | WIRP | `parse_wirp_ideal()` | Rate expectations |
 | `reference_table.xlsx` | Reference | `parse_reference_table()` | Counterparty metadata |
 
@@ -187,7 +187,7 @@ Parses the MTD Standard Liquidity PnL Report. Auto-detects ideal format (checks 
 
 ### `parse_schedule(path) -> DataFrame`
 
-Parses ideal-format `schedule.xlsx` — monthly nominal balances with clean schema.
+Parses ideal-format `rate_schedule.xlsx` — monthly nominal balances with clean schema.
 
 **Source sheet:** "Schedule" (header row 1)
 
@@ -282,21 +282,9 @@ Parses BCBS 368 rate shock scenario definitions.
 
 If no file is provided, `get_default_scenarios()` returns the standard BCBS 368 definitions.
 
-### `parse_hedge_pairs(path) -> DataFrame`
+### `derive_hedge_pairs(deals) -> DataFrame`
 
-Parses hedge relationship designations.
-
-**Source sheet:** "HedgePairs"
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `pair_id` | int | Unique pair identifier |
-| `pair_name` | str | Descriptive name |
-| `hedged_item_deal_ids` | str | Comma-separated deal IDs |
-| `hedging_instrument_deal_ids` | str | Comma-separated deal IDs |
-| `hedge_type` | str | cash_flow, fair_value |
-| `designation_date` | date | Date of hedge designation |
-| `ias_standard` | str | IAS39, IFRS9 |
+Derives hedge pairs from ``Strategy IAS`` column in deals. Deals sharing the same ``strategy_ias`` value form a hedge relationship. Hedged items (IAM/LD, BND, FXS) vs hedging instruments (IRS, IRS-MTM, HCD) are determined by product type. Hedge metadata (``hedge_type``, ``ias_standard``, ``designation_date``) are columns on the deals themselves.
 
 ### `parse_nmd_profiles(path) -> DataFrame`
 
@@ -345,7 +333,7 @@ Parses per-currency alert threshold overrides.
 
 ### `parse_liquidity_schedule(path) -> DataFrame`
 
-Parses daily (90d) and monthly cash flow projections per deal. Same wide format as `schedule.xlsx` (echeancier). Powers the Liquidity Forecast dashboard tab.
+Parses daily (90d) and monthly cash flow projections per deal. Same wide format as `rate_schedule.xlsx` (echeancier). Powers the Liquidity Forecast dashboard tab.
 
 **Source sheet:** "LiquiditySchedule"
 

@@ -26,6 +26,62 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def compute_stressed_beta(
+    beta_base: float,
+    shock_bps: float,
+    beta_stress: float = 0.1,
+    threshold_bps: float = 200.0,
+) -> float:
+    """Compute stress-adjusted deposit beta.
+
+    Under large rate shocks (>threshold), depositors demand more passthrough.
+    Beta increases linearly beyond the threshold.
+
+    Formula:
+        beta = beta_base + beta_stress × max(0, |shock| - threshold) / 100
+        Capped at 1.0.
+
+    Args:
+        beta_base: Base deposit beta (e.g., 0.6).
+        shock_bps: Rate shock in basis points (absolute value used).
+        beta_stress: Beta increase per 100bp above threshold (default 0.1).
+        threshold_bps: Shock level before stress kicks in (default 200bp).
+
+    Returns:
+        Stress-adjusted beta, capped at 1.0.
+    """
+    excess = max(0.0, abs(shock_bps) - threshold_bps)
+    adjusted = beta_base + beta_stress * excess / 100.0
+    return min(adjusted, 1.0)
+
+
+def compute_stressed_decay(
+    decay_base: float,
+    shock_bps: float,
+    decay_stress: float = 0.05,
+    threshold_bps: float = 200.0,
+) -> float:
+    """Compute stress-adjusted NMD decay rate.
+
+    Under large rate shocks, deposits run off faster as rate-sensitive
+    depositors seek higher returns elsewhere.
+
+    Formula:
+        decay = decay_base + decay_stress × max(0, |shock| - threshold) / 100
+
+    Args:
+        decay_base: Base annual decay rate (e.g., 0.15).
+        shock_bps: Rate shock in basis points (absolute value used).
+        decay_stress: Decay increase per 100bp above threshold (default 0.05).
+        threshold_bps: Shock level before stress kicks in (default 200bp).
+
+    Returns:
+        Stress-adjusted decay rate.
+    """
+    excess = max(0.0, abs(shock_bps) - threshold_bps)
+    return decay_base + decay_stress * excess / 100.0
+
+
 def apply_nmd_decay(
     deals: pd.DataFrame,
     nmd_profiles: pd.DataFrame,
@@ -162,6 +218,7 @@ def apply_deposit_beta(
     deals: pd.DataFrame,
     nmd_profiles: pd.DataFrame,
     ois_matrix: np.ndarray,
+    shock_bps: float = 0.0,
 ) -> np.ndarray:
     """Adjust client rates for deposit beta.
 
@@ -170,11 +227,16 @@ def apply_deposit_beta(
     For deposits with beta < 1.0, rate passthrough is partial:
     when OIS rises by 100bp, client rate only rises by beta × 100bp.
 
+    When ``shock_bps`` is provided and exceeds the stress threshold (200bp),
+    beta is adjusted upward via ``compute_stressed_beta()`` to reflect
+    increased depositor rate sensitivity under large shocks.
+
     Args:
         rate_matrix: (n_deals, n_days) original client rate matrix.
         deals: Deal metadata.
         nmd_profiles: NMD profile definitions.
         ois_matrix: (n_deals, n_days) OIS forward rates.
+        shock_bps: Rate shock in basis points (default 0 = no stress adjustment).
 
     Returns:
         Modified rate_matrix with beta-adjusted rates for NMD deals.
@@ -218,6 +280,10 @@ def apply_deposit_beta(
 
         beta = float((pd.to_numeric(matched.get("deposit_beta", 1), errors="coerce").fillna(1) * w).sum())
         floor_rate = float((pd.to_numeric(matched.get("floor_rate", 0), errors="coerce").fillna(0) * w).sum())
+
+        # Apply stress adjustment if shock is large
+        if shock_bps != 0.0:
+            beta = compute_stressed_beta(beta, shock_bps)
 
         if beta >= 1.0:
             continue  # No adjustment needed

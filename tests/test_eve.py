@@ -116,6 +116,129 @@ class TestEveScenarios:
             assert total_delta != 0
 
 
+class TestEveConvexity:
+    """Test compute_eve_convexity() — second-order metrics."""
+
+    def test_known_answer_convexity(self):
+        """Verify convexity formula with known values."""
+        from pnl_engine.eve import compute_eve_convexity
+
+        # EVE_base=1000, EVE_up=960, EVE_down=1042
+        # eff_dur = -(960 - 1042) / (2 * 1000 * 0.02) = 82/40 = 2.05
+        # convexity = (960 + 1042 - 2000) / (1000 * 0.0004) = 2/0.4 = 5.0
+        result = compute_eve_convexity(
+            {"CHF": 1000.0},
+            {"CHF": 960.0},
+            {"CHF": 1042.0},
+            delta_r=0.02,
+        )
+        assert abs(result["total"]["effective_duration"] - 2.05) < 0.01
+        assert abs(result["total"]["convexity"] - 5.0) < 0.01
+        assert "CHF" in result["by_currency"]
+        assert abs(result["by_currency"]["CHF"]["effective_duration"] - 2.05) < 0.01
+
+    def test_positive_convexity_vanilla_bond(self):
+        """Vanilla fixed-rate bond should have positive convexity."""
+        from pnl_engine.eve import compute_eve_convexity
+
+        # Simulate: rate up hurts more than rate down helps (positive convexity)
+        result = compute_eve_convexity(
+            {"CHF": 1_000_000},
+            {"CHF": 950_000},   # -50k
+            {"CHF": 1_052_000}, # +52k (asymmetric: down helps more)
+            delta_r=0.02,
+        )
+        assert result["total"]["convexity"] > 0
+        assert result["total"]["effective_duration"] > 0
+
+    def test_multi_currency(self):
+        """Convexity computed per currency and total."""
+        from pnl_engine.eve import compute_eve_convexity
+
+        result = compute_eve_convexity(
+            {"CHF": 500_000, "EUR": 300_000},
+            {"CHF": 480_000, "EUR": 288_000},
+            {"CHF": 521_000, "EUR": 313_000},
+        )
+        assert "CHF" in result["by_currency"]
+        assert "EUR" in result["by_currency"]
+        assert result["total"]["eve_base"] == 800_000
+
+    def test_zero_eve_base(self):
+        """Zero EVE base should return zero duration and convexity."""
+        from pnl_engine.eve import compute_eve_convexity
+
+        result = compute_eve_convexity(
+            {"CHF": 0.0},
+            {"CHF": 0.0},
+            {"CHF": 0.0},
+        )
+        assert result["total"]["effective_duration"] == 0.0
+        assert result["total"]["convexity"] == 0.0
+
+    def test_engine_integration(self):
+        """run_eve with scenarios populates eve_convexity attribute."""
+        from cockpit.data.parsers.scenarios import parse_scenarios
+        pnl = ForecastRatePnL(
+            dateRun=datetime(2026, 4, 5),
+            dateRates=datetime(2026, 4, 5),
+            export=False,
+            input_dir=str(FIXTURES),
+            output_dir="output",
+            funding_source="ois",
+        )
+        engine = pnl._engine
+        scenarios = parse_scenarios(FIXTURES / "scenarios.xlsx")
+        engine.run_eve(scenarios=scenarios)
+        assert engine.eve_convexity is not None
+        assert "total" in engine.eve_convexity
+        assert "by_currency" in engine.eve_convexity
+        assert "effective_duration" in engine.eve_convexity["total"]
+        assert "convexity" in engine.eve_convexity["total"]
+
+
+class TestRateDependentCpr:
+    """Test rate-dependent CPR model."""
+
+    def test_no_refi_incentive(self):
+        """When market rate >= deal rate, CPR stays at base."""
+        from pnl_engine.prepayment import rate_dependent_cpr
+        cpr = rate_dependent_cpr(0.05, deal_rate=0.03, market_rate=0.04)
+        assert cpr == 0.05
+
+    def test_refi_incentive_increases_cpr(self):
+        """When market rate < deal rate - threshold, CPR increases."""
+        from pnl_engine.prepayment import rate_dependent_cpr
+        cpr = rate_dependent_cpr(0.05, deal_rate=0.04, market_rate=0.02)
+        # incentive = 0.04 - 0.02 - 0.005 = 0.015
+        # adjusted = 0.05 * (1 + 2.0 * 0.015) = 0.05 * 1.03 = 0.0515
+        assert cpr > 0.05
+        assert abs(cpr - 0.0515) < 0.001
+
+    def test_cpr_capped_at_40pct(self):
+        """CPR should never exceed 40%."""
+        from pnl_engine.prepayment import rate_dependent_cpr
+        cpr = rate_dependent_cpr(0.05, deal_rate=0.10, market_rate=0.01)
+        assert cpr <= 0.40
+
+    def test_apply_cpr_rate_dependent(self):
+        """Rate-dependent CPR adjusts nominals based on OIS level."""
+        from pnl_engine.prepayment import apply_cpr_rate_dependent
+        deals = pd.DataFrame([
+            {"Product": "IAM/LD", "is_floating": False, "Clientrate": 0.04, "Dealid": 1},
+        ])
+        nominal = np.ones((1, 365)) * 1_000_000
+        days = pd.date_range("2026-01-01", periods=365, freq="D")
+        # Low OIS → higher CPR
+        ois_low = np.ones((1, 365)) * 0.01
+        result_low, _ = apply_cpr_rate_dependent(deals, nominal, days, ois_low)
+        # High OIS → base CPR
+        ois_high = np.ones((1, 365)) * 0.05
+        result_high, _ = apply_cpr_rate_dependent(deals, nominal, days, ois_high)
+        # Low OIS should produce more prepayment (lower end nominal)
+        assert result_low[0, -1] < result_high[0, -1]
+
+
 class TestEveChartBuilder:
     """Test _build_eve chart data function."""
 

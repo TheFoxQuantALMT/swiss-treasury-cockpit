@@ -247,12 +247,11 @@ uv run python -m tests.fixtures.generate_mock_inputs
 | File | Content |
 |------|---------|
 | `deals.xlsx` | 13 deals: 10 BOOK1 (deposits, loans, bonds, FX swap, floating SARON, strategy IAS, WM perimeter) + 3 BOOK2 IRS |
-| `schedule.xlsx` | 10 rows, 60 monthly balance columns (2026/04-2031/03), zeroed after maturity |
+| `rate_schedule.xlsx` | 10 rows, 60 monthly balance columns (2026/04-2031/03), zeroed after maturity |
 | `wirp.xlsx` | 19 rate expectations across 4 indices (CHFSON, EUREST, USSOFR, GBPOIS) |
 | `reference_table.xlsx` | 8 counterparties with ratings, HQLA levels, countries |
 | `budget.xlsx` | Monthly NII budget per currency (CHF, EUR, USD, GBP) |
 | `scenarios.xlsx` | BCBS 368 rate shock definitions (6 scenarios × 10 tenor points × 4 currencies) |
-| `hedge_pairs.xlsx` | 2 hedge relationship designations (cash flow + fair value) |
 | `nmd_profiles.xlsx` | 7 NMD behavioral profiles (3 tiers × currencies: core, volatile, term) |
 | `limits.xlsx` | 4 board-approved limit metrics (NII sensitivity, NII-at-Risk, EVE change) |
 | `alert_thresholds.xlsx` | 5 per-currency alert threshold overrides (CHF, EUR, USD, GBP, ALL) |

@@ -621,6 +621,26 @@ class TestBuildFtp:
         result = _build_ftp(empty_df, deals=sample_deals, date_run=datetime(2026, 4, 6))
         assert result["has_data"] is True
 
+    def test_ftp_decomposition_present(self, empty_df, sample_deals):
+        """FTP decomposition should include duration/credit/liquidity split."""
+        result = _build_ftp(empty_df, deals=sample_deals)
+        if result["has_data"]:
+            assert "ftp_decomposition" in result
+            decomp = result["ftp_decomposition"]
+            assert "duration_contribution_bps" in decomp
+            assert "credit_spread_bps" in decomp
+            assert "liquidity_premium_bps" in decomp
+            assert "avg_alm_margin_bps" in decomp
+
+    def test_ftp_decomposition_in_top_deals(self, empty_df, sample_deals):
+        """Top deals should include per-deal decomposition fields."""
+        result = _build_ftp(empty_df, deals=sample_deals)
+        if result["has_data"] and result["top_deals"]:
+            deal = result["top_deals"][0]
+            assert "duration_contribution_bps" in deal
+            assert "credit_spread_bps" in deal
+            assert "liquidity_premium_bps" in deal
+
 
 # ---------------------------------------------------------------------------
 # 9. _build_trends

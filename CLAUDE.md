@@ -100,7 +100,7 @@ render → output/{date}_cockpit.html
 - **Strategy IAS**: Deals with IAS hedge designation get decomposed into 4 legs (IAM/LD-NHCD, IAM/LD-HCD, BND-NHCD, BND-HCD) with direction filtering.
 - **WASP**: External rate curve library. When unavailable, the engine builds mock curves from WIRP data (graceful degradation).
 - **FTP (Funds Transfer Pricing)**: Per-deal internal transfer rate. Enables 3-way margin split: Client Margin (ClientRate - FTP), ALM Margin (FTP - OIS), Total NII = sum. Aggregated by perimeter (CC/WM/CIB) for business unit profitability.
-- **Liquidity Forecast**: Daily (90d) + monthly cash flow projections per deal. Same wide format as schedule.xlsx. Powers the Liquidity Forecast tab with inflow/outflow bars, cumulative gap, survival horizon, and top maturing deals.
+- **Liquidity Forecast**: Daily (90d) + monthly cash flow projections per deal. Same wide format as rate_schedule.xlsx. Powers the Liquidity Forecast tab with inflow/outflow bars, cumulative gap, survival horizon, and top maturing deals.
 - **Basis Risk**: Spread compression sensitivity by product and currency (±50bp shocks) in `pnl_engine/basis_risk.py`.
 - **CPR (Prepayment)**: Monthly survival factor `(1-CPR)^(1/12)` for fixed-rate mortgages in `pnl_engine/prepayment.py`.
 - **Reverse Stress Test**: Bisection search for the shock level that breaches NII limit or ΔEVE/Tier1 threshold in `pnl_engine/reverse_stress.py`.
@@ -124,7 +124,6 @@ All optional — auto-discovered by `cmd_render_pnl()` via glob patterns:
 |------|--------|-------------|
 | `budget.xlsx` | `parse_budget()` | Monthly NII budget per currency |
 | `scenarios.xlsx` | `parse_scenarios()` | BCBS 368 tenor-dependent rate shocks |
-| `hedge_pairs.xlsx` | `parse_hedge_pairs()` | Hedge relationship designations |
 | `nmd_profiles.xlsx` | `parse_nmd_profiles()` | NMD behavioral decay profiles |
 | `limits.xlsx` | `parse_limits()` | Board-approved NII/EVE limits |
 | `alert_thresholds.xlsx` | `parse_alert_thresholds()` | Per-currency alert threshold overrides |

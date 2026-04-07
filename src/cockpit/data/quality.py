@@ -185,6 +185,108 @@ def check_rate_staleness(
     )
 
 
+def check_rate_bounds(
+    deals: Optional[pd.DataFrame],
+    min_rate: float = -0.02,
+    max_rate: float = 0.20,
+) -> list[QualityCheck]:
+    """Check that key rate columns are within plausible bounds.
+
+    Flags deals where Clientrate or EqOisRate fall outside [min_rate, max_rate].
+    """
+    if deals is None or deals.empty:
+        return [QualityCheck("Rate Bounds", "warn", "N/A", "No deals provided")]
+
+    checks = []
+    for col in ["Clientrate", "EqOisRate"]:
+        if col not in deals.columns:
+            continue
+        rates = pd.to_numeric(deals[col], errors="coerce").dropna()
+        if rates.empty:
+            continue
+        oob = rates[(rates < min_rate) | (rates > max_rate)]
+        n = len(oob)
+        status = "pass" if n == 0 else "warn" if n <= 3 else "fail"
+        detail = f"{n} deal(s) with {col} outside [{min_rate:.2%}, {max_rate:.2%}]"
+        if 0 < n <= 5:
+            detail += f" — values: {oob.values.tolist()}"
+        checks.append(QualityCheck(f"Rate Bounds ({col})", status, n, detail))
+
+    return checks if checks else [QualityCheck("Rate Bounds", "pass", 0, "No rate columns found")]
+
+
+def check_duplicate_deals(deals: Optional[pd.DataFrame]) -> QualityCheck:
+    """Check for duplicate Dealid values."""
+    if deals is None or deals.empty:
+        return QualityCheck("Duplicate Deals", "warn", "N/A", "No deals provided")
+    if "Dealid" not in deals.columns:
+        return QualityCheck("Duplicate Deals", "warn", "N/A", "No Dealid column")
+
+    dups = deals["Dealid"].dropna()
+    dup_ids = dups[dups.duplicated(keep=False)].unique()
+    n = len(dup_ids)
+    status = "pass" if n == 0 else "warn" if n <= 3 else "fail"
+    detail = f"{n} duplicate Dealid(s)"
+    if 0 < n <= 5:
+        detail += f": {sorted(dup_ids)[:5]}"
+    return QualityCheck("Duplicate Deals", status, n, detail)
+
+
+def check_maturity_consistency(deals: Optional[pd.DataFrame]) -> QualityCheck:
+    """Check that Maturitydate is after Valuedate for all deals."""
+    if deals is None or deals.empty:
+        return QualityCheck("Maturity Consistency", "warn", "N/A", "No deals provided")
+
+    mat_col = "Maturitydate" if "Maturitydate" in deals.columns else None
+    val_col = "Valuedate" if "Valuedate" in deals.columns else None
+
+    if mat_col is None:
+        return QualityCheck("Maturity Consistency", "warn", "N/A", "No Maturitydate column")
+    if val_col is None:
+        return QualityCheck("Maturity Consistency", "pass", 0, "No Valuedate column to compare")
+
+    mat = pd.to_datetime(deals[mat_col], errors="coerce")
+    val = pd.to_datetime(deals[val_col], errors="coerce")
+    both_valid = mat.notna() & val.notna()
+    bad = (mat[both_valid] < val[both_valid])
+    n = int(bad.sum())
+
+    status = "pass" if n == 0 else "warn" if n <= 2 else "fail"
+    detail = f"{n} deal(s) where Maturitydate < Valuedate"
+    if n > 0 and "Dealid" in deals.columns:
+        bad_ids = deals.loc[bad[bad].index, "Dealid"].tolist()[:5]
+        detail += f" — DealIds: {bad_ids}"
+    return QualityCheck("Maturity Consistency", status, n, detail)
+
+
+def check_sign_consistency(deals: Optional[pd.DataFrame]) -> QualityCheck:
+    """Check that Amount sign is consistent with Direction.
+
+    Convention: Deposits (D) should have positive Amount (bank receives funds).
+    Loans (L) should have negative Amount (bank lends out).
+    """
+    if deals is None or deals.empty:
+        return QualityCheck("Sign Consistency", "warn", "N/A", "No deals provided")
+    if "Direction" not in deals.columns or "Amount" not in deals.columns:
+        return QualityCheck("Sign Consistency", "warn", "N/A", "Missing Direction or Amount")
+
+    amounts = pd.to_numeric(deals["Amount"], errors="coerce")
+    directions = deals["Direction"]
+
+    # Loans: Amount should be negative (or zero)
+    loan_mask = directions == "L"
+    loan_positive = loan_mask & (amounts > 0)
+
+    # Deposits: Amount should be positive (or zero)
+    dep_mask = directions == "D"
+    dep_negative = dep_mask & (amounts < 0)
+
+    n = int(loan_positive.sum() + dep_negative.sum())
+    status = "pass" if n == 0 else "warn" if n <= 3 else "fail"
+    detail = f"{n} deal(s) with Amount sign inconsistent with Direction"
+    return QualityCheck("Sign Consistency", status, n, detail)
+
+
 def build_quality_report(
     date_run: datetime,
     deals: Optional[pd.DataFrame] = None,
@@ -197,6 +299,10 @@ def build_quality_report(
     report.checks.append(check_deal_rate_match(deals, echeancier))
     report.checks.append(check_orphan_deals(deals, echeancier))
     report.checks.append(check_rate_staleness(ois_curves, date_run))
+    report.checks.extend(check_rate_bounds(deals))
+    report.checks.append(check_duplicate_deals(deals))
+    report.checks.append(check_maturity_consistency(deals))
+    report.checks.append(check_sign_consistency(deals))
 
     report.coverage = check_field_coverage(deals)
 

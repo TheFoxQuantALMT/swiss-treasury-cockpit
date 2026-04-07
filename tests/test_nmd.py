@@ -8,7 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pnl_engine.nmd import apply_nmd_decay, apply_deposit_beta, get_behavioral_maturity
+from pnl_engine.nmd import (
+    apply_nmd_decay,
+    apply_deposit_beta,
+    compute_stressed_beta,
+    compute_stressed_decay,
+    get_behavioral_maturity,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ideal_input"
 
@@ -119,6 +125,89 @@ class TestDepositBeta:
         result = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix)
         # Effective = floor + beta * max(0, OIS - floor) = 0.01 + 0.5 * (0.04 - 0.01) = 0.025
         np.testing.assert_allclose(result[0, 0], 0.025)
+
+
+class TestStressedBeta:
+    """Test stress-adjusted deposit beta under large shocks."""
+
+    def test_no_stress_below_threshold(self):
+        """Beta unchanged when shock < 200bp."""
+        assert compute_stressed_beta(0.6, 100) == 0.6
+        assert compute_stressed_beta(0.6, 200) == 0.6
+
+    def test_stress_above_threshold(self):
+        """Beta increases for shocks > 200bp."""
+        result = compute_stressed_beta(0.6, 300)
+        # 0.6 + 0.1 * (300 - 200) / 100 = 0.6 + 0.1 = 0.7
+        assert abs(result - 0.7) < 1e-10
+
+    def test_stress_large_shock(self):
+        """Large shock (+500bp) increases beta significantly."""
+        result = compute_stressed_beta(0.6, 500)
+        # 0.6 + 0.1 * (500 - 200) / 100 = 0.6 + 0.3 = 0.9
+        assert abs(result - 0.9) < 1e-10
+
+    def test_stress_capped_at_1(self):
+        """Beta capped at 1.0 even for extreme shocks."""
+        result = compute_stressed_beta(0.6, 1000)
+        assert result == 1.0
+
+    def test_negative_shock_uses_absolute(self):
+        """Negative shocks also trigger stress (uses absolute value)."""
+        assert compute_stressed_beta(0.6, -300) == compute_stressed_beta(0.6, 300)
+
+
+class TestStressedDecay:
+    """Test stress-adjusted NMD decay rate."""
+
+    def test_no_stress_below_threshold(self):
+        assert compute_stressed_decay(0.15, 100) == 0.15
+
+    def test_stress_above_threshold(self):
+        result = compute_stressed_decay(0.15, 300)
+        # 0.15 + 0.05 * (300 - 200) / 100 = 0.15 + 0.05 = 0.20
+        assert abs(result - 0.20) < 1e-10
+
+    def test_decay_increases_with_shock(self):
+        d1 = compute_stressed_decay(0.15, 300)
+        d2 = compute_stressed_decay(0.15, 500)
+        assert d2 > d1
+
+
+class TestDepositBetaStressed:
+    """Test that apply_deposit_beta uses stressed beta under large shocks."""
+
+    def test_shock_300_higher_passthrough(self):
+        nmd_profiles = pd.DataFrame([
+            {"product": "IAM/LD", "currency": "CHF", "direction": "D",
+             "deposit_beta": 0.5, "floor_rate": 0.0},
+        ])
+        deals = pd.DataFrame([
+            {"Product": "IAM/LD", "Currency": "CHF", "Direction": "D"},
+        ])
+        rate_matrix = np.array([[0.02]])
+        ois_matrix = np.array([[0.04]])
+
+        base_result = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix, shock_bps=0)
+        stressed_result = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix, shock_bps=300)
+
+        # Stressed beta > base beta → higher rate passthrough
+        assert stressed_result[0, 0] > base_result[0, 0]
+
+    def test_shock_0_matches_base(self):
+        nmd_profiles = pd.DataFrame([
+            {"product": "IAM/LD", "currency": "CHF", "direction": "D",
+             "deposit_beta": 0.5, "floor_rate": 0.0},
+        ])
+        deals = pd.DataFrame([
+            {"Product": "IAM/LD", "Currency": "CHF", "Direction": "D"},
+        ])
+        rate_matrix = np.array([[0.02]])
+        ois_matrix = np.array([[0.04]])
+
+        base_result = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix)
+        shock0_result = apply_deposit_beta(rate_matrix, deals, nmd_profiles, ois_matrix, shock_bps=0)
+        np.testing.assert_array_equal(base_result, shock0_result)
 
 
 class TestBehavioralMaturity:

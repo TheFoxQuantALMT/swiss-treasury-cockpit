@@ -123,7 +123,7 @@ render_pnl_dashboard(
     deals=pnl.pnlData,
     pnl_by_deal=pnl.pnl_by_deal,
     budget=budget,
-    hedge_pairs=hedge_pairs,
+    hedge_pairs=derive_hedge_pairs(pnl.pnlData),
     prev_pnl_all_s=prev_pnl_all_s,
     forecast_history=forecast_history,
     scenarios_data=scenarios_data,
@@ -268,7 +268,6 @@ All auto-discovered via glob patterns from the input directory:
 |------|--------|-------------|
 | `*budget*` | `parse_budget()` | Monthly NII budget per currency |
 | `*scenario*` | `parse_scenarios()` | BCBS 368 tenor-dependent rate shocks |
-| `*hedge*` | `parse_hedge_pairs()` | Hedge relationship designations |
 | `*nmd*` | `parse_nmd_profiles()` | NMD behavioral decay profiles |
 | `*limit*` | `parse_limits()` | Board-approved NII/EVE limits |
 | `*alert*threshold*` | `parse_alert_thresholds()` | Per-currency alert threshold overrides |

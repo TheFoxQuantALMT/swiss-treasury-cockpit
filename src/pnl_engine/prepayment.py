@@ -90,3 +90,130 @@ def apply_cpr(
 
     logger.info("apply_cpr: applied to %d / %d deals", n_applied, len(deals))
     return result, log
+
+
+def rate_dependent_cpr(
+    base_cpr: float,
+    deal_rate: float,
+    market_rate: float,
+    refi_multiplier: float = 2.0,
+    refi_threshold: float = 0.005,
+) -> float:
+    """Compute rate-dependent CPR reflecting refinancing incentive.
+
+    When market rates fall below the deal's fixed rate by more than
+    *refi_threshold*, borrowers have incentive to prepay and refinance.
+    The CPR increases proportionally to the rate differential.
+
+    Formula:
+        incentive = max(0, deal_rate - market_rate - refi_threshold)
+        adjusted_cpr = base_cpr × (1 + refi_multiplier × incentive)
+        capped at 0.40 (40% annual)
+
+    Args:
+        base_cpr: Base annual CPR (e.g., 0.05 = 5%).
+        deal_rate: Fixed rate on the deal (decimal).
+        market_rate: Current market rate / OIS (decimal).
+        refi_multiplier: Sensitivity to refi incentive (default 2.0).
+        refi_threshold: Minimum rate gap before refi kicks in (default 50bp).
+
+    Returns:
+        Adjusted CPR (annual, decimal). Capped at 0.40.
+    """
+    incentive = max(0.0, deal_rate - market_rate - refi_threshold)
+    adjusted = base_cpr * (1.0 + refi_multiplier * incentive)
+    return min(adjusted, 0.40)
+
+
+def apply_cpr_rate_dependent(
+    deals: pd.DataFrame,
+    nominal_daily: np.ndarray,
+    days: pd.DatetimeIndex,
+    ois_matrix: np.ndarray,
+    cpr_overrides: dict[str, float] | None = None,
+) -> tuple[np.ndarray, list[dict]]:
+    """Apply rate-dependent CPR to nominal schedules.
+
+    Unlike ``apply_cpr()`` which uses a constant CPR, this function adjusts
+    the prepayment rate based on the relationship between each deal's fixed
+    rate and the prevailing OIS rate. When market rates fall below the
+    deal rate (refinancing incentive), CPR increases.
+
+    Used primarily for EVE scenario computation where the OIS matrix
+    reflects shocked rates.
+
+    Args:
+        deals: Deal metadata DataFrame.
+        nominal_daily: (n_deals, n_days) original nominal schedule.
+        days: DatetimeIndex of the date grid.
+        ois_matrix: (n_deals, n_days) OIS rates (may be shocked).
+        cpr_overrides: Optional product → base CPR overrides.
+
+    Returns:
+        Tuple of (modified nominal_daily, prepayment_log).
+    """
+    cpr_table = {**DEFAULT_CPR, **(cpr_overrides or {})}
+    result = nominal_daily.copy()
+    log: list[dict] = []
+
+    if len(days) < 2:
+        return result, log
+
+    t0 = days[0]
+    month_fracs = np.array([(d - t0).days / 30.44 for d in days])
+    month_fracs = np.maximum(month_fracs, 0.0)
+
+    n_applied = 0
+    for i in range(len(deals)):
+        deal = deals.iloc[i]
+        product = str(deal.get("Product", "")).strip()
+        is_floating = bool(deal.get("is_floating", False))
+
+        if is_floating:
+            continue
+
+        base_cpr = cpr_table.get(product)
+        if base_cpr is None or base_cpr <= 0:
+            continue
+
+        # Deal's fixed rate (Clientrate or RateRef)
+        deal_rate = float(deal.get("Clientrate", deal.get("RateRef", 0.0)))
+
+        # Per-day adjusted CPR based on OIS level
+        alive = nominal_daily[i] != 0
+        current_nom = nominal_daily[i, 0]
+        if current_nom == 0:
+            nonzero = np.nonzero(nominal_daily[i])[0]
+            if len(nonzero) == 0:
+                continue
+            current_nom = nominal_daily[i, nonzero[0]]
+
+        # Apply day-by-day survival
+        for d in range(len(days)):
+            if not alive[d]:
+                result[i, d] = 0.0
+                continue
+
+            market_rate = float(ois_matrix[i, d])
+            cpr_adj = rate_dependent_cpr(base_cpr, deal_rate, market_rate)
+            monthly_survival = (1.0 - cpr_adj) ** (1.0 / 12.0)
+            survival = monthly_survival ** month_fracs[d]
+            result[i, d] = current_nom * survival * np.sign(nominal_daily[i, d])
+
+        n_applied += 1
+        deal_id = str(deal.get("Dealid", f"idx_{i}"))
+        final = float(result[i, -1]) if np.any(result[i] != 0) else 0.0
+
+        log.append({
+            "deal_id": deal_id,
+            "product": product,
+            "base_cpr": base_cpr,
+            "deal_rate": deal_rate,
+            "rate_dependent": True,
+            "initial_nominal": round(float(abs(current_nom)), 0),
+            "final_nominal": round(abs(final), 0),
+            "reduction_pct": round((1 - abs(final) / abs(current_nom)) * 100, 1) if current_nom != 0 else 0.0,
+        })
+
+    logger.info("apply_cpr_rate_dependent: applied to %d / %d deals", n_applied, len(deals))
+    return result, log

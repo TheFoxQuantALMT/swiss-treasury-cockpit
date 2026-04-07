@@ -2,7 +2,7 @@
 
 Creates 4 files in the specified output directory:
   - deals.xlsx    (unified BOOK1 + BOOK2)
-  - schedule.xlsx (monthly nominal balances)
+  - rate_schedule.xlsx (monthly nominal balances)
   - wirp.xlsx     (rate expectations)
   - reference_table.xlsx (counterparty metadata)
 
@@ -28,9 +28,9 @@ DEALS_DATA = [
         "book": "BOOK1", "amount": 50_000_000, "client_rate": 0.0125,
         "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-01-15", "value_date": "2025-01-17",
-        "maturity_date": "2026-07-17", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "THCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Deposit", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "maturity_date": "2026-07-17", "strategy_ias": "STRAT_CHF_001", "perimeter": "CC",
+        "counterparty": "THCCBFIGE", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-06-15",
+        "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     {
         "deal_id": 100002, "product": "IAM/LD", "currency": "EUR", "direction": "D",
@@ -38,8 +38,7 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0235, "ytm": 0.0, "coc_rate": 0.0070, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-03-01", "value_date": "2025-03-03",
         "maturity_date": "2027-03-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "BKCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Deposit", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "counterparty": "BKCCBFIGE", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: IAM/LD loan (CHF)
     {
@@ -47,9 +46,8 @@ DEALS_DATA = [
         "book": "BOOK1", "amount": -80_000_000, "client_rate": 0.0095,
         "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0,
         "floating_index": "", "trade_date": "2024-06-10", "value_date": "2024-06-12",
-        "maturity_date": "2027-06-12", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "THCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Loan", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "maturity_date": "2027-06-12", "strategy_ias": "STRAT_CHF_002", "perimeter": "CC",
+        "counterparty": "THCCBFIGE", "hedge_type": "fair_value", "ias_standard": "IAS39", "designation_date": "2025-01-20",
     },
     # BOOK1: IAM/LD floating (SARON)
     {
@@ -58,8 +56,6 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0015,
         "floating_index": "SARON", "trade_date": "2025-09-01", "value_date": "2025-09-03",
         "maturity_date": "2028-09-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "WCCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Loan", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: BND (CHF bond, bought)
     {
@@ -68,8 +64,6 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0110, "ytm": 0.0175, "coc_rate": 0.0080, "spread": 0.0,
         "floating_index": "", "trade_date": "2024-01-20", "value_date": "2024-01-22",
         "maturity_date": "2029-01-22", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "THCCHFIGE", "basis": "30/360", "indexation": "",
-        "instrument_type": "Bond", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: BND (EUR bond, sold)
     {
@@ -77,9 +71,8 @@ DEALS_DATA = [
         "book": "BOOK1", "amount": -15_000_000, "client_rate": 0.0275,
         "eq_ois_rate": 0.0235, "ytm": 0.0310, "coc_rate": 0.0070, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-06-15", "value_date": "2025-06-17",
-        "maturity_date": "2030-06-17", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "BKCCBFIGE", "basis": "30/360", "indexation": "",
-        "instrument_type": "Bond", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "maturity_date": "2030-06-17", "strategy_ias": "STRAT_EUR_001", "perimeter": "CC",
+        "counterparty": "BKCCBFIGE", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-09-01",
     },
     # BOOK1: FXS (USD swap)
     {
@@ -88,8 +81,6 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0450, "ytm": 0.0, "coc_rate": 0.0090, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-11-01", "value_date": "2025-11-03",
         "maturity_date": "2026-11-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "CLI-MT-CIB", "basis": "Act/360", "indexation": "",
-        "instrument_type": "FX Swap", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: GBP deposit
     {
@@ -98,8 +89,6 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0460, "ytm": 0.0, "coc_rate": 0.0085, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-12-01", "value_date": "2025-12-03",
         "maturity_date": "2026-12-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "THCCBFIGE", "basis": "Act/365", "indexation": "",
-        "instrument_type": "Deposit", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: Strategy IAS deal (IAM/LD with hedge designation)
     {
@@ -107,9 +96,8 @@ DEALS_DATA = [
         "book": "BOOK1", "amount": 60_000_000, "client_rate": 0.0100,
         "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-02-01", "value_date": "2025-02-03",
-        "maturity_date": "2028-02-03", "strategy_ias": "STRAT_001", "perimeter": "CC",
-        "counterparty": "THCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Deposit", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "maturity_date": "2028-02-03", "strategy_ias": None, "perimeter": "CC",
+        "counterparty": "THCCBFIGE", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK1: WM perimeter deal
     {
@@ -118,8 +106,7 @@ DEALS_DATA = [
         "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0,
         "floating_index": "", "trade_date": "2025-04-01", "value_date": "2025-04-03",
         "maturity_date": "2026-10-03", "strategy_ias": None, "perimeter": "WM",
-        "counterparty": "THCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "Deposit", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
+        "counterparty": "THCCBFIGE", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
     # BOOK2: IRS (pay fixed, receive SARON)
     {
@@ -127,9 +114,8 @@ DEALS_DATA = [
         "book": "BOOK2", "amount": 0, "client_rate": 0.0120,
         "eq_ois_rate": 0.0, "ytm": 0.0, "coc_rate": 0.0, "spread": 0.0,
         "floating_index": "SARON", "trade_date": "2025-03-15", "value_date": "2025-03-17",
-        "maturity_date": "2030-03-17", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "THCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "IRS", "pay_receive": "PAY", "notional": 100_000_000,
+        "maturity_date": "2030-03-17", "strategy_ias": "STRAT_CHF_001", "perimeter": "CC",
+        "counterparty": "THCCBFIGE", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-06-15",
         "last_fixing_date": "2026-03-17", "next_fixing_date": "2026-06-17",
     },
     # BOOK2: IRS (receive fixed, pay SARON)
@@ -138,9 +124,8 @@ DEALS_DATA = [
         "book": "BOOK2", "amount": 0, "client_rate": 0.0095,
         "eq_ois_rate": 0.0, "ytm": 0.0, "coc_rate": 0.0, "spread": 0.0,
         "floating_index": "SARON", "trade_date": "2024-11-01", "value_date": "2024-11-03",
-        "maturity_date": "2029-11-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "BKCCBFIGE", "basis": "Act/360", "indexation": "",
-        "instrument_type": "IRS", "pay_receive": "RECEIVE", "notional": 75_000_000,
+        "maturity_date": "2029-11-03", "strategy_ias": "STRAT_CHF_002", "perimeter": "CC",
+        "counterparty": "BKCCBFIGE", "hedge_type": "fair_value", "ias_standard": "IAS39", "designation_date": "2025-01-20",
         "last_fixing_date": "2026-02-03", "next_fixing_date": "2026-05-03",
     },
     # BOOK2: IRS EUR
@@ -149,15 +134,14 @@ DEALS_DATA = [
         "book": "BOOK2", "amount": 0, "client_rate": 0.0230,
         "eq_ois_rate": 0.0, "ytm": 0.0, "coc_rate": 0.0, "spread": 0.0,
         "floating_index": "ESTR", "trade_date": "2025-06-01", "value_date": "2025-06-03",
-        "maturity_date": "2028-06-03", "strategy_ias": None, "perimeter": "CC",
-        "counterparty": "CLI-MT-CIB", "basis": "Act/360", "indexation": "",
-        "instrument_type": "IRS", "pay_receive": "PAY", "notional": 50_000_000,
+        "maturity_date": "2028-06-03", "strategy_ias": "STRAT_EUR_001", "perimeter": "CC",
+        "counterparty": "CLI-MT-CIB", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-09-01",
         "last_fixing_date": "2026-03-03", "next_fixing_date": "2026-06-03",
     },
 ]
 
 # ---------------------------------------------------------------------------
-# schedule.xlsx — monthly nominal balances
+# rate_schedule.xlsx — monthly nominal balances
 # ---------------------------------------------------------------------------
 
 # Generate 60 months of YYYY/MM columns starting 2026/04
@@ -271,10 +255,6 @@ def _generate_scenarios_data():
 
 
 # ---------------------------------------------------------------------------
-# hedge_pairs.xlsx — hedge relationship definitions
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # alert_thresholds.xlsx — per-currency alert threshold overrides
 # ---------------------------------------------------------------------------
 
@@ -325,36 +305,6 @@ ALERT_THRESHOLDS_DATA = [
 ]
 
 
-HEDGE_PAIRS_DATA = [
-    {
-        "pair_id": 1,
-        "pair_name": "CHF D60M Deposit Hedge",
-        "hedged_item_deal_ids": "100001",
-        "hedging_instrument_deal_ids": "400001",
-        "hedge_type": "cash_flow",
-        "designation_date": "2025-06-15",
-        "ias_standard": "IFRS9",
-    },
-    {
-        "pair_id": 2,
-        "pair_name": "CHF Loan Portfolio Hedge",
-        "hedged_item_deal_ids": "100003",
-        "hedging_instrument_deal_ids": "400002",
-        "hedge_type": "fair_value",
-        "designation_date": "2025-01-20",
-        "ias_standard": "IAS39",
-    },
-    {
-        "pair_id": 3,
-        "pair_name": "EUR Bond Hedge",
-        "hedged_item_deal_ids": "200002",
-        "hedging_instrument_deal_ids": "400003",
-        "hedge_type": "cash_flow",
-        "designation_date": "2025-09-01",
-        "ias_standard": "IFRS9",
-    },
-]
-
 
 # ---------------------------------------------------------------------------
 # Writer
@@ -371,11 +321,11 @@ def generate(output_dir: Path) -> None:
     print(f"  deals.xlsx       ({len(deals_df)} rows: "
           f"{(deals_df['book']=='BOOK1').sum()} BOOK1, {(deals_df['book']=='BOOK2').sum()} BOOK2)")
 
-    # schedule.xlsx
+    # rate_schedule.xlsx
     schedule_df = pd.DataFrame(SCHEDULE_DATA)
-    with pd.ExcelWriter(output_dir / "schedule.xlsx", engine="openpyxl") as w:
+    with pd.ExcelWriter(output_dir / "rate_schedule.xlsx", engine="openpyxl") as w:
         schedule_df.to_excel(w, sheet_name="Schedule", index=False)
-    print(f"  schedule.xlsx    ({len(schedule_df)} rows, {len(_MONTHS)} month columns)")
+    print(f"  rate_schedule.xlsx    ({len(schedule_df)} rows, {len(_MONTHS)} month columns)")
 
     # wirp.xlsx
     wirp_df = pd.DataFrame(WIRP_DATA)
@@ -402,12 +352,6 @@ def generate(output_dir: Path) -> None:
     with pd.ExcelWriter(output_dir / "scenarios.xlsx", engine="openpyxl") as w:
         scenarios_df.to_excel(w, sheet_name="Scenarios", index=False)
     print(f"  scenarios.xlsx   ({len(scenarios_df)} rows: {scenarios_df['scenario'].nunique()} scenarios)")
-
-    # hedge_pairs.xlsx
-    hp_df = pd.DataFrame(HEDGE_PAIRS_DATA)
-    with pd.ExcelWriter(output_dir / "hedge_pairs.xlsx", engine="openpyxl") as w:
-        hp_df.to_excel(w, sheet_name="HedgePairs", index=False)
-    print(f"  hedge_pairs.xlsx ({len(hp_df)} pairs)")
 
     # limits.xlsx
     limits_df = pd.DataFrame(LIMITS_DATA)

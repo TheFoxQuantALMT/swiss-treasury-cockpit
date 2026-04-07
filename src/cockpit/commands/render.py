@@ -9,6 +9,19 @@ from cockpit.config import DATA_DIR, OUTPUT_DIR
 from cockpit.commands._helpers import load_json
 
 
+def _derive_hedge_pairs_safe(deals):
+    """Derive hedge pairs from strategy_ias, returning None on failure."""
+    try:
+        from cockpit.data.parsers.hedge_pairs import derive_hedge_pairs
+        hp = derive_hedge_pairs(deals)
+        if hp is not None:
+            print(f"[render-pnl] Derived {len(hp)} hedge pair(s) from Strategy IAS")
+        return hp
+    except Exception as e:
+        print(f"[render-pnl] Warning: could not derive hedge pairs: {e}")
+        return None
+
+
 def cmd_render(
     *,
     date: str,
@@ -59,7 +72,6 @@ def cmd_render_pnl(
     output_dir: Path = OUTPUT_DIR,
     funding_source: str = "ois",
     budget_file: str | None = None,
-    hedge_pairs_file: str | None = None,
     prev_date: str | None = None,
     prev_input_dir: str | None = None,
     shocks: str | None = None,
@@ -93,7 +105,6 @@ def cmd_render_pnl(
 
     # Load optional ALM inputs
     budget = None
-    hedge_pairs = None
     scenarios_data = None
     alert_thresholds = None
     prev_pnl_all_s = None
@@ -120,20 +131,6 @@ def cmd_render_pnl(
                 print(f"[render-pnl] Loaded budget from {budget_path}")
             except Exception as e:
                 print(f"[render-pnl] Warning: could not load budget: {e}")
-
-        # Auto-discover hedge pairs file
-        hp_path = Path(hedge_pairs_file) if hedge_pairs_file else None
-        if hp_path is None:
-            candidates = list(input_path.glob("*hedge*"))
-            if candidates:
-                hp_path = candidates[0]
-        if hp_path and hp_path.exists():
-            try:
-                from cockpit.data.parsers.hedge_pairs import parse_hedge_pairs
-                hedge_pairs = parse_hedge_pairs(hp_path)
-                print(f"[render-pnl] Loaded hedge pairs from {hp_path}")
-            except Exception as e:
-                print(f"[render-pnl] Warning: could not load hedge pairs: {e}")
 
         # Auto-discover scenarios file
         import pandas as pd
@@ -248,6 +245,19 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not load liquidity schedule: {e}")
 
+        # Auto-discover production plan for dynamic balance sheet
+        prod_candidates = list(input_path.glob("*production_plan*")) + list(input_path.glob("*production*plan*"))
+        # Deduplicate
+        prod_candidates = list(dict.fromkeys(prod_candidates))
+        if prod_candidates and pnl._engine:
+            try:
+                from cockpit.data.parsers.production_plan import parse_production_plan
+                production_plans = parse_production_plan(prod_candidates[0])
+                pnl._engine._production_plans = production_plans
+                print(f"[render-pnl] Loaded production plan from {prod_candidates[0]} ({len(production_plans)} plans)")
+            except Exception as e:
+                print(f"[render-pnl] Warning: could not load production plan: {e}")
+
     # Load previous day's P&L for attribution / explain
     pnl_explain = None
     prev_input = prev_input_dir or input_dir
@@ -334,7 +344,7 @@ def cmd_render_pnl(
         deals=pnl.pnlData,
         pnl_by_deal=getattr(pnl, 'pnl_by_deal', None),
         budget=budget,
-        hedge_pairs=hedge_pairs,
+        hedge_pairs=_derive_hedge_pairs_safe(pnl.pnlData),
         prev_pnl_all_s=prev_pnl_all_s,
         forecast_history=forecast_history,
         scenarios_data=scenarios_data,

@@ -52,6 +52,65 @@ class TestHedgeOptimizer:
         result = recommend_hedge({})
         assert not result["has_data"]
 
+    def test_krd_based_tenor_selection(self):
+        """KRD profile should select the tenor with largest exposure."""
+        result = recommend_hedge(
+            {"CHF": 15000},
+            portfolio_krd={"CHF": {"1Y": 500, "3Y": 2000, "5Y": 8000, "10Y": 1000}},
+        )
+        rec = result["recommendations"][0]
+        assert rec["tenor"] == "5Y"  # 5Y has largest KRD
+        assert "KRD-matched" in rec["tenor_rationale"]
+
+    def test_steep_curve_prefers_short(self):
+        """Steep curve (>50bp) should prefer shorter tenor."""
+        result = recommend_hedge(
+            {"CHF": 15000},
+            curve_slopes={"CHF": 80},  # steep
+        )
+        rec = result["recommendations"][0]
+        assert rec["tenor"] == "1Y"
+        assert "Steep" in rec["tenor_rationale"]
+
+    def test_inverted_curve_prefers_long(self):
+        """Inverted curve (<-20bp) should prefer longer tenor."""
+        result = recommend_hedge(
+            {"CHF": 15000},
+            curve_slopes={"CHF": -50},  # inverted
+        )
+        rec = result["recommendations"][0]
+        assert rec["tenor"] == "10Y"
+        assert "Inverted" in rec["tenor_rationale"]
+
+    def test_default_tenor_3y_backward_compat(self):
+        """Without curve or KRD info, default tenor should be 3Y."""
+        result = recommend_hedge({"CHF": 15000})
+        rec = result["recommendations"][0]
+        assert rec["tenor"] == "3Y"
+
+    def test_available_tenors_restricts(self):
+        """available_tenors should restrict the set of tenors."""
+        result = recommend_hedge(
+            {"CHF": 15000},
+            available_tenors=["2Y", "5Y"],
+        )
+        rec = result["recommendations"][0]
+        assert rec["tenor"] in ("2Y", "5Y")
+
+    def test_dv01_per_million_varies_by_tenor(self):
+        """Different tenors should produce different notional amounts."""
+        from pnl_engine.hedge_optimizer import DV01_PER_MILLION_BY_TENOR
+        r1 = recommend_hedge(
+            {"CHF": 15000},
+            curve_slopes={"CHF": 80},  # → short tenor
+        )
+        r2 = recommend_hedge(
+            {"CHF": 15000},
+            curve_slopes={"CHF": -50},  # → long tenor
+        )
+        # Short tenor has lower DV01/M → higher notional needed
+        assert r1["recommendations"][0]["notional"] > r2["recommendations"][0]["notional"]
+
 
 # ============================================================================
 # D2: Locked-in NII
@@ -127,6 +186,62 @@ class TestSensitivityExplain:
         assert "new_deals" in wf
         assert "maturing" in wf
         assert "rate_effect" in wf
+
+    def test_with_deal_sensitivity_reconciles(self):
+        """Deal-level sensitivity waterfall should reconcile exactly."""
+        curr_ds = pd.DataFrame({
+            "Dealid": ["D1", "D2", "D3"],
+            "Currency": ["CHF", "CHF", "CHF"],
+            "sensitivity": [-2000, -1500, -1500],
+            "Nominal": [10e6, 8e6, 5e6],
+        })
+        prev_ds = pd.DataFrame({
+            "Dealid": ["D1", "D2", "D4"],
+            "Currency": ["CHF", "CHF", "CHF"],
+            "sensitivity": [-1800, -1400, -800],
+            "Nominal": [10e6, 7e6, 6e6],
+        })
+        result = explain_sensitivity_change(
+            {"CHF": -5000}, {"CHF": -4000},
+            current_deal_sensitivity=curr_ds,
+            previous_deal_sensitivity=prev_ds,
+        )
+        wf = result["waterfall"][0]
+        # D3 is new, D4 is matured
+        assert wf["new_deals"] == -1500  # D3 sensitivity
+        assert wf["maturing"] == 800     # -(-800) = +800 (lost negative sens)
+        # Reconcile: new + matured + volume + rate = total_change
+        total = wf["new_deals"] + wf["maturing"] + wf["volume_effect"] + wf["rate_effect"]
+        assert total == wf["total_change"]
+
+    def test_deal_sensitivity_all_new(self):
+        """All-new deals: entire change attributed to new deals."""
+        curr_ds = pd.DataFrame({
+            "Dealid": ["D1", "D2"],
+            "Currency": ["CHF", "CHF"],
+            "sensitivity": [-3000, -2000],
+        })
+        prev_ds = pd.DataFrame({
+            "Dealid": ["D99"],
+            "Currency": ["CHF"],
+            "sensitivity": [-4000],
+        })
+        result = explain_sensitivity_change(
+            {"CHF": -5000}, {"CHF": -4000},
+            current_deal_sensitivity=curr_ds,
+            previous_deal_sensitivity=prev_ds,
+        )
+        wf = result["waterfall"][0]
+        assert wf["new_deals"] == -5000  # all current deals are new
+        assert wf["maturing"] == 4000    # D99 matured
+
+    def test_volume_effect_field_present(self):
+        """Waterfall should include volume_effect field."""
+        result = explain_sensitivity_change(
+            {"CHF": -5000}, {"CHF": -4000},
+        )
+        wf = result["waterfall"][0]
+        assert "volume_effect" in wf
 
 
 # ============================================================================

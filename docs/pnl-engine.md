@@ -46,7 +46,7 @@ pnl.update_pnl(Shock="50")
 
 `load_data()` supports two input layouts:
 
-- **Ideal format:** `deals.xlsx` (unified BOOK1+BOOK2), `schedule.xlsx`, `wirp.xlsx`
+- **Ideal format:** `deals.xlsx` (unified BOOK1+BOOK2), `rate_schedule.xlsx`, `wirp.xlsx`
 - **Legacy format:** `*MTD*`, `*Echeancier*`, `*WIRP*`, `*IRS*` (separate files)
 
 Ideal format is tried first (`*deals*` glob); falls back to legacy if not found. When a unified deals file is loaded, `_split_deals_by_book()` splits by `IAS Book`: BOOK1 rows go to `pnlData`, BOOK2 rows are adapted to WASP column format for `irsStock`.
@@ -272,7 +272,7 @@ FTP is a column (`FTP`) in `deals.xlsx` containing per-deal FTP rates in decimal
 
 ## Liquidity Forecast
 
-Daily (90-day) + monthly cash flow projections per deal, parsed from `liquidity_schedule.xlsx`. Same wide format as `schedule.xlsx` but with additional daily columns (`YYYY/MM/DD`). Powers:
+Daily (90-day) + monthly cash flow projections per deal, parsed from `liquidity_schedule.xlsx`. Same wide format as `rate_schedule.xlsx` but with additional daily columns (`YYYY/MM/DD`). Powers:
 
 - Inflow/outflow bars with cumulative gap line
 - Survival horizon (first day cumulative net goes negative)

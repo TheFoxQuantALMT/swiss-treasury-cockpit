@@ -29,7 +29,7 @@ pdf_export     peer_benchmark
 
 ```
 Excel Files (MTD, Echeancier, WIRP, IRS,     FRED / ECB / SNB / yfinance
- budget, scenarios, hedge_pairs, nmd_profiles,
+ budget, scenarios, nmd_profiles,
  limits, alert_thresholds, liquidity_schedule,
  custom_scenarios)
          |                                              |
@@ -38,7 +38,7 @@ Excel Files (MTD, Echeancier, WIRP, IRS,     FRED / ECB / SNB / yfinance
     (parse_mtd, parse_echeancier,                  (FREDFetcher, ECBFetcher,
      parse_wirp, parse_irs_stock,                   fetch_saron, YFinanceFetcher)
      parse_budget, parse_scenarios,                     |
-     parse_hedge_pairs, parse_nmd_profiles,             |
+     derive_hedge_pairs, parse_nmd_profiles,             |
      parse_limits, parse_alert_thresholds,              |
      parse_liquidity_schedule,                          |
      parse_custom_scenarios)                            |
@@ -109,7 +109,7 @@ src/cockpit/
       budget.py              Monthly NII budget per currency
       scenarios.py           BCBS 368 tenor-dependent rate shock definitions
       custom_scenarios.py    User-defined stress tests (tenor x scenario grid)
-      hedge_pairs.py         Hedge relationship designations
+      hedge_pairs.py         Derive hedge pairs from strategy_ias
       nmd_profiles.py        NMD behavioral decay profiles
       limits.py              Board-approved NII/EVE limits
       alert_thresholds.py    Per-currency alert threshold overrides
@@ -262,7 +262,7 @@ src/pnl_engine/
 
 1. **Pipeline independence** -- Each CLI stage reads JSON intermediates from `data/` and writes its own. Stages can be re-run independently. The `backfill` command automates multi-date reruns.
 
-2. **Graceful degradation** -- If WASP is unavailable, the engine builds mock curves from WIRP data. If a fetcher fails, the DataManager falls back to the most recent archive. Optional input files (budget, scenarios, hedge_pairs, etc.) are auto-discovered and silently skipped when absent.
+2. **Graceful degradation** -- If WASP is unavailable, the engine builds mock curves from WIRP data. If a fetcher fails, the DataManager falls back to the most recent archive. Optional input files (budget, scenarios, etc.) are auto-discovered and silently skipped when absent. Hedge pairs are derived from strategy_ias in deals.
 
 3. **Canonical data model** -- The project defines the ideal data model (`engine/models.py`). Input parsers adapt external data to fit this model -- never the reverse.
 

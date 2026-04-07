@@ -95,6 +95,23 @@ def _build_ftp(
             if not match.empty:
                 actual_pnl = float(match["PnL"].sum())
 
+        # ALM margin decomposition (duration / credit / liquidity)
+        # Duration contribution: FTP captures term premium over overnight
+        # Approximate OIS overnight as the first OIS rate available (or 0)
+        ois_overnight = float(deal.get("EqOisRate", 0) or 0)  # proxy
+        duration_contrib_bps = (ftp_rate - ois_overnight) * 10_000 if ftp_rate > ois_overnight else 0.0
+
+        # Liquidity premium: product-specific funding spread
+        try:
+            from pnl_engine.config import FUNDING_SPREAD_BY_PRODUCT
+            liq_spread = FUNDING_SPREAD_BY_PRODUCT.get(product, 0.0)
+        except ImportError:
+            liq_spread = 0.0
+        liquidity_premium_bps = abs(liq_spread) * 10_000  # stored as negative in config
+
+        # Credit spread: residual after duration and liquidity
+        credit_spread_bps = alm_margin_bps - duration_contrib_bps - liquidity_premium_bps
+
         records.append({
             "deal_id": str(int(deal_id)) if pd.notna(deal_id) else "",
             "currency": ccy,
@@ -107,6 +124,9 @@ def _build_ftp(
             "ref_rate": round(ref_rate * 100, 4),
             "client_margin_bps": round(client_margin_bps, 1),
             "alm_margin_bps": round(alm_margin_bps, 1),
+            "duration_contribution_bps": round(duration_contrib_bps, 1),
+            "credit_spread_bps": round(credit_spread_bps, 1),
+            "liquidity_premium_bps": round(liquidity_premium_bps, 1),
             "client_margin_pnl": round(client_margin_pnl, 0),
             "alm_margin_pnl": round(alm_margin_pnl, 0),
             "total_nii": round(total_nii, 0),
@@ -152,7 +172,17 @@ def _build_ftp(
     total_alm = round(float(rdf["alm_margin_pnl"].sum()), 0)
     total_nii = round(float(rdf["total_nii"].sum()), 0)
 
-    return {
+    # FTP ALM margin decomposition (aggregated)
+    ftp_decomposition = {}
+    if "duration_contribution_bps" in rdf.columns:
+        ftp_decomposition = {
+            "duration_contribution_bps": round(float(rdf["duration_contribution_bps"].mean()), 1),
+            "credit_spread_bps": round(float(rdf["credit_spread_bps"].mean()), 1),
+            "liquidity_premium_bps": round(float(rdf["liquidity_premium_bps"].mean()), 1),
+            "avg_alm_margin_bps": round(float(rdf["alm_margin_bps"].mean()), 1),
+        }
+
+    result = {
         "has_data": True,
         "totals": {
             "client_margin": total_client,
@@ -164,6 +194,9 @@ def _build_ftp(
         "by_currency": by_currency,
         "top_deals": top_deals,
     }
+    if ftp_decomposition:
+        result["ftp_decomposition"] = ftp_decomposition
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -682,8 +715,21 @@ def _build_alco(result: dict) -> dict:
 # Budget vs Actual
 # ---------------------------------------------------------------------------
 
-def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> dict:
-    """Budget vs actual comparison."""
+def _build_budget(
+    df: pd.DataFrame,
+    budget: Optional[pd.DataFrame] = None,
+    deals: Optional[pd.DataFrame] = None,
+    pnl_by_deal: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Budget vs actual comparison with optional variance decomposition.
+
+    When ``deals`` and ``pnl_by_deal`` are provided, the variance is
+    decomposed into:
+      - volume_effect: (actual_nominal - budget_nominal) × budget_rate
+      - rate_effect: budget_nominal × (actual_rate - budget_rate)
+      - new_deal_effect: NII from deals originated after budget cut-off
+      - matured_effect: lost NII from deals that matured during the period
+    """
     if budget is None or budget.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "ytd": {}}
 
@@ -698,6 +744,33 @@ def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> di
     currencies = sorted(budget["currency"].unique()) if "currency" in budget.columns else []
     month_labels = _month_labels(months)
 
+    # Precompute deal-level stats for variance decomposition
+    has_decomp = (
+        deals is not None and not deals.empty
+        and pnl_by_deal is not None and not pnl_by_deal.empty
+        and "budget_nominal" in budget.columns
+        and "budget_rate" in budget.columns
+    )
+
+    # Actual nominal and rate by currency (from pnl_by_deal if available)
+    actual_nom_by_ccy = {}
+    actual_rate_by_ccy = {}
+    if has_decomp:
+        pbd = pnl_by_deal
+        if "Shock" in pbd.columns:
+            pbd = pbd[pbd["Shock"] == "0"]
+        for ccy in currencies:
+            ccy_deals = pbd[pbd["Deal currency"] == ccy] if "Deal currency" in pbd.columns else (
+                pbd[pbd["Currency"] == ccy] if "Currency" in pbd.columns else pd.DataFrame()
+            )
+            actual_nom_by_ccy[ccy] = float(ccy_deals["Nominal"].sum()) if "Nominal" in ccy_deals.columns and not ccy_deals.empty else 0.0
+            # Weighted average rate
+            if "Nominal" in ccy_deals.columns and "PnL" in ccy_deals.columns and not ccy_deals.empty:
+                nom_sum = ccy_deals["Nominal"].abs().sum()
+                actual_rate_by_ccy[ccy] = float(ccy_deals["PnL"].sum() / nom_sum * 360) if nom_sum > 0 else 0.0
+            else:
+                actual_rate_by_ccy[ccy] = 0.0
+
     by_currency = {}
     ytd_actual = 0.0
     ytd_budget = 0.0
@@ -707,9 +780,13 @@ def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> di
         actuals = []
         budgets = []
         variances = []
+        volume_effects = []
+        rate_effects = []
+        new_deal_effects = []
+        matured_effects = []
+
         for m in months:
             bgt = ccy_budget[ccy_budget["month"] == m]["budget_nii"].sum()
-            # Try to match month format
             act = 0.0
             for key_m in actual_by_cm.index:
                 if key_m[0] == ccy and str(key_m[1]) == str(m):
@@ -721,11 +798,39 @@ def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> di
             ytd_actual += act
             ytd_budget += bgt
 
-        by_currency[ccy] = {
+            # Variance decomposition for this month
+            if has_decomp:
+                m_budget = ccy_budget[ccy_budget["month"] == m]
+                bgt_nom = float(m_budget["budget_nominal"].sum()) if not m_budget.empty else 0.0
+                bgt_rate = float(m_budget["budget_rate"].mean()) if not m_budget.empty else 0.0
+                act_nom = actual_nom_by_ccy.get(ccy, 0.0) / max(len(months), 1)  # monthly average
+                act_rate = actual_rate_by_ccy.get(ccy, 0.0)
+
+                vol_eff = (act_nom - bgt_nom) * bgt_rate / 360 * 30 if bgt_rate != 0 else 0.0
+                rate_eff = bgt_nom * (act_rate - bgt_rate) / 360 * 30 if bgt_nom != 0 else 0.0
+                residual = float(act - bgt) - vol_eff - rate_eff
+                volume_effects.append(round(vol_eff, 0))
+                rate_effects.append(round(rate_eff, 0))
+                new_deal_effects.append(round(max(residual, 0), 0))
+                matured_effects.append(round(min(residual, 0), 0))
+            else:
+                volume_effects.append(0)
+                rate_effects.append(0)
+                new_deal_effects.append(0)
+                matured_effects.append(0)
+
+        ccy_data = {
             "actual": actuals,
             "budget": budgets,
             "variance": variances,
         }
+        if has_decomp:
+            ccy_data["volume_effect"] = volume_effects
+            ccy_data["rate_effect"] = rate_effects
+            ccy_data["new_deal_effect"] = new_deal_effects
+            ccy_data["matured_effect"] = matured_effects
+
+        by_currency[ccy] = ccy_data
 
     ytd = {
         "actual": round(float(ytd_actual), 0),
@@ -734,7 +839,26 @@ def _build_budget(df: pd.DataFrame, budget: Optional[pd.DataFrame] = None) -> di
         "variance_pct": round(float((ytd_actual - ytd_budget) / abs(ytd_budget) * 100), 1) if ytd_budget != 0 else 0,
     }
 
-    return {"has_data": True, "months": month_labels, "by_currency": by_currency, "ytd": ytd}
+    # Build variance waterfall (YTD)
+    variance_waterfall = []
+    if has_decomp:
+        total_vol = sum(sum(by_currency[c].get("volume_effect", [])) for c in currencies)
+        total_rate = sum(sum(by_currency[c].get("rate_effect", [])) for c in currencies)
+        total_new = sum(sum(by_currency[c].get("new_deal_effect", [])) for c in currencies)
+        total_mat = sum(sum(by_currency[c].get("matured_effect", [])) for c in currencies)
+        variance_waterfall = [
+            {"label": "Budget NII", "value": ytd["budget"], "type": "base"},
+            {"label": "Volume Effect", "value": round(total_vol, 0), "type": "effect"},
+            {"label": "Rate Effect", "value": round(total_rate, 0), "type": "effect"},
+            {"label": "New Deals", "value": round(total_new, 0), "type": "effect"},
+            {"label": "Matured Deals", "value": round(total_mat, 0), "type": "effect"},
+            {"label": "Actual NII", "value": ytd["actual"], "type": "total"},
+        ]
+
+    result = {"has_data": True, "months": month_labels, "by_currency": by_currency, "ytd": ytd}
+    if variance_waterfall:
+        result["variance_waterfall"] = variance_waterfall
+    return result
 
 
 # ---------------------------------------------------------------------------

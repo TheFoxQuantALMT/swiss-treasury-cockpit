@@ -26,7 +26,7 @@ def simulate_deal(
         client_rate: Client lending/borrowing rate (decimal).
         ois_rate: Current OIS rate for the currency (decimal).
         maturity_years: Time to maturity in years.
-        direction: "B" (buy/asset) or "L" (lend/liability).
+        direction: "B" (bond/asset) or "L" (lend/liability).
         mm: Day count basis (360 for CHF/EUR, 365 for GBP).
         is_floating: Whether the deal is floating-rate.
         deposit_beta: Rate passthrough for floating-rate (1.0 = full passthrough).

@@ -112,7 +112,7 @@ def compute_repricing_gap(
         ])
 
     df["_nominal"] = df[amount_col].abs()
-    # Assets: B (buy/borrow), D (deposit received)
+    # Assets: B (bond), D (deposit received)
     # Liabilities: L (loan given), S (sell/short)
     df["_side"] = df[direction_col].map({"B": "asset", "D": "asset", "L": "liability", "S": "liability"})
     df["_side"] = df["_side"].fillna("asset")

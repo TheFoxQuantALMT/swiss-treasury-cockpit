@@ -121,7 +121,7 @@ class ForecastRatePnL:
         """Load deal data, schedule, WIRP, and IRS stock from Excel files.
 
         Supports two input layouts:
-        - **Ideal format**: ``deals.xlsx`` (unified BOOK1+BOOK2), ``schedule.xlsx``, ``wirp.xlsx``
+        - **Ideal format**: ``deals.xlsx`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
         - **Legacy format**: ``*MTD*``, ``*Echeancier*``, ``*WIRP*``, ``*IRS*`` (separate files)
 
         Ideal format is tried first; falls back to legacy if no ``*deals*`` file found.
@@ -140,7 +140,7 @@ class ForecastRatePnL:
             self.irsStock = parse_irs_stock(irs_file)
 
         # --- Schedule ---
-        schedule_files = list(self.input_dir.glob("*schedule*")) or list(self.input_dir.glob("*Echeancier*"))
+        schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*")) or list(self.input_dir.glob("*Echeancier*"))
         echeancier_file = schedule_files[0] if schedule_files else next(self.input_dir.glob("*Echeancier*"))
         self.scheduleData = parse_echeancier(echeancier_file)
 
