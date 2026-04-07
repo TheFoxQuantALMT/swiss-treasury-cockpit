@@ -52,16 +52,23 @@ def load_daily_curves(
 
 
 def overlay_wirp(base: pd.DataFrame, wirp: pd.DataFrame) -> pd.DataFrame:
-    merged = base.merge(
-        wirp[["Indice", "Meeting", "Rate"]],
-        how="left",
-        left_on=["Indice", "Date"],
-        right_on=["Indice", "Meeting"],
+    wirp_renamed = wirp[["Indice", "Meeting", "Rate"]].rename(columns={"Meeting": "Date"})
+    wirp_renamed["Date"] = pd.to_datetime(wirp_renamed["Date"])
+    base_sorted = base.sort_values("Date").copy()
+    wirp_sorted = wirp_renamed.sort_values("Date")
+
+    merged = pd.merge_asof(
+        base_sorted,
+        wirp_sorted,
+        on="Date",
+        by="Indice",
+        tolerance=pd.Timedelta("2D"),
+        direction="nearest",
     )
     merged["value"] = merged.groupby("Indice")["Rate"].ffill()
     merged["value"] = merged.groupby("Indice")["value"].bfill()
-    merged["value"] = merged["value"].fillna(base["value"])
-    merged = merged.drop(columns=["Meeting", "Rate"], errors="ignore")
+    merged["value"] = merged["value"].fillna(base_sorted["value"])
+    merged = merged.drop(columns=["Rate"], errors="ignore")
     return merged
 
 
