@@ -116,6 +116,9 @@ def cmd_render_pnl(
     liquidity_schedule = None
     nmd_profiles = None
 
+    _optional_loaded = 0
+    _optional_warnings = 0
+
     if input_dir:
         input_path = Path(input_dir)
         # Auto-discover budget file
@@ -129,8 +132,10 @@ def cmd_render_pnl(
                 from cockpit.data.parsers.budget import parse_budget
                 budget = parse_budget(budget_path)
                 print(f"[render-pnl] Loaded budget from {budget_path}")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load budget: {e}")
+                print(f"[render-pnl] Warning: could not parse budget: {e}")
+                _optional_warnings += 1
 
         # Auto-discover scenarios file
         import pandas as pd
@@ -141,8 +146,10 @@ def cmd_render_pnl(
                 from cockpit.data.parsers.scenarios import parse_scenarios
                 scenarios_def = parse_scenarios(sc_candidates[0])
                 print(f"[render-pnl] Loaded BCBS 368 scenarios from {sc_candidates[0]}")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load scenarios: {e}")
+                print(f"[render-pnl] Warning: could not parse scenarios: {e}")
+                _optional_warnings += 1
 
         # Fall back to currency-specific BCBS magnitudes (Table 2)
         if scenarios_def is None:
@@ -178,8 +185,10 @@ def cmd_render_pnl(
                     n_custom = custom_sc["scenario"].nunique()
                     scenarios_def = pd.concat([scenarios_def, custom_sc], ignore_index=True)
                     print(f"[render-pnl] Merged {n_custom} custom scenarios from {custom_sc_path}")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load custom scenarios: {e}")
+                print(f"[render-pnl] Warning: could not parse custom scenarios: {e}")
+                _optional_warnings += 1
 
         # Run all scenarios (BCBS + FINMA + custom)
         if scenarios_def is not None and pnl._engine:
@@ -200,8 +209,10 @@ def cmd_render_pnl(
                 if pnl._engine:
                     pnl._engine._nmd_profiles = nmd_profiles
                     print(f"[render-pnl] Loaded NMD profiles from {nmd_candidates[0]} ({len(nmd_profiles)} profiles)")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load NMD profiles: {e}")
+                print(f"[render-pnl] Warning: could not parse NMD profiles: {e}")
+                _optional_warnings += 1
 
         # Run EVE computation (uses scenarios if available)
         if pnl._engine:
@@ -222,8 +233,10 @@ def cmd_render_pnl(
                 from cockpit.data.parsers.limits import parse_limits
                 limits = parse_limits(limits_candidates[0])
                 print(f"[render-pnl] Loaded limits from {limits_candidates[0]} ({len(limits)} metrics)")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load limits: {e}")
+                print(f"[render-pnl] Warning: could not parse limits: {e}")
+                _optional_warnings += 1
 
         # Auto-discover alert thresholds
         threshold_candidates = list(input_path.glob("*threshold*")) + list(input_path.glob("*alert_config*"))
@@ -232,8 +245,10 @@ def cmd_render_pnl(
                 from cockpit.data.parsers.alert_thresholds import parse_alert_thresholds
                 alert_thresholds = parse_alert_thresholds(threshold_candidates[0])
                 print(f"[render-pnl] Loaded alert thresholds from {threshold_candidates[0]}")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load alert thresholds: {e}")
+                print(f"[render-pnl] Warning: could not parse alert thresholds: {e}")
+                _optional_warnings += 1
 
         # Auto-discover liquidity schedule
         liq_candidates = list(input_path.glob("*liquidity*"))
@@ -242,8 +257,10 @@ def cmd_render_pnl(
                 from cockpit.data.parsers.liquidity_schedule import parse_liquidity_schedule
                 liquidity_schedule = parse_liquidity_schedule(liq_candidates[0])
                 print(f"[render-pnl] Loaded liquidity schedule from {liq_candidates[0]} ({len(liquidity_schedule)} deals)")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load liquidity schedule: {e}")
+                print(f"[render-pnl] Warning: could not parse liquidity schedule: {e}")
+                _optional_warnings += 1
 
         # Auto-discover production plan for dynamic balance sheet
         prod_candidates = list(input_path.glob("*production_plan*")) + list(input_path.glob("*production*plan*"))
@@ -255,8 +272,12 @@ def cmd_render_pnl(
                 production_plans = parse_production_plan(prod_candidates[0])
                 pnl._engine._production_plans = production_plans
                 print(f"[render-pnl] Loaded production plan from {prod_candidates[0]} ({len(production_plans)} plans)")
+                _optional_loaded += 1
             except Exception as e:
-                print(f"[render-pnl] Warning: could not load production plan: {e}")
+                print(f"[render-pnl] Warning: could not parse production plan: {e}")
+                _optional_warnings += 1
+
+        print(f"[render-pnl] Loaded {_optional_loaded} optional inputs, {_optional_warnings} warnings")
 
     # Load previous day's P&L for attribution / explain
     pnl_explain = None

@@ -1,9 +1,12 @@
 """Parser for scenarios.xlsx — BCBS 368 rate shock scenario definitions."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 BCBS_SCENARIOS = [
@@ -48,6 +51,7 @@ def parse_scenarios(path: Path | str) -> pd.DataFrame:
     # Ensure currency columns exist
     for ccy in SUPPORTED_CURRENCIES:
         if ccy not in df.columns:
+            logger.warning("Scenario file missing column for %s, filling with 0bp", ccy)
             df[ccy] = 0.0
 
     return df.reset_index(drop=True)

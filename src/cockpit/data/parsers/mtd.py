@@ -73,26 +73,44 @@ def parse_deals(path: Path) -> pd.DataFrame:
         logger.warning("deals.xlsx: %d rows with non-numeric deal_id (dropped)", n_bad_id)
         df = df[df["Dealid"].notna()].copy()
 
+    _n_before_filter = len(df)
+    _n_bad_product = 0
+    _n_bad_currency = 0
+    _n_bad_dir = 0
+    _n_bad_book = 0
+
     if "Product" in df.columns:
         bad_product = ~df["Product"].isin(_VALID_PRODUCTS)
+        _n_bad_product = int(bad_product.sum())
         if bad_product.any():
-            logger.warning("deals.xlsx: %d rows with invalid product (dropped)", bad_product.sum())
+            logger.warning("deals.xlsx: %d rows with invalid product (dropped)", _n_bad_product)
             df = df[~bad_product].copy()
 
     if "Currency" in df.columns:
+        _n_bad_currency = int((~df["Currency"].isin(SUPPORTED_CURRENCIES)).sum())
         df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
 
     if "Direction" in df.columns:
         bad_dir = ~df["Direction"].isin(_VALID_DIRECTIONS)
+        _n_bad_dir = int(bad_dir.sum())
         if bad_dir.any():
-            logger.warning("deals.xlsx: %d rows with invalid direction (dropped)", bad_dir.sum())
+            logger.warning("deals.xlsx: %d rows with invalid direction (dropped)", _n_bad_dir)
             df = df[~bad_dir].copy()
 
     if "IAS Book" in df.columns:
         bad_book = ~df["IAS Book"].isin(_VALID_BOOKS)
+        _n_bad_book = int(bad_book.sum())
         if bad_book.any():
-            logger.warning("deals.xlsx: %d rows with invalid book (dropped)", bad_book.sum())
+            logger.warning("deals.xlsx: %d rows with invalid book (dropped)", _n_bad_book)
             df = df[~bad_book].copy()
+
+    _n_dropped = _n_before_filter - len(df)
+    if _n_dropped > 0:
+        logger.info(
+            "[parse] Dropped %d rows: %d unknown products, %d unsupported currencies, "
+            "%d invalid directions, %d invalid books",
+            _n_dropped, _n_bad_product, _n_bad_currency, _n_bad_dir, _n_bad_book,
+        )
 
     if "Périmètre TOTAL" in df.columns:
         bad_peri = ~df["Périmètre TOTAL"].isin(_VALID_PERIMETERS)
