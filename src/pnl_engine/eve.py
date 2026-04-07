@@ -78,14 +78,16 @@ def compute_eve(
     mm_broadcast = mm_vector[:, np.newaxis] * np.ones((1, n_days))
     daily_cf = nominal_daily * rate_matrix / mm_broadcast
 
-    # Also include the notional principal return at maturity
-    # Detect maturity: last day where nominal is non-zero
-    # Principal CF = nominal change (negative = amortization/return)
+    # Also include the notional principal return at maturity.
+    # Only capture the terminal drop (nominal goes from positive to zero),
+    # NOT intermediate amortization steps — those are already reflected in
+    # declining interest cash flows via the nominal schedule.
     nominal_shift = np.zeros_like(nominal_daily)
-    nominal_shift[:, 1:] = nominal_daily[:, 1:] - nominal_daily[:, :-1]
-    # At maturity, nominal drops to 0 → negative shift = principal return
-    # We discount this too
-    total_cf = daily_cf - nominal_shift  # subtract because negative shift = cash inflow
+    for j in range(1, n_days):
+        # Only capture drops to zero (maturity) or from positive to zero
+        mask = (nominal_daily[:, j] == 0) & (nominal_daily[:, j - 1] != 0)
+        nominal_shift[:, j] = np.where(mask, -nominal_daily[:, j - 1], 0.0)
+    total_cf = daily_cf - nominal_shift  # daily_cf already includes interest on remaining balance
 
     # PV of all cash flows
     pv_daily = total_cf * discount_factors
@@ -336,12 +338,23 @@ def compute_key_rate_durations(
     currencies = deals["Currency"].unique() if "Currency" in deals.columns else []
     results = []
 
-    for tenor_label, tenor_yr in sorted(TENOR_YEARS.items(), key=lambda x: x[1]):
-        # Create a triangular bump centered at this tenor
-        # Width: half distance to neighboring tenors (simplified: ±0.5Y or half gap)
-        bump_array = np.zeros(len(days))
-        sigma = max(0.25, tenor_yr * 0.2) if tenor_yr > 0 else 0.25
-        weights = np.exp(-0.5 * ((day_years - tenor_yr) / sigma) ** 2)
+    # Sort tenor points for boundary computation
+    sorted_tenors = sorted(TENOR_YEARS.items(), key=lambda x: x[1])
+    tenor_yr_list = [t[1] for t in sorted_tenors]
+
+    for idx, (tenor_label, tenor_yr) in enumerate(sorted_tenors):
+        # Piecewise-constant step bump: each day maps to exactly one tenor
+        # bucket based on midpoint boundaries between adjacent BCBS tenors.
+        if idx == 0:
+            lo = -np.inf
+        else:
+            lo = (tenor_yr_list[idx - 1] + tenor_yr) / 2.0
+        if idx == len(sorted_tenors) - 1:
+            hi = np.inf
+        else:
+            hi = (tenor_yr + tenor_yr_list[idx + 1]) / 2.0
+
+        weights = ((day_years >= lo) & (day_years < hi)).astype(float)
         bump_array = weights * (bump_bps / 10000.0)
 
         for ccy in currencies:
