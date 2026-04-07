@@ -103,7 +103,10 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
     df = df.dropna(subset=[deal_col])
 
     # Parse deal type and ID
-    df[["Deal Type", "Dealid"]] = df[deal_col].astype(str).str.split("@", expand=True)
+    split_data = df[deal_col].astype(str).str.split("@", n=1, expand=True)
+    if split_data.shape[1] < 2:
+        split_data[1] = np.nan
+    df[["Deal Type", "Dealid"]] = split_data
     df["Dealid"] = pd.to_numeric(df["Dealid"], errors="coerce")
 
     rate_type_col = [c for c in df.columns if "Rate Type" in str(c)]

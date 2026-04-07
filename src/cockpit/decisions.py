@@ -73,7 +73,8 @@ class DecisionStore:
             updated = False
             new_lines = []
             for line in lines:
-                if not line:
+                if not line.strip():
+                    new_lines.append(line)
                     continue
                 entry = json.loads(line)
                 if entry.get("date") == date and entry.get("topic") == topic:

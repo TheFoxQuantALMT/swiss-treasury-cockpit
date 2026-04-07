@@ -110,6 +110,12 @@ def load_config(path: Path | str | None = None, *, use_cache: bool = True) -> di
         try:
             with open(resolved, encoding="utf-8") as fh:
                 user_cfg = yaml.safe_load(fh) or {}
+            if not isinstance(user_cfg, dict):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Config file %s is not a YAML mapping, ignoring", resolved,
+                )
+                user_cfg = {}
         except yaml.YAMLError as exc:
             import logging
             logging.getLogger(__name__).warning(

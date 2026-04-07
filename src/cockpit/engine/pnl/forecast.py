@@ -134,19 +134,35 @@ class ForecastRatePnL:
             logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
                         deals_files[0].name, len(self.pnlData), len(self.irsStock))
         else:
-            mtd_file = next(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
-            irs_file = next(self.input_dir.glob("*IRS*"))
+            mtd_candidates = list(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
+            if not mtd_candidates:
+                raise FileNotFoundError(f"No MTD file found in {self.input_dir}")
+            mtd_file = mtd_candidates[0]
+            irs_candidates = list(self.input_dir.glob("*IRS*"))
+            if not irs_candidates:
+                raise FileNotFoundError(f"No IRS file found in {self.input_dir}")
+            irs_file = irs_candidates[0]
             self.pnlData = parse_mtd(mtd_file)
             self.irsStock = parse_irs_stock(irs_file)
 
         # --- Schedule ---
         schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*")) or list(self.input_dir.glob("*Echeancier*"))
-        echeancier_file = schedule_files[0] if schedule_files else next(self.input_dir.glob("*Echeancier*"))
+        if not schedule_files:
+            echeancier_candidates = list(self.input_dir.glob("*Echeancier*"))
+            if not echeancier_candidates:
+                raise FileNotFoundError(f"No schedule/Echeancier file found in {self.input_dir}")
+            schedule_files = echeancier_candidates
+        echeancier_file = schedule_files[0]
         self.scheduleData = parse_echeancier(echeancier_file)
 
         # --- WIRP ---
         wirp_files = list(self.input_dir.glob("*wirp*")) or list(self.input_dir.glob("*WIRP*"))
-        wirp_file = wirp_files[0] if wirp_files else next(self.input_dir.glob("*WIRP*"))
+        if not wirp_files:
+            wirp_candidates = list(self.input_dir.glob("*WIRP*"))
+            if not wirp_candidates:
+                raise FileNotFoundError(f"No WIRP file found in {self.input_dir}")
+            wirp_files = wirp_candidates
+        wirp_file = wirp_files[0]
         self.wirpData = parse_wirp(wirp_file)
 
         # Filter TMSWBFIGE folder for IRS-MTM deals (legacy schedule only)
