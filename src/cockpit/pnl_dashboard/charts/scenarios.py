@@ -133,7 +133,7 @@ def _build_deposit_behavior(
 
     d = deals.copy()
 
-    # Filter to deposits (liabilities: L/S direction)
+    # Filter to deposits (liabilities: D/S direction)
     from pnl_engine.config import LIABILITY_DIRECTIONS
     dir_col = "Direction" if "Direction" in d.columns else None
     if dir_col:

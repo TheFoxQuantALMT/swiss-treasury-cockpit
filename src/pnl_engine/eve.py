@@ -70,14 +70,8 @@ def compute_eve(
     # Year fractions from date_run — used for duration/general purposes (ACT/365)
     day_years = np.maximum(days_to_years(days, date_run), 0.0)
 
-    # Per-deal day-count divisor for OIS discounting (ACT/360 for CHF/EUR, ACT/365 for GBP)
-    # Build per-deal dt arrays for currency-appropriate discount factors
-    day_counts = np.array([
-        float(days_to_years(days, date_run, divisor=float(MM_BY_CURRENCY.get(c, 360)))[1] - days_to_years(days, date_run, divisor=float(MM_BY_CURRENCY.get(c, 360)))[0])
-        if n_days > 1 else 1.0 / MM_BY_CURRENCY.get(c, 360)
-        for c in (deals["Currency"].values[:n_deals] if "Currency" in deals.columns else ["CHF"] * n_deals)
-    ])
     # Build per-deal year fraction arrays: (n_deals, n_days)
+    # Per-currency day-count divisor for OIS discounting (ACT/360 CHF/EUR, ACT/365 GBP/USD)
     raw_days = (pd.DatetimeIndex(days) - pd.Timestamp(date_run)).days.values.astype(float)
     raw_days = np.maximum(raw_days, 0.0)
     divisors = np.array([

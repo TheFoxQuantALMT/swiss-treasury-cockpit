@@ -531,7 +531,7 @@ def _build_nim(
 
     # --- Global NIM ---
     total_nii = pnl["Value"].sum()
-    # Earning assets = average nominal for asset direction (D/B)
+    # Earning assets = average nominal for asset direction (L/B)
     from pnl_engine.config import ASSET_DIRECTIONS
     if "Direction" in nom.columns:
         asset_nom = nom[nom["Direction"].isin(ASSET_DIRECTIONS)]["Value"].sum()

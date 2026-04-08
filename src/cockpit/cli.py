@@ -88,7 +88,7 @@ def main() -> None:
     p_whatif.add_argument("--currency", required=True, help="Currency (CHF, EUR, USD, GBP)")
     p_whatif.add_argument("--amount", required=True, type=float, help="Notional amount")
     p_whatif.add_argument("--rate", required=True, type=float, help="Client rate (decimal, e.g. 0.025)")
-    p_whatif.add_argument("--direction", default="D", choices=["D", "L", "S", "B"], help="Direction (D=deposit, L=loan, S=swap, B=bond)")
+    p_whatif.add_argument("--direction", default="L", choices=["L", "B", "D", "S"], help="Direction (L=loan, B=bond, D=deposit, S=sell bond)")
     p_whatif.add_argument("--maturity", dest="maturity_years", type=float, default=5.0, help="Maturity in years")
     p_whatif.add_argument("--funding-source", choices=["ois", "coc"], default="ois")
 

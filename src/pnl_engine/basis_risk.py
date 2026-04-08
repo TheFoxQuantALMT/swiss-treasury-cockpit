@@ -54,8 +54,8 @@ def compute_basis_risk(
     # Direction sign: for spread compression, assets and liabilities are
     # shocked in opposite directions.  A positive spread shock widens the
     # spread (client rate moves away from OIS):
-    #   Assets  (D/B): client rate rises  → shocked_rate = rate + shock
-    #   Liabilities (L/S): client rate falls → shocked_rate = rate - shock
+    #   Assets  (L/B): client rate rises  → shocked_rate = rate + shock
+    #   Liabilities (D/S): client rate falls → shocked_rate = rate - shock
     # We store a (n_deals, 1) sign array: +1 for assets, -1 for liabilities.
     if "Direction" in deals.columns:
         from pnl_engine.config import ASSET_DIRECTIONS

@@ -26,7 +26,7 @@ def simulate_deal(
         client_rate: Client lending/borrowing rate (decimal).
         ois_rate: Current OIS rate for the currency (decimal).
         maturity_years: Time to maturity in years.
-        direction: "B" (bond/asset) or "L" (lend/liability).
+        direction: "L" (loan/asset), "B" (bond/asset), "D" (deposit/liability), or "S" (sell bond/liability).
         mm: Day count basis (360 for CHF/EUR, 365 for GBP).
         is_floating: Whether the deal is floating-rate.
         deposit_beta: Rate passthrough for floating-rate (1.0 = full passthrough).
@@ -35,7 +35,8 @@ def simulate_deal(
         Dict with annual NII, total NII, EVE impact, DV01 contribution.
     """
     from pnl_engine.config import ASSET_DIRECTIONS
-    sign = 1.0 if direction.upper() in ASSET_DIRECTIONS else -1.0
+    # Assets (L/B) = negative nominal, Liabilities (D/S) = positive nominal
+    sign = -1.0 if direction.upper() in ASSET_DIRECTIONS else 1.0
     effective_notional = sign * abs(notional)
 
     # Effective client rate for floating (NMD model: floor + β × max(0, OIS - floor))

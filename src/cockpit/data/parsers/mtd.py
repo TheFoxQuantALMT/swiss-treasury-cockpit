@@ -49,6 +49,7 @@ _DEALS_RENAME = {
     "last_fixing_date": "last_fixing_date",
     "next_fixing_date": "next_fixing_date",
     "ftp": "FTP",
+    "asset_liability": "AssetLiability",
 }
 
 _VALID_PRODUCTS = VALID_PRODUCTS
@@ -180,6 +181,7 @@ _MTD_RENAME = {
     "IAS Book": "IAS Book",
     "Spread": "Spread",
     "Post-counted interest flag": "Post-counted interest flag",
+    "Assets/Liabilities": "AssetLiability",
 }
 
 _RATE_COLS = ["Clientrate", "EqOisRate", "YTM", "CocRate"]
@@ -214,6 +216,19 @@ def parse_mtd(path: Path) -> pd.DataFrame:
         if bad_dir.any():
             logger.warning("parse_mtd: %d rows with invalid Direction (dropped)", bad_dir.sum())
             df = df[~bad_dir].copy()
+
+    # Cross-validate Direction against Assets/Liabilities column if present
+    # L=Loan, B=Bond → Asset; D=Deposit, S=Sell Bond → Liability
+    if "AssetLiability" in df.columns and "Direction" in df.columns:
+        _al = df["AssetLiability"].astype(str).str.strip().str.lower()
+        _expected_side = df["Direction"].map({"L": "asset", "B": "asset", "D": "liability", "S": "liability"})
+        _mismatch = (_al.isin(["asset", "liability"])) & (_al != _expected_side)
+        n_mismatch = int(_mismatch.sum())
+        if n_mismatch > 0:
+            logger.warning(
+                "parse_mtd: %d rows where Direction disagrees with Assets/Liabilities column",
+                n_mismatch,
+            )
 
     # Perimeter from counterparty
     if "Counterparty" in df.columns:

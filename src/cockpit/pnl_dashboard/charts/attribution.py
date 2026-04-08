@@ -234,7 +234,7 @@ def _build_liquidity(
     sorted_cols = sorted(date_cols, key=lambda c: col_dates[c])
 
     # Identify asset vs liability by direction
-    # D(eposit-side lending)/B(uy) = asset, L(iability)/S(ell) = liability
+    # L(oan)/B(ond) = asset (negative nominal), D(eposit)/S(ell bond) = liability (positive nominal)
     from pnl_engine.config import ASSET_DIRECTIONS
     if "Direction" in df.columns:
         df["_is_asset"] = df["Direction"].isin(ASSET_DIRECTIONS)
@@ -345,7 +345,7 @@ def _build_liquidity(
                 avg_book = float(ccy_deals[rate_col].mean()) if not ccy_deals[rate_col].isna().all() else 0
                 avg_ois = float(ccy_deals[ois_col].mean()) if not ccy_deals[ois_col].isna().all() else 0
                 # Volume maturing in 30d/90d (from top_maturities)
-                vol_30d = sum(abs(m["amount"]) for m in top_maturities if m["currency"] == ccy and m["direction"] in ("L", "B"))
+                vol_30d = sum(abs(m["amount"]) for m in top_maturities if m["currency"] == ccy and m["direction"] in ASSET_DIRECTIONS)
                 if vol_30d > 0 and avg_ois != 0:
                     spread_bps = (avg_ois - avg_book) * 10_000
                     nii_impact = vol_30d * (avg_ois - avg_book)

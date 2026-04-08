@@ -13,9 +13,10 @@ from cockpit.engine.snapshot.exposure import _assign_bucket
 def _classify_direction(direction: str) -> str:
     """Map deal direction to asset or liability.
 
-    L (loan) and B (bond) are assets. D (deposit) is a liability.
+    L (loan) and B (bond) are assets. D (deposit) and S (sell bond) are liabilities.
     """
-    if direction in ("L", "B"):
+    from pnl_engine.config import ASSET_DIRECTIONS
+    if direction in ASSET_DIRECTIONS:
         return "asset"
     return "liability"
 
