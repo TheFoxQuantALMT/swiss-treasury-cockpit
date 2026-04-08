@@ -8,6 +8,8 @@ import pandas as pd
 
 from pnl_engine.dynamic_balance_sheet import ProductionPlan
 
+logger = logging.getLogger(__name__)
+
 
 SUPPORTED_CURRENCIES = {"CHF", "EUR", "USD", "GBP"}
 
@@ -45,6 +47,10 @@ def parse_production_plan(path: Path | str) -> list[ProductionPlan]:
     if "rate_spread_bps" not in df.columns:
         df["rate_spread_bps"] = 0.0
 
+    def _coerce(v, default=0.0):
+        n = pd.to_numeric(v, errors="coerce")
+        return float(n) if pd.notna(n) else default
+
     plans = []
     for _, row in df.iterrows():
         try:
@@ -52,12 +58,12 @@ def parse_production_plan(path: Path | str) -> list[ProductionPlan]:
                 product=str(row["product"]).strip(),
                 currency=str(row["currency"]).strip(),
                 direction=str(row["direction"]).strip().upper(),
-                monthly_volume=float(pd.to_numeric(row["monthly_volume"], errors="coerce") or 0),
-                tenor_years=float(pd.to_numeric(row["tenor_years"], errors="coerce") or 0),
-                rate_spread_bps=float(pd.to_numeric(row.get("rate_spread_bps", 0.0), errors="coerce") or 0),
+                monthly_volume=_coerce(row["monthly_volume"]),
+                tenor_years=_coerce(row["tenor_years"]),
+                rate_spread_bps=_coerce(row.get("rate_spread_bps", 0.0)),
             ))
         except (ValueError, TypeError) as e:
-            logging.getLogger(__name__).warning("Skipping invalid production plan row: %s", e)
+            logger.warning("Skipping invalid production plan row: %s", e)
             continue
 
     return plans
