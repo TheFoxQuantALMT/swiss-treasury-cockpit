@@ -23,6 +23,16 @@ from cockpit.pnl_dashboard.charts.helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(v) -> float:
+    """NaN-safe float conversion, returning 0.0 for None/NaN/non-numeric."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return 0.0
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # FTP & Business Unit P&L
 # ---------------------------------------------------------------------------
@@ -58,13 +68,6 @@ def _build_ftp(
         perimeter = str(deal.get("P\u00e9rim\u00e8tre TOTAL", "CC"))
         product = str(deal.get("Product", ""))
         counterparty = str(deal.get("Counterparty", ""))
-        def _safe_float(v):
-            if v is None or (isinstance(v, float) and np.isnan(v)):
-                return 0.0
-            try:
-                return float(v)
-            except (ValueError, TypeError):
-                return 0.0
         client_rate = _safe_float(deal.get("Clientrate", 0))
         ftp_rate = _safe_float(deal.get("FTP", 0))
         eq_ois = _safe_float(deal.get("EqOisRate", 0))

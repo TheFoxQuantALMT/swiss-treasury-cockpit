@@ -29,7 +29,7 @@ def days_to_years(days: pd.DatetimeIndex, ref_date) -> np.ndarray:
     submissions, consider currency-appropriate day-count divisors.
     """
     ref_ts = pd.Timestamp(ref_date)
-    return np.array([(d - ref_ts).days / 365.0 for d in days])
+    return (pd.DatetimeIndex(days) - ref_ts).days.values.astype(float) / 365.0
 
 
 def broadcast_mm(mm_vector: np.ndarray) -> np.ndarray:

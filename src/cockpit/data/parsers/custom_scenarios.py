@@ -12,10 +12,13 @@ Shocks are in basis points.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def parse_custom_scenarios(path: Path | str) -> Optional[pd.DataFrame]:
@@ -31,8 +34,7 @@ def parse_custom_scenarios(path: Path | str) -> Optional[pd.DataFrame]:
     try:
         df = pd.read_excel(path, engine="openpyxl")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("Failed to parse custom scenarios %s: %s", path, e)
+        logger.warning("Failed to parse custom scenarios %s: %s", path, e)
         return None
 
     if df.empty:

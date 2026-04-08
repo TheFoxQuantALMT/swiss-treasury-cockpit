@@ -160,10 +160,8 @@ def apply_cpr_rate_dependent(
         return result, log
 
     t0 = days[0]
-    day_gaps = np.zeros(len(days))
-    day_gaps[0] = 0.0
-    for k in range(1, len(days)):
-        day_gaps[k] = (days[k] - days[k - 1]).days / 30.4375  # month fraction per step
+    day_deltas = np.diff(pd.DatetimeIndex(days).asi8) / (30.4375 * 24 * 3600 * 1e9)  # nanoseconds → month fractions
+    day_gaps = np.concatenate(([0.0], day_deltas))
 
     n_applied = 0
     for i in range(len(deals)):

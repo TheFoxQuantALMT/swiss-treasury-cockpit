@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def load_json(path: Path) -> dict | None:
@@ -15,8 +18,7 @@ def load_json(path: Path) -> dict | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        import logging
-        logging.getLogger(__name__).warning("Corrupt JSON file %s: %s", path, e)
+        logger.warning("Corrupt JSON file %s: %s", path, e)
         return None
 
 

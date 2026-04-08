@@ -159,10 +159,8 @@ def reverse_stress_eve(
     bp_neg = result_neg.get("breach_shock_bp")
     if bp_pos is not None and bp_neg is not None:
         if bp_neg < bp_pos:
-            result_neg["breach_shock_bp"] = -bp_neg
-            return result_neg
+            return {**result_neg, "breach_shock_bp": -bp_neg}
         return result_pos
     if bp_neg is not None:
-        result_neg["breach_shock_bp"] = -bp_neg
-        return result_neg
+        return {**result_neg, "breach_shock_bp": -bp_neg}
     return result_pos

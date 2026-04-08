@@ -6,11 +6,14 @@ time bucket per currency.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # Calendar-day boundaries for repricing gap buckets (not day count convention)
@@ -113,15 +116,14 @@ def compute_repricing_gap(
         ])
 
     df["_nominal"] = df[amount_col].abs()
-    # Assets: B (bond), D (deposit received)
-    # Liabilities: L (loan given), S (sell/short)
-    dir_map = {"B": "asset", "D": "asset", "L": "liability", "S": "liability"}
+    # Assets: B (bond), L (loan = bank lends out)
+    # Liabilities: D (deposit = bank receives), S (sell/short)
+    dir_map = {"B": "asset", "L": "asset", "D": "liability", "S": "liability"}
     df["_side"] = df[direction_col].map(dir_map)
     unmapped = df["_side"].isna()
     if unmapped.any():
-        import logging as _log
         bad_dirs = df.loc[unmapped, direction_col].unique().tolist()
-        _log.getLogger(__name__).warning(
+        logger.warning(
             "repricing_gap: unknown Direction values %s defaulting to 'asset'", bad_dirs,
         )
     df["_side"] = df["_side"].fillna("asset")

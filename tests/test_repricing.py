@@ -68,7 +68,7 @@ class TestComputeRepricingGap:
         deals = pd.DataFrame([
             {"Dealid": "1", "Direction": "B", "Currency": "CHF", "Amount": 1_000_000,
              "is_floating": False, "Maturitydate": "2026-07-05", "Product": "IAM/LD"},
-            {"Dealid": "2", "Direction": "L", "Currency": "CHF", "Amount": 600_000,
+            {"Dealid": "2", "Direction": "D", "Currency": "CHF", "Amount": 600_000,
              "is_floating": False, "Maturitydate": "2026-07-05", "Product": "IAM/LD"},
         ])
         result = compute_repricing_gap(deals, pd.DataFrame(), datetime(2026, 4, 5))

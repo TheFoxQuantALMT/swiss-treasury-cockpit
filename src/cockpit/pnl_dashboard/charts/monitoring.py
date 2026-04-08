@@ -33,6 +33,9 @@ def _build_basis_risk(
         unique_products = sorted(p for p in set(products) if pd.notna(p))
         unique_currencies = sorted(c for c in set(currencies) if pd.notna(c))
 
+        # Pre-convert Amount once for all loops
+        amount_numeric = pd.to_numeric(deals["Amount"], errors="coerce").fillna(0) if "Amount" in deals.columns else pd.Series(0, index=deals.index)
+
         # Compute base NII by product and currency from pnl_by_deal
         by_product = {}
         by_currency = {}
@@ -48,9 +51,8 @@ def _build_basis_risk(
             deal_ids = set(deals.loc[mask, "Dealid"].values) if "Dealid" in deals.columns else set()
             prod_pnl = base[base["Dealid"].isin(deal_ids)][pnl_col].sum() if "Dealid" in base.columns and deal_ids else 0
             by_product[prod] = {"base_nii": round(float(prod_pnl), 0)}
+            prod_nom = float(amount_numeric[mask].sum())
             for label, bp in zip(shocks, shock_bps):
-                # Approximate annual NII impact: Nominal × spread_shock (decimal)
-                prod_nom = float(pd.to_numeric(deals.loc[mask, "Amount"], errors="coerce").fillna(0).sum()) if "Amount" in deals.columns else 0
                 by_product[prod][label] = round(prod_nom * bp / 10_000, 0)
 
         for ccy in unique_currencies:
@@ -58,8 +60,8 @@ def _build_basis_risk(
             deal_ids = set(deals.loc[mask, "Dealid"].values) if "Dealid" in deals.columns else set()
             ccy_pnl = base[base["Dealid"].isin(deal_ids)][pnl_col].sum() if "Dealid" in base.columns and deal_ids else 0
             by_currency[ccy] = {"base_nii": round(float(ccy_pnl), 0)}
+            ccy_nom = float(amount_numeric[mask].sum())
             for label, bp in zip(shocks, shock_bps):
-                ccy_nom = float(pd.to_numeric(deals.loc[mask, "Amount"], errors="coerce").fillna(0).sum()) if "Amount" in deals.columns else 0
                 by_currency[ccy][label] = round(ccy_nom * bp / 10_000, 0)
 
         return {
