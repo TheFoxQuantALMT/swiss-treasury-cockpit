@@ -1,6 +1,7 @@
 """Monitoring chart data builders: ALCO Decision Pack, Data Quality, SNB Reserves, Peer Benchmark, NMD Backtest, Basis Risk."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -8,6 +9,8 @@ import numpy as np
 import pandas as pd
 
 from cockpit.data.quality import build_quality_report
+
+logger = logging.getLogger(__name__)
 
 
 def _build_basis_risk(
@@ -65,7 +68,8 @@ def _build_basis_risk(
             "by_product": by_product,
             "by_currency": by_currency,
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("Could not compute basis risk: %s", e)
         return {"has_data": False}
 
 
@@ -119,7 +123,8 @@ def _build_snb_reserves(
         result["by_product"] = by_product
 
         return result
-    except Exception:
+    except Exception as e:
+        logger.warning("Could not compute SNB reserves: %s", e)
         return {"has_data": False}
 
 
@@ -147,7 +152,8 @@ def _build_peer_benchmark(result: dict) -> dict:
             return {"has_data": False}
 
         return compute_peer_comparison(bank_metrics)
-    except Exception:
+    except Exception as e:
+        logger.warning("Could not compute peer benchmark: %s", e)
         return {"has_data": False}
 
 

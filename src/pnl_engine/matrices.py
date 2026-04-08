@@ -20,6 +20,23 @@ from pnl_engine.saron import apply_lookback_shift
 logger = logging.getLogger(__name__)
 
 
+def days_to_years(days: pd.DatetimeIndex, ref_date) -> np.ndarray:
+    """Convert DatetimeIndex to year fractions from ref_date (ACT/365).
+
+    Uses ACT/365 Fixed for all currencies.  Note: CHF/EUR OIS conventions
+    use ACT/360, which introduces ~1.4% bias in the discount-factor exponent.
+    This is acceptable for NII/dashboard purposes; for regulatory EVE
+    submissions, consider currency-appropriate day-count divisors.
+    """
+    ref_ts = pd.Timestamp(ref_date)
+    return np.array([(d - ref_ts).days / 365.0 for d in days])
+
+
+def broadcast_mm(mm_vector: np.ndarray) -> np.ndarray:
+    """Broadcast 1-D mm_vector to 2-D for element-wise division with (n_deals, n_days) arrays."""
+    return mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
+
+
 def build_date_grid(start: pd.Timestamp, months: int = 60) -> pd.DatetimeIndex:
     end = start + pd.DateOffset(months=months)
     return pd.date_range(start, end - pd.Timedelta(days=1), freq="D")

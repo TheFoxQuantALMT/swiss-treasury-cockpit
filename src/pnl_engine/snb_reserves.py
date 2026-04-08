@@ -24,6 +24,7 @@ def compute_snb_reserves(
     hqla_deduction: float = DEFAULT_HQLA_DEDUCTION,
     hqla_amount: float = 0.0,
     tier1_capital: float = 0.0,
+    actual_reserves: float | None = None,
 ) -> dict:
     """Compute SNB minimum reserve requirements and opportunity cost.
 
@@ -83,5 +84,6 @@ def compute_snb_reserves(
         "ois_rate": round(ois_rate, 6),
         "opportunity_cost_annual": round(opportunity_cost, 0),
         "coverage_pct": round(coverage_pct, 1),
-        "compliant": net_requirement >= 0,  # Always True given max(0,...) but kept for clarity
+        "actual_reserves": round(actual_reserves, 0) if actual_reserves is not None else None,
+        "compliant": actual_reserves >= net_requirement if actual_reserves is not None else None,
     }

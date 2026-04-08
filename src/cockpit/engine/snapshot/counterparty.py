@@ -51,7 +51,8 @@ def compute_counterparty(
     for _, row in top_10_df.iterrows():
         cpty = row["Counterparty"]
         nom = row["nominal"]
-        peri = deals.loc[deals["Counterparty"] == cpty, "Périmètre TOTAL"].iloc[0] if "Périmètre TOTAL" in deals.columns else "CC"
+        peri_series = deals.loc[deals["Counterparty"] == cpty, "Périmètre TOTAL"] if "Périmètre TOTAL" in deals.columns else pd.Series(dtype=str)
+        peri = peri_series.iloc[0] if not peri_series.empty else "CC"
         top_10.append({
             "counterparty": cpty,
             "nominal": float(nom),

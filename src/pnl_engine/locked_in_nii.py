@@ -10,6 +10,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from pnl_engine.matrices import broadcast_mm
+
 
 def compute_locked_in_nii(
     deals: Optional[pd.DataFrame],
@@ -36,14 +38,14 @@ def compute_locked_in_nii(
         return {"has_data": False}
 
     n_days = min(horizon_days, nominal_daily.shape[1])
-    mm_2d = mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
+    mm_2d = broadcast_mm(mm_vector)
 
     # Full NII
     daily_pnl = nominal_daily[:, :n_days] * (ois_matrix[:, :n_days] - rate_matrix[:, :n_days]) / mm_2d[:, :n_days]
     total_nii = float(np.nansum(daily_pnl))
 
     # Fixed-rate mask
-    is_floating = deals.get("is_floating", pd.Series([False] * len(deals)))
+    is_floating = deals["is_floating"] if "is_floating" in deals.columns else pd.Series([False] * len(deals))
     fixed_mask = ~is_floating.fillna(False).astype(bool)
     fixed_idx = np.where(fixed_mask.values)[0]
 

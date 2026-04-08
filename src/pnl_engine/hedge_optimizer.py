@@ -8,8 +8,6 @@ curve-aware and KRD-based tenor selection.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 
 # DV01 per 1M notional by tenor and currency (approximate mid-market values)
 DV01_PER_MILLION_BY_TENOR: dict[str, dict[str, float]] = {
@@ -125,7 +123,10 @@ def recommend_hedge(
         max_val = limits.get(ccy, float("inf"))
         excess = abs(current_dv01) - max_val
 
-        if excess <= 0 and abs(current_dv01 - target_val) < abs(current_dv01) * 0.1:
+        # Use limit-based tolerance (or absolute floor of 500) to avoid
+        # threshold collapse when current_dv01 ≈ 0.
+        tolerance = max(max_val * 0.1, 500.0) if max_val != float("inf") else max(abs(current_dv01) * 0.1, 500.0)
+        if excess <= 0 and abs(current_dv01 - target_val) < tolerance:
             recommendations.append({
                 "currency": ccy,
                 "current_dv01": round(current_dv01, 0),

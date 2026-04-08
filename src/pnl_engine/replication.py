@@ -98,8 +98,10 @@ def build_replication_portfolio(
     if cf[0] != 0:
         cf = cf / cf[0]
 
-    # Build basis functions: each tenor is a flat cashflow until maturity, then zero
-    # This represents a bullet bond at each tenor
+    # Build basis functions: each tenor contributes a unit cashflow for all days
+    # up to its maturity, then zero.  This is a piecewise-constant bucket
+    # allocation (not a literal coupon bond profile).  NNLS finds the optimal
+    # weighting of these step functions to replicate the NMD behavioral curve.
     A = np.zeros((n, len(tenors)))
     for j, tenor in enumerate(tenors):
         A[:, j] = np.where(day_years <= tenor, 1.0, 0.0)

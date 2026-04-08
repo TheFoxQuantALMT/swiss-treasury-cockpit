@@ -52,7 +52,7 @@ def backtest_nmd_model(
         key_dict = dict(zip(group_cols, keys))
 
         # Find matching profile
-        mask = pd.Series([True] * len(profiles))
+        mask = pd.Series([True] * len(profiles), index=profiles.index)
         for col, val in key_dict.items():
             if col in profiles.columns:
                 mask &= profiles[col] == val
@@ -79,7 +79,7 @@ def backtest_nmd_model(
             continue
 
         # Compute modeled balances
-        t_years = np.array([(d - t0).days / 365.25 for d in grp["date"]])
+        t_years = np.array([(d - t0).days / 365.0 for d in grp["date"]])
         modeled = initial_balance * np.exp(-decay_rate * t_years)
         actual = grp["balance"].values.astype(float)
 

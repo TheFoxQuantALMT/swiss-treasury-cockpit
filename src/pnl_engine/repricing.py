@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 
+# Calendar-day boundaries for repricing gap buckets (not day count convention)
 REPRICING_BUCKETS = [
     ("O/N", 1),
     ("1W", 7),
@@ -114,7 +115,15 @@ def compute_repricing_gap(
     df["_nominal"] = df[amount_col].abs()
     # Assets: B (bond), D (deposit received)
     # Liabilities: L (loan given), S (sell/short)
-    df["_side"] = df[direction_col].map({"B": "asset", "D": "asset", "L": "liability", "S": "liability"})
+    dir_map = {"B": "asset", "D": "asset", "L": "liability", "S": "liability"}
+    df["_side"] = df[direction_col].map(dir_map)
+    unmapped = df["_side"].isna()
+    if unmapped.any():
+        import logging as _log
+        bad_dirs = df.loc[unmapped, direction_col].unique().tolist()
+        _log.getLogger(__name__).warning(
+            "repricing_gap: unknown Direction values %s defaulting to 'asset'", bad_dirs,
+        )
     df["_side"] = df["_side"].fillna("asset")
 
     rows = []

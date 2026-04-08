@@ -23,6 +23,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from pnl_engine.matrices import broadcast_mm, days_to_years
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +50,15 @@ def _profile_weights(matched: pd.DataFrame) -> pd.Series:
         if total > 0:
             return shares / total
     return pd.Series([1.0 / len(matched)] * len(matched), index=matched.index)
+
+
+def _normalize_profiles(nmd_profiles: pd.DataFrame) -> pd.DataFrame:
+    """Copy and normalize NMD profile columns (strip/upper)."""
+    profiles = nmd_profiles.copy()
+    for col in ["product", "currency", "direction"]:
+        if col in profiles.columns:
+            profiles[col] = profiles[col].str.strip().str.upper()
+    return profiles
 
 
 def compute_stressed_beta(
@@ -138,14 +149,9 @@ def apply_nmd_decay(
 
     result = nominal_daily.copy()
     date_run_ts = pd.Timestamp(date_run)
-    day_years = np.array([(d - date_run_ts).days / 365.25 for d in days])
-    day_years = np.maximum(day_years, 0.0)
+    day_years = np.maximum(days_to_years(days, date_run), 0.0)
 
-    # Normalize profile columns
-    profiles = nmd_profiles.copy()
-    for col in ["product", "currency", "direction"]:
-        if col in profiles.columns:
-            profiles[col] = profiles[col].str.strip().str.upper()
+    profiles = _normalize_profiles(nmd_profiles)
 
     matched_count = 0
     match_log: list[dict] = []
@@ -205,7 +211,7 @@ def apply_nmd_decay(
             month_mask = (month_periods == m)
             if not month_mask.any():
                 continue
-            m_start_years = max(0.0, (m.start_time - date_run_ts).days / 365.25)
+            m_start_years = max(0.0, (m.start_time - date_run_ts).days / 365.0)
             m_decay = initial_nominal * np.exp(-decay_rate * m_start_years)
             result[i, month_mask] = np.where(
                 alive[month_mask],
@@ -260,10 +266,7 @@ def apply_deposit_beta(
 
     result = rate_matrix.copy()
 
-    profiles = nmd_profiles.copy()
-    for col in ["product", "currency", "direction"]:
-        if col in profiles.columns:
-            profiles[col] = profiles[col].str.strip().str.upper()
+    profiles = _normalize_profiles(nmd_profiles)
 
     for i in range(len(deals)):
         product = str(deals.iloc[i].get("Product", "")).strip().upper()
@@ -324,7 +327,7 @@ def compute_nmd_beta_sensitivity(
 
     def _compute_nii(perturbed_rates: np.ndarray) -> float:
         """Sum daily NII = Nominal × (OIS - Rate) / MM."""
-        mm_2d = mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
+        mm_2d = broadcast_mm(mm_vector)
         daily_pnl = nominal_daily * (ois_matrix - perturbed_rates) / mm_2d
         return float(np.nansum(daily_pnl))
 
@@ -355,7 +358,7 @@ def compute_nmd_beta_sensitivity(
         idx = np.where(ccy_mask.values)[0]
         if len(idx) == 0:
             continue
-        mm_2d = mm_vector[idx, np.newaxis] if mm_vector.ndim == 1 else mm_vector[idx]
+        mm_2d = broadcast_mm(mm_vector[idx])
         base_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - base_rates[idx]) / mm_2d))
         up_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - up_rates[idx]) / mm_2d))
         down_ccy = float(np.nansum(nominal_daily[idx] * (ois_matrix[idx] - down_rates[idx]) / mm_2d))
@@ -394,10 +397,7 @@ def get_behavioral_maturity(
     if nmd_profiles is None or nmd_profiles.empty:
         return pd.Series([np.nan] * len(deals), index=deals.index)
 
-    profiles = nmd_profiles.copy()
-    for col in ["product", "currency", "direction"]:
-        if col in profiles.columns:
-            profiles[col] = profiles[col].str.strip().str.upper()
+    profiles = _normalize_profiles(nmd_profiles)
 
     result = pd.Series([np.nan] * len(deals), index=deals.index)
 

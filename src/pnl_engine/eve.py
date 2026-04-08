@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS
+from pnl_engine.matrices import days_to_years
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +61,9 @@ def compute_eve(
         eve, duration, notional_avg, counterparty.
     """
     n_deals, n_days = nominal_daily.shape
-    date_run_ts = pd.Timestamp(date_run)
 
     # Year fractions from date_run for each day
-    day_years = np.array([(d - date_run_ts).days / 365.0 for d in days])
-    day_years = np.maximum(day_years, 0.0)  # no negative time
+    day_years = np.maximum(days_to_years(days, date_run), 0.0)
 
     # Discount factors: exp(-∫OIS dt) using cumulative forward rates
     # Build cumulative zero rates from instantaneous forwards:
@@ -93,7 +92,7 @@ def compute_eve(
     pv_daily = total_cf * discount_factors
     eve_per_deal = pv_daily.sum(axis=1)
 
-    # Modified duration: -1/EVE × dEVE/dr ≈ Σ(t × CF × DF) / EVE
+    # Macaulay duration: Σ(t × CF × DF) / EVE  (cashflow-weighted average time)
     weighted_time = (total_cf * discount_factors * day_years[np.newaxis, :]).sum(axis=1)
     with np.errstate(divide='ignore', invalid='ignore'):
         duration = np.where(
@@ -210,7 +209,7 @@ def compute_eve_scenarios(
             eve_b = eve_base.loc[base_mask, "eve"].sum()
             eve_s = eve_shocked.loc[shocked_mask, "eve"].sum()
             delta = eve_s - eve_b
-            pct = (delta / eve_b * 100) if abs(eve_b) > 1e-6 else 0.0
+            pct = (delta / abs(eve_b) * 100) if abs(eve_b) > 1e-6 else 0.0
 
             results.append({
                 "scenario": sc_name,
@@ -237,7 +236,7 @@ def compute_eve_convexity(
 
     Formulas:
       effective_duration = -(EVE_up - EVE_down) / (2 × EVE_base × Δr)
-      convexity = (EVE_up + EVE_down - 2×EVE_base) / (EVE_base × Δr²)
+      convexity = (EVE_up + EVE_down - 2×EVE_base) / (|EVE_base| × Δr²)
 
     Args:
         eve_base_by_ccy: Base EVE by currency {"CHF": 1000000, ...}.
@@ -265,6 +264,8 @@ def compute_eve_convexity(
         total_down += down
 
         if abs(base) > 1e-6:
+            # Duration: signed base preserves asset/liability direction
+            # Convexity: abs(base) prevents sign flip when EVE is negative
             eff_dur = -(up - down) / (2.0 * base * delta_r)
             conv = (up + down - 2.0 * base) / (abs(base) * delta_r ** 2)
         else:
@@ -332,8 +333,7 @@ def compute_key_rate_durations(
         days, deals, date_run,
     )
 
-    date_run_ts = pd.Timestamp(date_run)
-    day_years = np.array([(d - date_run_ts).days / 365.0 for d in days])
+    day_years = days_to_years(days, date_run)
 
     currencies = deals["Currency"].unique() if "Currency" in deals.columns else []
     results = []

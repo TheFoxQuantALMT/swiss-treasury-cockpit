@@ -50,7 +50,7 @@ def apply_cpr(
         return result, log
 
     t0 = days[0]
-    month_fracs = np.array([(d - t0).days / 30.44 for d in days])
+    month_fracs = np.array([(d - t0).days / 30.4375 for d in days])
     month_fracs = np.maximum(month_fracs, 0.0)
 
     n_applied = 0
@@ -160,8 +160,10 @@ def apply_cpr_rate_dependent(
         return result, log
 
     t0 = days[0]
-    month_fracs = np.array([(d - t0).days / 30.44 for d in days])
-    month_fracs = np.maximum(month_fracs, 0.0)
+    day_gaps = np.zeros(len(days))
+    day_gaps[0] = 0.0
+    for k in range(1, len(days)):
+        day_gaps[k] = (days[k] - days[k - 1]).days / 30.4375  # month fraction per step
 
     n_applied = 0
     for i in range(len(deals)):
@@ -188,13 +190,16 @@ def apply_cpr_rate_dependent(
                 continue
             current_nom = nominal_daily[i, nonzero[0]]
 
-        # Vectorized rate-dependent survival computation
+        # Vectorized rate-dependent survival via cumulative product
+        # Each step's survival depends on that step's CPR (not constant CPR
+        # raised to total elapsed time, which is wrong for time-varying CPR).
         market_rates = ois_matrix[i]
         incentive = np.maximum(0.0, deal_rate - market_rates - 0.005)
         cpr_adj = np.minimum(base_cpr * (1.0 + 2.0 * incentive), 0.40)
-        monthly_survival = (1.0 - cpr_adj) ** (1.0 / 12.0)
-        survival = monthly_survival ** month_fracs
-        result[i] = np.where(alive, current_nom * survival * np.sign(nominal_daily[i]), 0.0)
+        per_step_survival = (1.0 - cpr_adj) ** (day_gaps / 1.0)  # day_gaps already in months
+        per_step_survival[0] = 1.0  # no decay at t=0
+        survival = np.cumprod(per_step_survival)
+        result[i] = np.where(alive, abs(current_nom) * survival * np.sign(nominal_daily[i]), 0.0)
 
         n_applied += 1
         deal_id = str(deal.get("Dealid", f"idx_{i}"))

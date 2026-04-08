@@ -11,6 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from pnl_engine.matrices import broadcast_mm
+
 
 def compute_basis_risk(
     deals: pd.DataFrame,
@@ -40,7 +42,7 @@ def compute_basis_risk(
     if spread_shocks_bp is None:
         spread_shocks_bp = [-50, -25, -10, 0, 10, 25, 50]
 
-    mm_2d = mm_vector[:, np.newaxis] if mm_vector.ndim == 1 else mm_vector
+    mm_2d = broadcast_mm(mm_vector)
 
     # Base NII by deal
     base_daily = nominal_daily * (ois_matrix - rate_matrix) / mm_2d
@@ -48,6 +50,18 @@ def compute_basis_risk(
 
     products = deals["Product"].str.strip().values if "Product" in deals.columns else np.array(["Unknown"] * len(deals))
     currencies = deals["Currency"].str.strip().str.upper().values if "Currency" in deals.columns else np.array(["CHF"] * len(deals))
+
+    # Direction sign: for spread compression, assets and liabilities are
+    # shocked in opposite directions.  A positive spread shock widens the
+    # spread (client rate moves away from OIS):
+    #   Assets  (D/B): client rate rises  → shocked_rate = rate + shock
+    #   Liabilities (L/S): client rate falls → shocked_rate = rate - shock
+    # We store a (n_deals, 1) sign array: +1 for assets, -1 for liabilities.
+    if "Direction" in deals.columns:
+        dirs = deals["Direction"].str.strip().str.upper().values
+        dir_sign = np.where(np.isin(dirs, ["D", "B"]), 1.0, -1.0)[:, np.newaxis]
+    else:
+        dir_sign = np.ones((len(deals), 1))
 
     # Compute shocked NII for each spread shock
     by_product: dict[str, dict] = {}
@@ -58,10 +72,10 @@ def compute_basis_risk(
 
     for shock_bp in spread_shocks_bp:
         shock_rate = shock_bp / 10_000.0
-        # Spread compression: client rate moves toward OIS
-        # If shock is negative → spread narrows → client rate increases (toward OIS for assets)
-        # Simple model: adjust client rate by shock amount
-        shocked_rate = rate_matrix + shock_rate
+        # Spread compression: client rate moves toward OIS.
+        # Apply direction-aware shock so both sides of the balance sheet
+        # are affected correctly.
+        shocked_rate = rate_matrix + shock_rate * dir_sign
         shocked_daily = nominal_daily * (ois_matrix - shocked_rate) / mm_2d
         shocked_by_deal = np.nansum(shocked_daily, axis=1)
         delta_by_deal = shocked_by_deal - base_by_deal

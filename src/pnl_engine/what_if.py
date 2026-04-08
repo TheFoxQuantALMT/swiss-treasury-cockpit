@@ -64,6 +64,8 @@ def simulate_deal(
         eve_impact = 0.0
 
     # DV01 = |Notional × modified_duration| / 10000
+    # Approximation: uses zero-coupon modified duration; overstates duration
+    # for coupon-bearing instruments.
     mod_duration = maturity_years / (1.0 + ois_rate) if ois_rate > -1.0 else maturity_years
     dv01 = abs(notional) * mod_duration / 10_000
 

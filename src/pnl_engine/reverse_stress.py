@@ -141,11 +141,28 @@ def reverse_stress_eve(
 
     limit_delta_eve = tier1_capital * threshold_pct / 100.0
 
-    def eval_fn(shock_bp: float) -> float:
-        # ΔEVE ≈ DV01 × shock + 0.5 × convexity × shock²
+    # Search positive and negative shock ranges separately to avoid
+    # non-monotonicity from abs(ΔEVE) when convexity is non-zero.
+    def _eval_signed(shock_bp: float) -> float:
         delta = dv01 * shock_bp
         if convexity is not None:
             delta += 0.5 * convexity * shock_bp ** 2
         return limit_delta_eve - abs(delta)
 
-    return bisect_breach_shock(eval_fn, 0.0, direction="below", **kwargs)
+    result_pos = bisect_breach_shock(_eval_signed, 0.0, low_bp=0.0, direction="below", **kwargs)
+    result_neg = bisect_breach_shock(
+        lambda bp: _eval_signed(-bp), 0.0, low_bp=0.0, direction="below", **kwargs,
+    )
+
+    # Return the smaller breach shock (more conservative)
+    bp_pos = result_pos.get("breach_shock_bp")
+    bp_neg = result_neg.get("breach_shock_bp")
+    if bp_pos is not None and bp_neg is not None:
+        if bp_neg < bp_pos:
+            result_neg["breach_shock_bp"] = -bp_neg
+            return result_neg
+        return result_pos
+    if bp_neg is not None:
+        result_neg["breach_shock_bp"] = -bp_neg
+        return result_neg
+    return result_pos

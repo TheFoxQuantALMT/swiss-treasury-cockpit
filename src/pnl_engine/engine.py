@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from pnl_engine.config import CURRENCY_TO_OIS, PRODUCT_RATE_COLUMN, ECHEANCIER_INDEX_TO_WASP, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
+from pnl_engine.config import CURRENCY_TO_OIS, MM_BY_CURRENCY, PRODUCT_RATE_COLUMN, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
 from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
     build_date_grid,
@@ -33,7 +33,8 @@ def compute_daily_pnl(
     mm: np.ndarray,
 ) -> np.ndarray:
     """Vectorized daily P&L: Nominal x (OIS - RateRef) / MM."""
-    return nominal * (ois - rate_ref) / mm
+    safe_mm = np.where(mm == 0, 360.0, mm)
+    return nominal * (ois - rate_ref) / safe_mm
 
 
 def _aggregate_slice(
@@ -292,10 +293,23 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pivoted["Amount_Spread"] = _safe(pivoted, "Amount_IAM/LD") + _safe(pivoted, "Amount_BND") - _safe(pivoted, "Amount_HCD")
     pivoted["marginRate_Spread"] = _safe(pivoted, "EqOisRate_IAM/LD") + _safe(pivoted, "YTM_BND") - _safe(pivoted, "Clientrate_HCD")
 
-    mm = np.where(pivoted["Currency"] == "GBP", 365, 360).astype(float)
+    mm_by_ccy = np.array([MM_BY_CURRENCY.get(c, 360) for c in pivoted["Currency"]], dtype=float)
     dim = pivoted["Days in Month"].values.astype(float)
 
     # -- Step 4 & 5: Build conditional legs (§10.4, §10.5) --
+    # Product-specific day count divisors (ISDA 2006 §4.16).
+    # Avoids using per-currency default for products with different conventions
+    # (e.g. GBP bonds use 30/360 = 360, not currency default 365).
+    from pnl_engine.models import get_day_count as _get_dc
+    _ccy_list = pivoted["Currency"].values
+
+    def _product_mm(product: str) -> np.ndarray:
+        return np.array([_get_dc(product, c).divisor for c in _ccy_list], dtype=float)
+
+    mm_iam = _product_mm("IAM/LD")
+    mm_bnd = _product_mm("BND")
+    mm_hcd = _product_mm("HCD")
+
     def _build_leg(cond_col, leg_name, rate_src, nom_src, ois_src):
         """Build one leg: set to 0 where cond_col is 0."""
         mask = _safe(pivoted, cond_col).values != 0
@@ -304,7 +318,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
         ois = np.where(mask, _safe(pivoted, ois_src).values, 0.0)
         return nom, rate, ois, mask
 
-    def _build_pnl(nom, rate, ois, mask, subtract_rate):
+    def _build_pnl(nom, rate, ois, mask, subtract_rate, mm=mm_by_ccy):
         if subtract_rate:
             return np.where(mask, nom * (ois - rate) * dim / mm, 0.0)
         else:
@@ -318,7 +332,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
 
     # IAM/LD-NHCD: condition = Nominal_IAM/LD != 0
     nom, rate, ois, mask = _build_leg("Nominal_IAM/LD", "IAM/LD-NHCD", _safe(pivoted, "EqOisRate_IAM/LD"), "Nominal_Spread", "OISfwd_IAM/LD")
-    pnl = _build_pnl(nom, rate, ois, mask, subtract_rate=True)
+    pnl = _build_pnl(nom, rate, ois, mask, subtract_rate=True, mm=mm_iam)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-NHCD"
     leg["PnL"] = pnl
@@ -332,7 +346,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     nom_hcd = np.where(mask, _safe(pivoted, "Nominal_HCD").values, 0.0)
     rate_margin = np.where(mask, pivoted["marginRate_Spread"].values, 0.0)
     ois_hcd = np.where(mask, _safe(pivoted, "OISfwd_HCD").values, 0.0)
-    pnl_hcd = _build_pnl(nom_hcd, rate_margin, ois_hcd, mask, subtract_rate=False)
+    pnl_hcd = _build_pnl(nom_hcd, rate_margin, ois_hcd, mask, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-HCD"
     leg["PnL"] = pnl_hcd
@@ -344,7 +358,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
 
     # BND-NHCD: condition = Nominal_BND != 0
     nom_b, rate_b, ois_b, mask_b = _build_leg("Nominal_BND", "BND-NHCD", _safe(pivoted, "YTM_BND"), "Nominal_Spread", "OISfwd_BND")
-    pnl_b = _build_pnl(nom_b, rate_b, ois_b, mask_b, subtract_rate=True)
+    pnl_b = _build_pnl(nom_b, rate_b, ois_b, mask_b, subtract_rate=True, mm=mm_bnd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-NHCD"
     leg["PnL"] = pnl_b
@@ -358,7 +372,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     nom_bhcd = np.where(mask_b, _safe(pivoted, "Nominal_HCD").values, 0.0)
     rate_bmargin = np.where(mask_b, pivoted["marginRate_Spread"].values, 0.0)
     ois_bhcd = np.where(mask_b, _safe(pivoted, "OISfwd_HCD").values, 0.0)
-    pnl_bhcd = _build_pnl(nom_bhcd, rate_bmargin, ois_bhcd, mask_b, subtract_rate=False)
+    pnl_bhcd = _build_pnl(nom_bhcd, rate_bmargin, ois_bhcd, mask_b, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-HCD"
     leg["PnL"] = pnl_bhcd
@@ -417,7 +431,7 @@ def compute_book2_mtm(
             result.get("Maturity Date", result.get("Maturitydate", pd.Series(dtype="datetime64[ns]"))),
             errors="coerce",
         )
-        remaining_years = ((maturity - calc_ts).dt.days / 365.25).clip(lower=0).fillna(0)
+        remaining_years = ((maturity - calc_ts).dt.days / 365.0).clip(lower=0).fillna(0)
 
         # Assume OIS fwd ≈ 1% (conservative mid for CHF/EUR/USD)
         # Shock adjusts: +50bp → 1.50%, etc.
