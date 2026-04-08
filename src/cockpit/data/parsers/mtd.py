@@ -254,6 +254,9 @@ def parse_mtd(path: Path) -> pd.DataFrame:
         df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
     else:
         logger.warning("parse_mtd: no 'Currency' column after rename")
+    if "Maturitydate" not in df.columns:
+        logger.warning("parse_mtd: no 'Maturitydate' column after rename")
+        return df.reset_index(drop=True)
     mat = pd.to_datetime(df["Maturitydate"], errors="coerce", dayfirst=True)
     df = df[mat.notna()].copy()
 

@@ -168,7 +168,7 @@ def check_rate_staleness(
 
     if date_col is None:
         # Check index
-        if hasattr(ois_curves.index, 'date') or ois_curves.index.dtype == "datetime64[ns]":
+        if isinstance(ois_curves.index, pd.DatetimeIndex):
             latest = pd.Timestamp(ois_curves.index.max())
         else:
             return QualityCheck("Rate Staleness", "warn", "N/A", "Cannot determine curve date")

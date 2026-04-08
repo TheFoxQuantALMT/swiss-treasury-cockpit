@@ -30,7 +30,11 @@ def cmd_decision(
         if not topic:
             print("[decision] Error: --topic is required for recording")
             sys.exit(1)
-        dt = datetime.strptime(date, "%Y-%m-%d") if date else datetime.now()
+        try:
+            dt = datetime.strptime(date, "%Y-%m-%d") if date else datetime.now()
+        except ValueError:
+            print(f"[decision] Error: invalid date format '{date}', expected YYYY-MM-DD")
+            sys.exit(1)
         entry = store.record(
             topic=topic,
             description=description,

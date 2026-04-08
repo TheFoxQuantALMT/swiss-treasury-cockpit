@@ -380,7 +380,7 @@ def _build_eve(
     if limits is not None and not limits.empty:
         t1_rows = limits[limits["metric"].str.strip() == "tier1_capital"]
         if not t1_rows.empty:
-            tier1 = float(t1_rows.iloc[0]["limit_value"])
+            tier1 = float(pd.to_numeric(t1_rows.iloc[0].get("limit_value", 0), errors="coerce") or 0)
 
     outlier_warning = None
     if tier1 and tier1 > 0 and scenarios_data:

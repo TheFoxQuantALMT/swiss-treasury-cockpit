@@ -144,7 +144,7 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
         df["Currency"] = df[curr_cols[0]]
 
     # V-leg carry-forward
-    if rate_type_col:
+    if rate_type_col and month_cols:
         rt_col = rate_type_col[0]
         v_mask = df[rt_col] == "V"
         if v_mask.any():

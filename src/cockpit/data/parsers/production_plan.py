@@ -1,6 +1,7 @@
 """Parser for production_plan.xlsx — reinvestment assumptions for dynamic balance sheet."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -46,13 +47,17 @@ def parse_production_plan(path: Path | str) -> list[ProductionPlan]:
 
     plans = []
     for _, row in df.iterrows():
-        plans.append(ProductionPlan(
-            product=str(row["product"]).strip(),
-            currency=str(row["currency"]).strip(),
-            direction=str(row["direction"]).strip().upper(),
-            monthly_volume=float(row["monthly_volume"]),
-            tenor_years=float(row["tenor_years"]),
-            rate_spread_bps=float(row.get("rate_spread_bps", 0.0)),
-        ))
+        try:
+            plans.append(ProductionPlan(
+                product=str(row["product"]).strip(),
+                currency=str(row["currency"]).strip(),
+                direction=str(row["direction"]).strip().upper(),
+                monthly_volume=float(pd.to_numeric(row["monthly_volume"], errors="coerce") or 0),
+                tenor_years=float(pd.to_numeric(row["tenor_years"], errors="coerce") or 0),
+                rate_spread_bps=float(pd.to_numeric(row.get("rate_spread_bps", 0.0), errors="coerce") or 0),
+            ))
+        except (ValueError, TypeError) as e:
+            logging.getLogger(__name__).warning("Skipping invalid production plan row: %s", e)
+            continue
 
     return plans

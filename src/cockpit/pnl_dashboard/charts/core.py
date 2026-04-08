@@ -364,8 +364,8 @@ def _build_sensitivity(df: pd.DataFrame) -> dict:
         "rows_wirp": rows_wirp,
         "totals_50": {k: [round(v, 0) for v in vals] for k, vals in totals_50.items()},
         "totals_wirp": {k: [round(v, 0) for v in vals] for k, vals in totals_wirp.items()},
-        "grand_total_50": round(sum(r["total"] for r in rows_50), 0),
-        "grand_total_wirp": round(sum(r["total"] for r in rows_wirp), 0),
+        "grand_total_50": round(float(np.nansum([r["total"] for r in rows_50])), 0),
+        "grand_total_wirp": round(float(np.nansum([r["total"] for r in rows_wirp])), 0),
     }
 
 
