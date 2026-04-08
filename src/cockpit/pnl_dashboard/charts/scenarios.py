@@ -133,10 +133,11 @@ def _build_deposit_behavior(
 
     d = deals.copy()
 
-    # Filter to deposits (Direction = D or S)
+    # Filter to deposits (liabilities: L/S direction)
+    from pnl_engine.config import LIABILITY_DIRECTIONS
     dir_col = "Direction" if "Direction" in d.columns else None
     if dir_col:
-        deposits = d[d[dir_col].isin(["D", "S"])].copy()
+        deposits = d[d[dir_col].isin(LIABILITY_DIRECTIONS)].copy()
     else:
         return {"has_data": False, "volume_by_ccy": {}, "volume_by_product": {},
                 "beta_analysis": {}, "concentration": {}, "kpis": {}}
@@ -220,7 +221,7 @@ def _build_deposit_behavior(
         ref_rows = df[(df["Indice"] == "RateRef") & (df["Shock"] == "0")]
         if not ois_rows.empty and not ref_rows.empty:
             # Filter to deposit direction
-            dep_ref = ref_rows[ref_rows["Direction"].isin(["D", "S"])] if "Direction" in ref_rows.columns else ref_rows
+            dep_ref = ref_rows[ref_rows["Direction"].isin(LIABILITY_DIRECTIONS)] if "Direction" in ref_rows.columns else ref_rows
             for ccy_val in dep_ref["Deal currency"].unique() if "Deal currency" in dep_ref.columns else []:
                 _ois_s = ois_rows[ois_rows["Deal currency"] == ccy_val]["Value"] if "Deal currency" in ois_rows.columns else pd.Series(dtype=float)
                 ccy_ois = float(_ois_s.mean()) if not _ois_s.empty and pd.notna(_ois_s.mean()) else 0
@@ -327,19 +328,9 @@ def _build_scenario_studio(
             sc = row.get("scenario", "")
             eve_lookup[sc] = {"delta_eve": row.get("total", 0)}
 
-    # Scenario probabilities (uniform by default, with slight weighting for parallel)
-    scenario_probs = {}
-    for sc in scenarios:
-        if "parallel" in str(sc).lower():
-            scenario_probs[sc] = 0.20
-        elif "short" in str(sc).lower():
-            scenario_probs[sc] = 0.15
-        else:
-            scenario_probs[sc] = 0.15
-    # Normalize
-    total_prob = sum(scenario_probs.values())
-    if total_prob > 0:
-        scenario_probs = {k: round(v / total_prob, 4) for k, v in scenario_probs.items()}
+    # Scenario weights (equal-weight by default — these are NOT calibrated probabilities)
+    n_scenarios = len(scenarios)
+    scenario_probs = {sc: round(1.0 / max(n_scenarios, 1), 4) for sc in scenarios}
 
     # Combined table: scenario -> NII, ΔNII, ΔEVE, combined impact
     combined = []

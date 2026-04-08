@@ -41,6 +41,7 @@ from pnl_engine.engine import (
 from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
+    build_client_rate_matrix,
     build_date_grid,
     build_funding_matrix,
     build_mm_vector,
@@ -344,6 +345,7 @@ class PnlEngine:
             ois_matrix,
             rate_matrix,
             mm_broadcast,
+            accrual_days=self._accrual_days,
         )
 
         # --- Funding matrix for CoC decomposition ---
@@ -608,9 +610,9 @@ class PnlEngine:
         if total_mtm == 0:
             return pd.DataFrame()
 
-        direction = "L"
+        direction = "D"
         if "Asset / Liabilities" in book2.columns:
-            direction = "L" if (book2["Asset / Liabilities"] == "Actif").any() else "D"
+            direction = "D" if (book2["Asset / Liabilities"] == "Actif").any() else "L"
 
         ccy = book2.get("Currency Code (ISO)", pd.Series(["CHF"])).iloc[0] if len(book2) > 0 else "CHF"
         month = self._days[0].to_period("M") if self._days is not None and len(self._days) > 0 else "2026-04"
@@ -651,10 +653,14 @@ class PnlEngine:
         ref_curves = self._load_ref_curves(shock="0")
         rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
 
+        # Build client rate matrix for EVE cashflow generation
+        client_rate_matrix = build_client_rate_matrix(self._deals_use, len(self._days))
+
         # Base EVE
         self.eve_results = compute_eve(
             self._nominal_daily, ois_matrix, rate_matrix, self._mm,
             self._days, self._deals_use, self.dateRun,
+            client_rate_matrix=client_rate_matrix,
         )
         logger.info("run_eve: base EVE computed (%d deals, total=%.0f)",
                      len(self.eve_results), self.eve_results["eve"].sum())
@@ -672,6 +678,7 @@ class PnlEngine:
                 self._days, self._deals_use, self.dateRun,
                 scenarios, self.fwdOIS0,
                 nominal_adjuster=nominal_adjuster,
+                client_rate_matrix=client_rate_matrix,
             )
             logger.info("run_eve: %d scenario results", len(self.eve_scenarios))
 
@@ -680,6 +687,7 @@ class PnlEngine:
                 self._nominal_daily, ois_matrix, rate_matrix, self._mm,
                 self._days, self._deals_use, self.dateRun,
                 self.fwdOIS0,
+                client_rate_matrix=client_rate_matrix,
             )
             logger.info("run_eve: KRD computed (%d points)", len(self.eve_krd))
 
@@ -750,6 +758,7 @@ class PnlEngine:
             mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
             daily_pnl = compute_daily_pnl(
                 self._nominal_daily, ois_matrix, rate_matrix, mm_broadcast,
+                accrual_days=self._accrual_days,
             )
 
             monthly = aggregate_to_monthly(

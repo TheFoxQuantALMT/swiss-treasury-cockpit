@@ -34,7 +34,8 @@ def simulate_deal(
     Returns:
         Dict with annual NII, total NII, EVE impact, DV01 contribution.
     """
-    sign = 1.0 if direction.upper() == "B" else -1.0
+    from pnl_engine.config import ASSET_DIRECTIONS
+    sign = 1.0 if direction.upper() in ASSET_DIRECTIONS else -1.0
     effective_notional = sign * abs(notional)
 
     # Effective client rate for floating (NMD model: floor + β × max(0, OIS - floor))

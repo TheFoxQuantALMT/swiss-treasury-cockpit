@@ -10,6 +10,7 @@ import pandas as pd
 from pnl_engine.config import CURRENCY_TO_OIS, MM_BY_CURRENCY, PRODUCT_RATE_COLUMN, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
 from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
+    build_accrual_days,
     build_date_grid,
     expand_nominal_to_daily,
     build_alive_mask,
@@ -31,10 +32,20 @@ def compute_daily_pnl(
     ois: np.ndarray,
     rate_ref: np.ndarray,
     mm: np.ndarray,
+    accrual_days: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Vectorized daily P&L: Nominal x (OIS - RateRef) / MM."""
+    """Vectorized daily P&L: Nominal x (OIS - RateRef) x d_i / MM.
+
+    Args:
+        accrual_days: (n_days,) calendar days each fixing accrues for
+            (e.g., 3 for Friday → Monday). If None, defaults to 1 (no
+            weekend/holiday adjustment).
+    """
     safe_mm = np.where(mm == 0, 360.0, mm)
-    return nominal * (ois - rate_ref) / safe_mm
+    daily = nominal * (ois - rate_ref) / safe_mm
+    if accrual_days is not None:
+        daily = daily * accrual_days[np.newaxis, :]
+    return daily
 
 
 def _aggregate_slice(
@@ -675,6 +686,7 @@ def run_all_shocks(
         logger.debug("CPR prepayment skipped: %s", exc)
 
     mm = build_mm_vector(deals_use)
+    accrual_days = build_accrual_days(days)
 
     # OIS indices needed
     ois_indices = list({CURRENCY_TO_OIS[c] for c in deals_use["Currency"].unique() if c in CURRENCY_TO_OIS})
@@ -738,6 +750,7 @@ def run_all_shocks(
             ois_matrix,
             rate_matrix,
             mm[:, np.newaxis] * np.ones((1, len(days))),
+            accrual_days=accrual_days,
         )
 
         # 4g. aggregate_to_monthly

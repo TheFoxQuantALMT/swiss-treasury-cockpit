@@ -96,17 +96,19 @@ def cmd_render_pnl(
         print(f"[render-pnl] Using shocks: {pnl_cfg.SHOCKS}")
 
     print(f"[render-pnl] Step 1/4: Building P&L for {date}...")
-    pnl = ForecastRatePnL(
-        dateRun=date_dt,
-        dateRates=date_dt,
-        export=False,
-        input_dir=input_dir,
-        output_dir=str(output_dir),
-        funding_source=funding_source,
-    )
-    # Restore global shocks now that ForecastRatePnL has captured them
-    if _original_shocks is not None:
-        pnl_cfg.SHOCKS = _original_shocks
+    try:
+        pnl = ForecastRatePnL(
+            dateRun=date_dt,
+            dateRates=date_dt,
+            export=False,
+            input_dir=input_dir,
+            output_dir=str(output_dir),
+            funding_source=funding_source,
+        )
+    finally:
+        # Restore global shocks to avoid polluting subsequent backfill iterations
+        if _original_shocks is not None:
+            pnl_cfg.SHOCKS = _original_shocks
 
     # Load optional ALM inputs
     budget = None

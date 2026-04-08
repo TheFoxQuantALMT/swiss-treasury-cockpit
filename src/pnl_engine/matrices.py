@@ -20,16 +20,19 @@ from pnl_engine.saron import apply_lookback_shift
 logger = logging.getLogger(__name__)
 
 
-def days_to_years(days: pd.DatetimeIndex, ref_date) -> np.ndarray:
-    """Convert DatetimeIndex to year fractions from ref_date (ACT/365).
+def days_to_years(days: pd.DatetimeIndex, ref_date, divisor: float = 365.0) -> np.ndarray:
+    """Convert DatetimeIndex to year fractions from ref_date.
 
-    Uses ACT/365 Fixed for all currencies.  Note: CHF/EUR OIS conventions
-    use ACT/360, which introduces ~1.4% bias in the discount-factor exponent.
-    This is acceptable for NII/dashboard purposes; for regulatory EVE
-    submissions, consider currency-appropriate day-count divisors.
+    Args:
+        days: DatetimeIndex of dates.
+        ref_date: Reference date (t=0).
+        divisor: Day-count divisor (365 for ACT/365, 360 for ACT/360).
+            Default 365 for NII purposes.  For EVE discounting, pass the
+            currency-appropriate OIS convention (360 for CHF/EUR, 365 for
+            GBP/USD).
     """
     ref_ts = pd.Timestamp(ref_date)
-    return (pd.DatetimeIndex(days) - ref_ts).days.values.astype(float) / 365.0
+    return (pd.DatetimeIndex(days) - ref_ts).days.values.astype(float) / divisor
 
 
 def broadcast_mm(mm_vector: np.ndarray) -> np.ndarray:
@@ -176,6 +179,21 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
                 result[i] = daily_rates + spread
             except KeyError:
                 pass
+    return result
+
+
+def build_client_rate_matrix(deals: pd.DataFrame, n_days: int) -> np.ndarray:
+    """Build (n_deals x n_days) client rate matrix for EVE cashflow generation.
+
+    Uses the contractual Clientrate for all deals, broadcast across all days.
+    This is the rate the bank actually earns/pays, distinct from the reference
+    rate used for NII computation (EqOisRate, YTM, etc.).
+    """
+    n_deals = len(deals)
+    result = np.zeros((n_deals, n_days), dtype=np.float64)
+    if "Clientrate" in deals.columns:
+        rates = pd.to_numeric(deals["Clientrate"], errors="coerce").fillna(0.0).values
+        result = rates[:, np.newaxis] * np.ones((1, n_days))
     return result
 
 

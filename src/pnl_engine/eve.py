@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS
-from pnl_engine.matrices import days_to_years
+from pnl_engine.matrices import broadcast_mm, days_to_years
 
 logger = logging.getLogger(__name__)
 
@@ -36,64 +36,89 @@ def compute_eve(
     days: pd.DatetimeIndex,
     deals: pd.DataFrame,
     date_run: datetime,
+    client_rate_matrix: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Compute Economic Value of Equity per deal.
 
     EVE per deal = Σ_t [ CashFlow(t) × DiscountFactor(t) ]
     where:
-      CashFlow(t) = Nominal(t) × (ClientRate - 0) / MM  (net interest cash flow)
-      DiscountFactor(t) = exp(-OIS_fwd(t) × t_years)
-
-    For a simpler and more robust approach: we compute the PV of
-    the net interest margin (Nominal × ClientRate / MM) discounted at OIS.
+      CashFlow(t) = Nominal(t) × ClientRate / MM  (contractual interest)
+      DiscountFactor(t) = exp(-∫OIS dt)
 
     Args:
         nominal_daily: (n_deals, n_days) nominal schedule.
-        ois_matrix: (n_deals, n_days) OIS forward rates.
-        rate_matrix: (n_deals, n_days) client/reference rates.
+        ois_matrix: (n_deals, n_days) OIS forward rates (for discounting).
+        rate_matrix: (n_deals, n_days) reference rates (legacy, used if
+            client_rate_matrix is None).
         mm_vector: (n_deals,) day count divisor.
         days: DatetimeIndex of the date grid.
         deals: DataFrame with deal metadata.
         date_run: Reference date.
+        client_rate_matrix: (n_deals, n_days) contractual client rates
+            for cashflow generation. If None, falls back to rate_matrix.
 
     Returns:
         DataFrame with columns: deal_idx, currency, direction, product,
         eve, duration, notional_avg, counterparty.
     """
     n_deals, n_days = nominal_daily.shape
+    from pnl_engine.config import MM_BY_CURRENCY
 
-    # Year fractions from date_run for each day
+    # Use contractual client rates for cashflow generation
+    cf_rate = client_rate_matrix if client_rate_matrix is not None else rate_matrix
+
+    # Year fractions from date_run — used for duration/general purposes (ACT/365)
     day_years = np.maximum(days_to_years(days, date_run), 0.0)
 
+    # Per-deal day-count divisor for OIS discounting (ACT/360 for CHF/EUR, ACT/365 for GBP)
+    # Build per-deal dt arrays for currency-appropriate discount factors
+    day_counts = np.array([
+        float(days_to_years(days, date_run, divisor=float(MM_BY_CURRENCY.get(c, 360)))[1] - days_to_years(days, date_run, divisor=float(MM_BY_CURRENCY.get(c, 360)))[0])
+        if n_days > 1 else 1.0 / MM_BY_CURRENCY.get(c, 360)
+        for c in (deals["Currency"].values[:n_deals] if "Currency" in deals.columns else ["CHF"] * n_deals)
+    ])
+    # Build per-deal year fraction arrays: (n_deals, n_days)
+    raw_days = (pd.DatetimeIndex(days) - pd.Timestamp(date_run)).days.values.astype(float)
+    raw_days = np.maximum(raw_days, 0.0)
+    divisors = np.array([
+        float(MM_BY_CURRENCY.get(c, 360))
+        for c in (deals["Currency"].values[:n_deals] if "Currency" in deals.columns else ["CHF"] * n_deals)
+    ])
+    day_years_2d = raw_days[np.newaxis, :] / divisors[:, np.newaxis]  # (n_deals, n_days)
+
     # Discount factors: exp(-∫OIS dt) using cumulative forward rates
-    # Build cumulative zero rates from instantaneous forwards:
-    #   Z(t) = (1/t) × ∫₀ᵗ f(s) ds  ≈  cumsum(f × Δt) / t
-    # DF(t) = exp(-Z(t) × t) = exp(-cumsum(f × Δt))
-    dt = np.diff(day_years, prepend=0.0)  # time step per day
-    cum_integral = np.cumsum(ois_matrix * dt[np.newaxis, :], axis=1)
+    dt_2d = np.diff(day_years_2d, axis=1, prepend=0.0)
+    dt_2d[:, 0] = day_years_2d[:, 0]  # first step from t=0
+    cum_integral = np.cumsum(ois_matrix * dt_2d, axis=1)
     discount_factors = np.exp(-cum_integral)
 
-    # Daily cash flow: Nominal × Rate / MM (the interest income stream)
-    mm_broadcast = mm_vector[:, np.newaxis] * np.ones((1, n_days))
-    daily_cf = nominal_daily * rate_matrix / mm_broadcast
+    # Daily cash flow: Nominal × ClientRate / MM (contractual interest income)
+    mm_broadcast = broadcast_mm(mm_vector)
+    daily_cf = nominal_daily * cf_rate / mm_broadcast
 
-    # Also include the notional principal return at maturity.
-    # Only capture the terminal drop (nominal goes from positive to zero),
-    # NOT intermediate amortization steps — those are already reflected in
-    # declining interest cash flows via the nominal schedule.
+    # Direction sign for principal: assets get positive principal return,
+    # liabilities get negative (the bank pays back principal).
+    from pnl_engine.config import ASSET_DIRECTIONS
+    if "Direction" in deals.columns:
+        dirs = deals["Direction"].str.strip().str.upper().values[:n_deals]
+        principal_sign = np.where(np.isin(dirs, list(ASSET_DIRECTIONS)), 1.0, -1.0)
+    else:
+        principal_sign = np.ones(n_deals)
+
+    # Include the notional principal return at maturity.
+    # Only capture the terminal drop (nominal goes to zero).
     nominal_shift = np.zeros_like(nominal_daily)
     for j in range(1, n_days):
-        # Only capture drops to zero (maturity) or from positive to zero
         mask = (nominal_daily[:, j] == 0) & (nominal_daily[:, j - 1] != 0)
-        nominal_shift[:, j] = np.where(mask, -nominal_daily[:, j - 1], 0.0)
-    total_cf = daily_cf - nominal_shift  # daily_cf already includes interest on remaining balance
+        nominal_shift[:, j] = np.where(mask, np.abs(nominal_daily[:, j - 1]) * principal_sign, 0.0)
+    total_cf = daily_cf + nominal_shift
 
     # PV of all cash flows
     pv_daily = total_cf * discount_factors
     eve_per_deal = pv_daily.sum(axis=1)
 
     # Macaulay duration: Σ(t × CF × DF) / EVE  (cashflow-weighted average time)
-    weighted_time = (total_cf * discount_factors * day_years[np.newaxis, :]).sum(axis=1)
+    weighted_time = (total_cf * discount_factors * day_years_2d).sum(axis=1)
     with np.errstate(divide='ignore', invalid='ignore'):
         duration = np.where(
             np.abs(eve_per_deal) > 1e-6,
@@ -134,6 +159,7 @@ def compute_eve_scenarios(
     scenarios: pd.DataFrame,
     base_curves: pd.DataFrame,
     nominal_adjuster: Optional[object] = None,
+    client_rate_matrix: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """Compute ΔEVE for each BCBS 368 scenario.
 
@@ -161,7 +187,7 @@ def compute_eve_scenarios(
     # Base EVE
     eve_base = compute_eve(
         nominal_daily, ois_matrix_base, rate_matrix, mm_vector,
-        days, deals, date_run,
+        days, deals, date_run, client_rate_matrix=client_rate_matrix,
     )
 
     scenario_names = sorted(scenarios["scenario"].unique())
@@ -198,7 +224,7 @@ def compute_eve_scenarios(
         # Compute shocked EVE
         eve_shocked = compute_eve(
             scenario_nominal, ois_matrix_shocked, rate_matrix, mm_vector,
-            days, deals, date_run,
+            days, deals, date_run, client_rate_matrix=client_rate_matrix,
         )
 
         # Aggregate by currency
@@ -314,6 +340,7 @@ def compute_key_rate_durations(
     date_run: datetime,
     base_curves: pd.DataFrame,
     bump_bps: float = 1.0,
+    client_rate_matrix: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """Compute key rate durations at BCBS standard tenor points.
 
@@ -330,7 +357,7 @@ def compute_key_rate_durations(
 
     eve_base = compute_eve(
         nominal_daily, ois_matrix, rate_matrix, mm_vector,
-        days, deals, date_run,
+        days, deals, date_run, client_rate_matrix=client_rate_matrix,
     )
 
     day_years = days_to_years(days, date_run)
@@ -368,7 +395,7 @@ def compute_key_rate_durations(
             ois_bumped = _build_ois_matrix(deals, bumped_curves, days)
             eve_bumped = compute_eve(
                 nominal_daily, ois_bumped, rate_matrix, mm_vector,
-                days, deals, date_run,
+                days, deals, date_run, client_rate_matrix=client_rate_matrix,
             )
 
             ccy_mask = eve_base["Currency"] == ccy if "Currency" in eve_base.columns else pd.Series([True] * len(eve_base))

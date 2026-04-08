@@ -18,19 +18,10 @@ from cockpit.pnl_dashboard.charts.helpers import (
     _filter_total,
     _month_labels,
     _safe_stacked,
+    safe_float as _safe_float,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_float(v) -> float:
-    """NaN-safe float conversion, returning 0.0 for None/NaN/non-numeric."""
-    if v is None or (isinstance(v, float) and np.isnan(v)):
-        return 0.0
-    try:
-        return float(v)
-    except (ValueError, TypeError):
-        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +234,10 @@ def _build_liquidity(
     sorted_cols = sorted(date_cols, key=lambda c: col_dates[c])
 
     # Identify asset vs liability by direction
-    # L(end)/B(uy) = asset (inflow at maturity), D(eposit)/S(ell) = liability (outflow)
+    # D(eposit-side lending)/B(uy) = asset, L(iability)/S(ell) = liability
+    from pnl_engine.config import ASSET_DIRECTIONS
     if "Direction" in df.columns:
-        df["_is_asset"] = df["Direction"].isin(["L", "B"])
+        df["_is_asset"] = df["Direction"].isin(ASSET_DIRECTIONS)
     else:
         df["_is_asset"] = True  # default
 
@@ -344,7 +336,7 @@ def _build_liquidity(
                 ois_col = _ois
                 break
         if ois_col in deals.columns and rate_col in deals.columns:
-            asset_mask = deals.get("Direction", pd.Series()).isin(["L", "B"])
+            asset_mask = deals.get("Direction", pd.Series()).isin(ASSET_DIRECTIONS)
             asset_deals = deals[asset_mask].copy()
             for ccy in currencies:
                 ccy_deals = asset_deals[asset_deals["Currency"] == ccy]
@@ -777,7 +769,9 @@ def _build_budget(
             # Weighted average rate
             if "Nominal" in ccy_deals.columns and "PnL" in ccy_deals.columns and not ccy_deals.empty:
                 nom_sum = ccy_deals["Nominal"].abs().sum()
-                actual_rate_by_ccy[ccy] = float(ccy_deals["PnL"].sum() / nom_sum * 360) if nom_sum > 0 else 0.0
+                from pnl_engine.config import MM_BY_CURRENCY
+                _mm = float(MM_BY_CURRENCY.get(ccy, 360))
+                actual_rate_by_ccy[ccy] = float(ccy_deals["PnL"].sum() / nom_sum * _mm) if nom_sum > 0 else 0.0
             else:
                 actual_rate_by_ccy[ccy] = 0.0
 
@@ -816,8 +810,10 @@ def _build_budget(
                 act_nom = actual_nom_by_ccy.get(ccy, 0.0) / max(len(months), 1)  # monthly average
                 act_rate = actual_rate_by_ccy.get(ccy, 0.0)
 
-                vol_eff = (act_nom - bgt_nom) * bgt_rate / 360 * 30 if bgt_rate != 0 else 0.0
-                rate_eff = bgt_nom * (act_rate - bgt_rate) / 360 * 30 if bgt_nom != 0 else 0.0
+                from pnl_engine.config import MM_BY_CURRENCY
+                _mm_var = float(MM_BY_CURRENCY.get(ccy, 360))
+                vol_eff = (act_nom - bgt_nom) * bgt_rate / _mm_var * 30 if bgt_rate != 0 else 0.0
+                rate_eff = bgt_nom * (act_rate - bgt_rate) / _mm_var * 30 if bgt_nom != 0 else 0.0
                 residual = float(act - bgt) - vol_eff - rate_eff
                 volume_effects.append(round(vol_eff, 0))
                 rate_effects.append(round(rate_eff, 0))

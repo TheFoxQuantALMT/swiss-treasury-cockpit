@@ -2,10 +2,23 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Optional
 
 import pandas as pd
+
+
+def safe_float(v) -> float:
+    """NaN-safe float conversion, returning 0.0 for None/NaN/non-numeric."""
+    if v is None:
+        return 0.0
+    if isinstance(v, float) and math.isnan(v):
+        return 0.0
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return 0.0
 
 from cockpit.engine.pnl.pnl_explain import compute_pnl_explain
 
@@ -23,8 +36,18 @@ def _safe_stacked(pnl_all_s: pd.DataFrame) -> pd.DataFrame:
 
 
 def _month_labels(months) -> list[str]:
-    """Convert Period/str months to display labels."""
-    return [str(m) for m in months]
+    """Convert Period/str months to display labels (e.g., 'Apr-26')."""
+    labels = []
+    for m in months:
+        try:
+            if hasattr(m, 'start_time'):
+                labels.append(m.start_time.strftime("%b-%y"))
+            else:
+                ts = pd.Timestamp(str(m))
+                labels.append(ts.strftime("%b-%y"))
+        except (ValueError, TypeError):
+            labels.append(str(m))
+    return labels
 
 
 def _auto_pnl_explain(

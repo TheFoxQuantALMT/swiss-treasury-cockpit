@@ -19,6 +19,8 @@ def cmd_validate(
 
     errors = []
     warnings = []
+    deals = None
+    schedule = None
 
     # Check deals file
     deals_files = list(input_path.glob("*deals*")) + list(input_path.glob("*mtd*"))
@@ -54,6 +56,29 @@ def cmd_validate(
             print(f"[validate] Schedule: {len(schedule)} rows from {schedule_files[0].name}")
         except Exception as e:
             errors.append(f"Failed to parse schedule: {e}")
+
+    # Cross-validate deals vs schedule
+    if deals is not None and schedule is not None:
+        try:
+            deal_ids = set(deals["Dealid"].dropna().astype(str)) if "Dealid" in deals.columns else set()
+            sched_ids = set(schedule["Dealid"].dropna().astype(str)) if "Dealid" in schedule.columns else set()
+            if deal_ids and sched_ids:
+                orphan_deals = deal_ids - sched_ids
+                orphan_scheds = sched_ids - deal_ids
+                matched = deal_ids & sched_ids
+                match_pct = len(matched) / max(len(deal_ids), 1) * 100
+                print(f"[validate] Deal-schedule join: {len(matched)}/{len(deal_ids)} matched ({match_pct:.0f}%)")
+                if orphan_deals:
+                    warnings.append(f"{len(orphan_deals)} deals with no schedule (first 5: {sorted(orphan_deals)[:5]})")
+                if orphan_scheds:
+                    warnings.append(f"{len(orphan_scheds)} schedule rows with no deal (first 5: {sorted(orphan_scheds)[:5]})")
+            # Check rate column population
+            if "Clientrate" in deals.columns:
+                null_rates = deals["Clientrate"].isna().sum()
+                if null_rates > 0:
+                    warnings.append(f"{null_rates}/{len(deals)} deals have null Clientrate")
+        except Exception as e:
+            warnings.append(f"Cross-validation failed: {e}")
 
     # Check optional files
     for pattern, name in [

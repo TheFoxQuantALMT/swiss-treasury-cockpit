@@ -211,7 +211,7 @@ def apply_nmd_decay(
             month_mask = (month_periods == m)
             if not month_mask.any():
                 continue
-            m_start_years = max(0.0, (m.start_time - date_run_ts).days / 365.0)
+            m_start_years = max(0.0, (m.start_time - date_run_ts).days / 365)
             m_decay = initial_nominal * np.exp(-decay_rate * m_start_years)
             result[i, month_mask] = np.where(
                 alive[month_mask],

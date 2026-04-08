@@ -58,8 +58,9 @@ def compute_basis_risk(
     #   Liabilities (L/S): client rate falls → shocked_rate = rate - shock
     # We store a (n_deals, 1) sign array: +1 for assets, -1 for liabilities.
     if "Direction" in deals.columns:
+        from pnl_engine.config import ASSET_DIRECTIONS
         dirs = deals["Direction"].str.strip().str.upper().values
-        dir_sign = np.where(np.isin(dirs, ["D", "B"]), 1.0, -1.0)[:, np.newaxis]
+        dir_sign = np.where(np.isin(dirs, list(ASSET_DIRECTIONS)), 1.0, -1.0)[:, np.newaxis]
     else:
         dir_sign = np.ones((len(deals), 1))
 

@@ -227,6 +227,8 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
             # 95% and 99% VaR (1-sided)
             ear_95 = mean_delta - 1.645 * std_delta
             ear_99 = mean_delta - 2.326 * std_delta
+            n_sc = len(tornado)
+            reliability = "low" if n_sc < 6 else "moderate" if n_sc < 15 else "high"
             ear = {
                 "mean_delta": round(mean_delta, 0),
                 "std_delta": round(std_delta, 0),
@@ -234,7 +236,9 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
                 "ear_99": round(ear_99, 0),
                 "ear_95_pct": round(ear_95 / abs(base_total) * 100, 2) if base_total else 0,
                 "ear_99_pct": round(ear_99 / abs(base_total) * 100, 2) if base_total else 0,
-                "n_scenarios": len(tornado),
+                "n_scenarios": n_sc,
+                "reliability": reliability,
+                "method_note": f"Parametric estimate from {n_sc} scenarios (normal assumption). Not a full Monte Carlo VaR.",
                 "min_delta": round(float(min(deltas)), 0),
                 "max_delta": round(float(max(deltas)), 0),
                 "scenario_nii": [{"scenario": t["scenario"], "nii": t["nii"], "delta": t["delta"]} for t in tornado],
@@ -527,9 +531,10 @@ def _build_nim(
 
     # --- Global NIM ---
     total_nii = pnl["Value"].sum()
-    # Earning assets = average nominal for asset direction (L/B)
+    # Earning assets = average nominal for asset direction (D/B)
+    from pnl_engine.config import ASSET_DIRECTIONS
     if "Direction" in nom.columns:
-        asset_nom = nom[nom["Direction"].isin(["L", "B"])]["Value"].sum()
+        asset_nom = nom[nom["Direction"].isin(ASSET_DIRECTIONS)]["Value"].sum()
     else:
         asset_nom = nom["Value"].abs().sum()
 
@@ -586,7 +591,7 @@ def _build_nim(
         for ccy in sorted(pnl["Deal currency"].unique()):
             ccy_pnl = pnl[pnl["Deal currency"] == ccy]["Value"].sum()
             if "Direction" in nom.columns:
-                ccy_asset = nom[(nom["Deal currency"] == ccy) & (nom["Direction"].isin(["L", "B"]))]["Value"].sum()
+                ccy_asset = nom[(nom["Deal currency"] == ccy) & (nom["Direction"].isin(ASSET_DIRECTIONS))]["Value"].sum()
             else:
                 ccy_asset = nom[nom["Deal currency"] == ccy]["Value"].abs().sum()
             ccy_avg = ccy_asset / n_months if n_months > 0 else 0
@@ -606,7 +611,7 @@ def _build_nim(
         for peri in sorted(pnl["P\u00e9rim\u00e8tre TOTAL"].unique()):
             p_pnl = pnl[pnl["P\u00e9rim\u00e8tre TOTAL"] == peri]["Value"].sum()
             if "Direction" in nom.columns:
-                p_asset = nom[(nom["P\u00e9rim\u00e8tre TOTAL"] == peri) & (nom["Direction"].isin(["L", "B"]))]["Value"].sum()
+                p_asset = nom[(nom["P\u00e9rim\u00e8tre TOTAL"] == peri) & (nom["Direction"].isin(ASSET_DIRECTIONS))]["Value"].sum()
             else:
                 p_asset = nom[nom["P\u00e9rim\u00e8tre TOTAL"] == peri]["Value"].abs().sum()
             p_avg = p_asset / n_months if n_months > 0 else 0

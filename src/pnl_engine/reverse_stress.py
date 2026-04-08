@@ -141,26 +141,48 @@ def reverse_stress_eve(
 
     limit_delta_eve = tier1_capital * threshold_pct / 100.0
 
-    # Search positive and negative shock ranges separately to avoid
-    # non-monotonicity from abs(ΔEVE) when convexity is non-zero.
-    def _eval_signed(shock_bp: float) -> float:
-        delta = dv01 * shock_bp
+    # Search for positive ΔEVE breach (rates up) and negative ΔEVE breach
+    # (rates down) separately.  Each eval function is monotonic because
+    # delta(shock) = DV01*s + 0.5*conv*s² is a parabola in one direction.
+    def _delta(shock_bp: float) -> float:
+        d = dv01 * shock_bp
         if convexity is not None:
-            delta += 0.5 * convexity * shock_bp ** 2
-        return limit_delta_eve - abs(delta)
+            d += 0.5 * convexity * shock_bp ** 2
+        return d
 
-    result_pos = bisect_breach_shock(_eval_signed, 0.0, low_bp=0.0, direction="below", **kwargs)
-    result_neg = bisect_breach_shock(
-        lambda bp: _eval_signed(-bp), 0.0, low_bp=0.0, direction="below", **kwargs,
-    )
+    # Positive shock: does delta exceed +limit?
+    def _eval_pos_up(bp: float) -> float:
+        return limit_delta_eve - _delta(bp)
 
-    # Return the smaller breach shock (more conservative)
-    bp_pos = result_pos.get("breach_shock_bp")
-    bp_neg = result_neg.get("breach_shock_bp")
-    if bp_pos is not None and bp_neg is not None:
-        if bp_neg < bp_pos:
-            return {**result_neg, "breach_shock_bp": -bp_neg}
-        return result_pos
-    if bp_neg is not None:
-        return {**result_neg, "breach_shock_bp": -bp_neg}
-    return result_pos
+    # Positive shock: does delta fall below -limit?
+    def _eval_pos_down(bp: float) -> float:
+        return _delta(bp) + limit_delta_eve
+
+    # Negative shock: does delta exceed +limit?
+    def _eval_neg_up(bp: float) -> float:
+        return limit_delta_eve - _delta(-bp)
+
+    # Negative shock: does delta fall below -limit?
+    def _eval_neg_down(bp: float) -> float:
+        return _delta(-bp) + limit_delta_eve
+
+    # Try all four directions; collect breach shocks
+    candidates = []
+    for label, fn, sign in [
+        ("pos_up", _eval_pos_up, 1),
+        ("pos_down", _eval_pos_down, 1),
+        ("neg_up", _eval_neg_up, -1),
+        ("neg_down", _eval_neg_down, -1),
+    ]:
+        result = bisect_breach_shock(fn, 0.0, low_bp=0.0, direction="below", **kwargs)
+        bp = result.get("breach_shock_bp")
+        if bp is not None:
+            candidates.append((abs(bp), sign * bp, result))
+
+    if not candidates:
+        return {"breach_shock_bp": None, "message": "No breach found within search range"}
+
+    # Return the smallest (most conservative) breach shock
+    candidates.sort(key=lambda x: x[0])
+    _, shock_bp, best = candidates[0]
+    return {**best, "breach_shock_bp": round(shock_bp, 1)}

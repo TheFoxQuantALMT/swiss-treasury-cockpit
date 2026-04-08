@@ -194,7 +194,7 @@ def apply_cpr_rate_dependent(
         market_rates = ois_matrix[i]
         incentive = np.maximum(0.0, deal_rate - market_rates - 0.005)
         cpr_adj = np.minimum(base_cpr * (1.0 + 2.0 * incentive), 0.40)
-        per_step_survival = (1.0 - cpr_adj) ** (day_gaps / 1.0)  # day_gaps already in months
+        per_step_survival = (1.0 - cpr_adj) ** (day_gaps / 12.0)  # day_gaps in months, CPR is annual
         per_step_survival[0] = 1.0  # no decay at t=0
         survival = np.cumprod(per_step_survival)
         result[i] = np.where(alive, abs(current_nom) * survival * np.sign(nominal_daily[i]), 0.0)

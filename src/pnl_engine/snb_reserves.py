@@ -42,15 +42,16 @@ def compute_snb_reserves(
     if deals is None or deals.empty:
         return {"has_data": False}
 
-    # Sight liabilities: Direction = 'L' (liability), typically HCD/sight products
+    # Sight liabilities: Direction L (loan/borrowing) or S (sell) = bank receives funds
+    from pnl_engine.config import LIABILITY_DIRECTIONS
     sight_mask = pd.Series([False] * len(deals))
     if "Direction" in deals.columns:
-        sight_mask = deals["Direction"].str.strip().str.upper() == "L"
+        sight_mask = deals["Direction"].str.strip().str.upper().isin(LIABILITY_DIRECTIONS)
     if "Currency" in deals.columns:
         sight_mask &= deals["Currency"].str.strip().str.upper() == "CHF"
 
-    # Filter for sight deposit products (HCD = Hypothekarisch gedeckte Darlehen / sight)
-    sight_products = {"HCD", "SIGHT", "SICHT"}
+    from pnl_engine.config import SNB_SIGHT_PRODUCTS
+    sight_products = SNB_SIGHT_PRODUCTS
     if "Product" in deals.columns:
         product_mask = deals["Product"].str.strip().str.upper().isin(sight_products)
         sight_mask &= product_mask

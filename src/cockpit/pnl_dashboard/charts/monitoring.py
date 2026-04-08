@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from cockpit.data.quality import build_quality_report
+from cockpit.pnl_dashboard.charts.helpers import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +93,10 @@ def _build_snb_reserves(
         if limits is not None and not limits.empty and "metric" in limits.columns:
             hqla_rows = limits[limits["metric"].str.strip() == "hqla"]
             if not hqla_rows.empty:
-                hqla = float(pd.to_numeric(hqla_rows.iloc[0].get("limit_value", 0), errors="coerce") or 0)
+                hqla = safe_float(hqla_rows.iloc[0].get("limit_value", 0))
             t1_rows = limits[limits["metric"].str.strip() == "tier1_capital"]
             if not t1_rows.empty:
-                tier1 = float(pd.to_numeric(t1_rows.iloc[0].get("limit_value", 0), errors="coerce") or 0)
+                tier1 = safe_float(t1_rows.iloc[0].get("limit_value", 0))
 
         result = compute_snb_reserves(deals, ois_rate=ois_rate, hqla_amount=hqla, tier1_capital=tier1)
         if not result.get("has_data"):
@@ -110,7 +111,8 @@ def _build_snb_reserves(
         # Build by-product breakdown for template table
         by_product = []
         if deals is not None and "Product" in deals.columns and "Direction" in deals.columns:
-            sight_mask = deals["Direction"].str.strip().str.upper().isin(["D", "S"])
+            from pnl_engine.config import LIABILITY_DIRECTIONS
+            sight_mask = deals["Direction"].str.strip().str.upper().isin(LIABILITY_DIRECTIONS)
             if "Currency" in deals.columns:
                 sight_mask &= deals["Currency"].str.strip().str.upper() == "CHF"
             sight_deals = deals[sight_mask]

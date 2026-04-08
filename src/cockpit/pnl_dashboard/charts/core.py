@@ -13,7 +13,7 @@ from cockpit.pnl_dashboard.charts.constants import (
     LEG_COLORS,
     PRODUCT_COLORS,
 )
-from cockpit.pnl_dashboard.charts.helpers import _filter_total, _month_labels
+from cockpit.pnl_dashboard.charts.helpers import _filter_total, _month_labels, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,13 @@ def _build_summary(
         else:
             realized = 0.0
             forecast = 0.0
+        realized_pct = round(realized / total * 100, 0) if total else 0
         kpis[f"shock_{shock}"] = {
             "total": round(float(total), 0),
             "realized": round(float(realized), 0),
             "forecast": round(float(forecast), 0),
+            "unit": "CHF",
+            "realized_pct": realized_pct,
         }
 
     # Delta: shock_50 - shock_0
@@ -359,6 +362,7 @@ def _build_sensitivity(df: pd.DataFrame) -> dict:
             totals_wirp[ccy][i] += v
 
     return {
+        "has_data": len(rows_50) > 0,
         "months": month_labels,
         "rows_50": rows_50,
         "rows_wirp": rows_wirp,
@@ -501,7 +505,7 @@ def _build_book2(
                 "currency": str(row.get("Currency Code (ISO)", row.get("Currency", ""))),
                 "direction": str(row.get("Buy / Sell", row.get("Direction", ""))),
                 "maturity": str(row.get("Maturity Date", row.get("Maturitydate", ""))),
-                "mtm": round(float(pd.to_numeric(row.get("MTM", 0), errors="coerce") or 0), 0),
+                "mtm": round(safe_float(row.get("MTM", 0)), 0),
             })
         result["deals"] = deals
 

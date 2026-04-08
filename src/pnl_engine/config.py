@@ -125,4 +125,26 @@ VALID_PRODUCTS: set[str] = {"IAM/LD", "BND", "FXS", "IRS", "IRS-MTM", "HCD"}
 VALID_DIRECTIONS: set[str] = {"B", "L", "D", "S"}
 VALID_BOOKS: set[str] = {"BOOK1", "BOOK2"}
 VALID_PERIMETERS: set[str] = {"CC", "WM", "CIB"}
+
+# ---------------------------------------------------------------------------
+# Direction → balance sheet side classification
+# ---------------------------------------------------------------------------
+# Convention (set by the echeancier legacy parser):
+#   L = Loan (bank lends money out) → asset (negative nominal in echeancier)
+#   B = Bond purchase → asset (negative nominal in echeancier)
+#   D = Deposit (bank receives funds) → liability (positive nominal in echeancier)
+#   S = Sell Bond → liability (positive nominal in echeancier)
+
+ASSET_DIRECTIONS: set[str] = {"L", "B"}
+LIABILITY_DIRECTIONS: set[str] = {"D", "S"}
+DIRECTION_SIDE: dict[str, str] = {
+    "L": "asset", "B": "asset",
+    "D": "liability", "S": "liability",
+}
+
+# ---------------------------------------------------------------------------
+# SNB sight liability product codes (configurable per bank)
+# ---------------------------------------------------------------------------
+
+SNB_SIGHT_PRODUCTS: set[str] = {"KK", "CC", "SE", "SIGHT", "SICHT"}
 VALID_FLOAT_INDICES: set[str] = {"SARON", "ESTR", "SOFR", "SONIA", ""}

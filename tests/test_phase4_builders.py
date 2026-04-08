@@ -297,10 +297,10 @@ class TestBuildDepositBehavior:
         assert result["has_data"] is False
 
     def test_no_deposit_direction(self):
-        # All loans — no D/S direction
+        # All assets (L=Loan, B=Bond) — no deposits
         deals = pd.DataFrame({
             "Dealid": [1, 2],
-            "Direction": ["L", "L"],
+            "Direction": ["L", "B"],
             "Currency": ["CHF", "EUR"],
             "NominalResiduel": [1e6, 2e6],
             "Product": ["IAM/LD", "IAM/LD"],

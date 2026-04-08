@@ -25,7 +25,7 @@ uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --shocks 
 uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --format xlsx
 uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --format all  # html + xlsx + pdf
 uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels --custom-scenarios path/to/custom_scenarios.xlsx
-uv run cockpit what-if --date 2026-04-04 --input-dir path/to/excels --product IAM/LD --currency CHF --amount 50000000 --rate 0.025 --direction D --maturity 5
+uv run cockpit what-if --date 2026-04-04 --input-dir path/to/excels --product IAM/LD --currency CHF --amount 50000000 --rate 0.025 --direction L --maturity 5
 uv run cockpit decision record --topic "NII Sensitivity" --description "Reduce CHF duration" --priority high --owner "ALM"
 uv run cockpit decision list --month 2026-04
 uv run cockpit decision update --date 2026-04-06 --topic "NII Sensitivity" --status closed
@@ -97,7 +97,7 @@ render → output/{date}_cockpit.html
 - **Parametric EaR**: Earnings-at-Risk estimated from BCBS scenario ΔNII deltas assuming normal distribution. EaR = μ - zσ at 95%/99% confidence.
 - **P&L Explain**: Waterfall decomposition of ΔNII between two dates in `cockpit/engine/pnl/pnl_explain.py`. Drivers: time/roll-down, new deals, maturing deals, rate effect, spread effect.
 - **dateRun** vs **dateRates**: dateRun controls which deal data loads; dateRates controls where realized rates end and forwards begin.
-- **Strategy IAS**: Deals with IAS hedge designation get decomposed into 4 legs (IAM/LD-NHCD, IAM/LD-HCD, BND-NHCD, BND-HCD) with direction filtering.
+- **Strategy IAS**: Deals with IAS hedge designation get decomposed into 4 legs (IAM/LD-NHCD, IAM/LD-HCD, BND-NHCD, BND-HCD) with direction filtering: BND legs keep B/S only, IAM/LD legs keep L/D only.
 - **WASP**: External rate curve library. When unavailable, the engine builds mock curves from WIRP data (graceful degradation).
 - **FTP (Funds Transfer Pricing)**: Per-deal internal transfer rate. Enables 3-way margin split: Client Margin (ClientRate - FTP), ALM Margin (FTP - OIS), Total NII = sum. Aggregated by perimeter (CC/WM/CIB) for business unit profitability.
 - **Liquidity Forecast**: Daily (90d) + monthly cash flow projections per deal. Same wide format as rate_schedule.xlsx. Powers the Liquidity Forecast tab with inflow/outflow bars, cumulative gap, survival horizon, and top maturing deals.
@@ -150,3 +150,33 @@ The P&L engine package contains specialized analytics modules that are wired int
 - `scenarios.py` — BCBS 368 scenario interpolation engine
 - `eve.py` — EVE discounting + KRD + IRRBB outlier test
 - `nmd.py` — Behavioral decay model + beta sensitivity
+
+## Quant Audit Taxonomy
+
+When auditing this codebase for correctness, classify issues by severity:
+
+### CRITICAL (must fix — regulatory or P&L impact > 1% of book)
+- **Sign errors**: direction convention (L/B=asset with negative nominal, D/S=liability with positive nominal per `config.DIRECTION_SIDE`), P&L sign, EVE cashflow sign
+- **Day count errors**: wrong divisor (360 vs 365), missing accrual factor, wrong year fraction convention
+- **Rate misuse**: using RateRef where ClientRate is needed (or vice versa), double-counting WIRP overlay
+- **Exponent/scaling errors**: missing /12 on monthly→annual conversion, bp→decimal errors (÷10000), percent→decimal
+- **Formula errors**: wrong discounting (annual vs continuous), missing terms (convexity, principal), non-monotonic bisection
+- **Data flow errors**: using stale/wrong matrix, positional alignment instead of date matching
+
+### HIGH (should fix — affects analytical quality)
+- **Convention inconsistency**: same concept mapped differently across modules
+- **Model limitations presented as precision**: parametric VaR from 3 scenarios, hardcoded probabilities shown as calibrated
+- **Missing boundary handling**: division by zero, NaN propagation into KPIs, empty DataFrame producing misleading results
+- **Regulatory non-compliance**: BCBS 368 / FINMA deviations not documented as such
+
+### MEDIUM (improve — affects usability)
+- **Silent degradation**: engine produces numbers but critical input was missing/malformed
+- **Missing feedback**: no `has_data` flag, raw format strings, missing units/context on KPIs
+- **Hardcoded parameters**: that should be configurable per bank (product codes, thresholds, limits)
+
+### Canonical Conventions (authoritative source of truth)
+- **Direction**: `config.DIRECTION_SIDE` — L=Loan/B=Bond → asset (negative nominal), D=Deposit/S=Sell Bond → liability (positive nominal). The echeancier carries signed nominals: negative for assets, positive for liabilities. The P&L engine core uses nominal sign directly; analytical modules (EVE, repricing, SNB reserves, dashboard charts) use `config.ASSET_DIRECTIONS` / `config.LIABILITY_DIRECTIONS` for classification.
+- **Rates**: always decimal (0.015 = 1.5%), never percent. Shocks in bps (200 = +2%)
+- **Day count**: `config.MM_BY_CURRENCY` for NII. OIS discounting: ACT/360 CHF/EUR, ACT/365 GBP/USD
+- **P&L formula**: `Nominal × (OIS - RateRef) × accrual_days / MM` — nominal is already signed, so P&L sign follows naturally
+- **EVE formula**: discount at OIS, cashflows at ClientRate, direction-signed principal

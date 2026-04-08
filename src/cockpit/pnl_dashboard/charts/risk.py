@@ -12,7 +12,7 @@ from cockpit.pnl_dashboard.charts.constants import (
     CURRENCY_COLORS,
     PRODUCT_COLORS,
 )
-from cockpit.pnl_dashboard.charts.helpers import _filter_total, _month_labels
+from cockpit.pnl_dashboard.charts.helpers import _filter_total, _month_labels, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ def _build_currency_mismatch(df: pd.DataFrame) -> dict:
     if nom_rows.empty or "Direction" not in nom_rows.columns:
         return {"has_data": False, "months": [], "by_currency": {}}
 
-    # Map direction to asset/liability: L(end)/B(uy) = asset, D(eposit)/S(ell) = liability
-    nom_rows["_side"] = nom_rows["Direction"].map({"L": "asset", "B": "asset", "D": "liability", "S": "liability"})
+    from pnl_engine.config import DIRECTION_SIDE
+    nom_rows["_side"] = nom_rows["Direction"].map(DIRECTION_SIDE)
     nom_rows["_side"] = nom_rows["_side"].fillna("asset")
 
     months = sorted(nom_rows["Month"].unique())
@@ -380,8 +380,7 @@ def _build_eve(
     if limits is not None and not limits.empty:
         t1_rows = limits[limits["metric"].str.strip() == "tier1_capital"]
         if not t1_rows.empty:
-            _t1_val = pd.to_numeric(t1_rows.iloc[0].get("limit_value", 0), errors="coerce")
-            tier1 = float(_t1_val) if pd.notna(_t1_val) else 0.0
+            tier1 = safe_float(t1_rows.iloc[0].get("limit_value", 0))
 
     outlier_warning = None
     if tier1 and tier1 > 0 and scenarios_data:

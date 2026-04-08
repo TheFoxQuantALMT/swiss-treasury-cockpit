@@ -116,10 +116,8 @@ def compute_repricing_gap(
         ])
 
     df["_nominal"] = df[amount_col].abs()
-    # Assets: B (bond), L (loan = bank lends out)
-    # Liabilities: D (deposit = bank receives), S (sell/short)
-    dir_map = {"B": "asset", "L": "asset", "D": "liability", "S": "liability"}
-    df["_side"] = df[direction_col].map(dir_map)
+    from pnl_engine.config import DIRECTION_SIDE
+    df["_side"] = df[direction_col].map(DIRECTION_SIDE)
     unmapped = df["_side"].isna()
     if unmapped.any():
         bad_dirs = df.loc[unmapped, direction_col].unique().tolist()

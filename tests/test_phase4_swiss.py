@@ -24,9 +24,9 @@ class TestSnbReserves:
     def test_basic_calculation(self):
         deals = pd.DataFrame({
             "Dealid": ["D1"],
-            "Direction": ["L"],
+            "Direction": ["D"],
             "Currency": ["CHF"],
-            "Product": ["HCD"],
+            "Product": ["KK"],
             "Amount": [10_000_000],
         })
         result = compute_snb_reserves(deals, ois_rate=0.015)
@@ -37,7 +37,7 @@ class TestSnbReserves:
 
     def test_hqla_offset(self):
         deals = pd.DataFrame({
-            "Direction": ["L"], "Currency": ["CHF"], "Product": ["HCD"], "Amount": [10_000_000],
+            "Direction": ["D"], "Currency": ["CHF"], "Product": ["KK"], "Amount": [10_000_000],
         })
         result = compute_snb_reserves(deals, ois_rate=0.015, hqla_amount=1_000_000)
         # HQLA offset = 20% of 1M = 200K
@@ -49,8 +49,8 @@ class TestSnbReserves:
 
     def test_non_chf_excluded(self):
         deals = pd.DataFrame({
-            "Direction": ["L", "L"], "Currency": ["CHF", "EUR"],
-            "Product": ["HCD", "HCD"], "Amount": [10_000_000, 5_000_000],
+            "Direction": ["D", "D"], "Currency": ["CHF", "EUR"],
+            "Product": ["KK", "KK"], "Amount": [10_000_000, 5_000_000],
         })
         result = compute_snb_reserves(deals)
         assert result["sight_liabilities"] == 10_000_000  # EUR excluded
