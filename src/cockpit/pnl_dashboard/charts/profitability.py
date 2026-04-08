@@ -307,6 +307,9 @@ def _build_deal_explorer(
         agg["Spread_bps"] = 0.0
 
     # Build deal list (capped at 200 for HTML performance)
+    if "PnL" not in agg.columns:
+        return {"has_data": False, "deals": [], "summary": {}, "histogram": {}, "maturity_profile": {}}
+    agg["PnL"] = agg["PnL"].fillna(0)
     agg_sorted = agg.sort_values("PnL", key=abs, ascending=False)
     deal_list = []
     for _, row in agg_sorted.head(200).iterrows():
@@ -371,8 +374,8 @@ def _build_deal_explorer(
         "negative_count": len(negative),
         "positive_pnl": round(float(positive["PnL"].sum()), 0) if len(positive) > 0 else 0,
         "negative_pnl": round(float(negative["PnL"].sum()), 0) if len(negative) > 0 else 0,
-        "top1_pct": round(float(agg_sorted.head(1)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl != 0 else 0,
-        "top10_pct": round(float(agg_sorted.head(10)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl != 0 else 0,
+        "top1_pct": round(float(agg_sorted.head(1)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
+        "top10_pct": round(float(agg_sorted.head(10)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
     }
 
     # By product breakdown
@@ -568,8 +571,10 @@ def _build_nim(
     else:
         # Fallback: use weighted OIS as funding proxy, RateRef as asset yield
         for m in months:
-            m_ois = ois[ois["Month"] == m]["Value"].mean() if not ois.empty else 0
-            m_ref = ref[ref["Month"] == m]["Value"].mean() if not ref.empty else 0
+            _ois_slice = ois[ois["Month"] == m]["Value"] if not ois.empty else pd.Series(dtype=float)
+            m_ois = float(_ois_slice.mean()) if not _ois_slice.empty else 0
+            _ref_slice = ref[ref["Month"] == m]["Value"] if not ref.empty else pd.Series(dtype=float)
+            m_ref = float(_ref_slice.mean()) if not _ref_slice.empty else 0
             jaws["months"].append(str(m))
             jaws["asset_yield"].append(round(float(m_ref) * 10000, 1))
             jaws["funding_cost"].append(round(float(m_ois) * 10000, 1))

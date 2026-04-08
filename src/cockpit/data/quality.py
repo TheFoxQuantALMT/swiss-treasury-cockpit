@@ -75,6 +75,9 @@ def is_rate_stale(curve_date: datetime | str, ref_date: datetime, max_age_days: 
             return True  # unparseable → treat as stale
     if curve_date is None or pd.isna(curve_date):
         return True
+    # Normalize timezone (curve_date may be tz-aware from parsers)
+    if hasattr(curve_date, 'tzinfo') and curve_date.tzinfo is not None:
+        curve_date = curve_date.replace(tzinfo=None)
     return (ref_date - curve_date) > timedelta(days=max_age_days)
 
 

@@ -58,11 +58,18 @@ def _build_ftp(
         perimeter = str(deal.get("P\u00e9rim\u00e8tre TOTAL", "CC"))
         product = str(deal.get("Product", ""))
         counterparty = str(deal.get("Counterparty", ""))
-        client_rate = float(deal.get("Clientrate", 0) or 0)
-        ftp_rate = float(deal.get("FTP", 0) or 0)
-        eq_ois = float(deal.get("EqOisRate", 0) or 0)
-        ytm = float(deal.get("YTM", 0) or 0)
-        amount = float(deal.get("Amount", 0) or 0)
+        def _safe_float(v):
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                return 0.0
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return 0.0
+        client_rate = _safe_float(deal.get("Clientrate", 0))
+        ftp_rate = _safe_float(deal.get("FTP", 0))
+        eq_ois = _safe_float(deal.get("EqOisRate", 0))
+        ytm = _safe_float(deal.get("YTM", 0))
+        amount = _safe_float(deal.get("Amount", 0))
 
         # Rate used for OIS comparison depends on product
         ref_rate = ytm if product == "BND" else eq_ois
@@ -80,7 +87,7 @@ def _build_ftp(
                 if pd.notna(mat_dt):
                     remaining = (mat_dt - pd.Timestamp(date_run)).days
                     year_frac = min(max(remaining / 365.0, 0.0), 1.0)
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
         # P&L contribution pro-rated by remaining maturity (capped at 12 months)
@@ -113,7 +120,7 @@ def _build_ftp(
         credit_spread_bps = alm_margin_bps - duration_contrib_bps - liquidity_premium_bps
 
         records.append({
-            "deal_id": str(int(deal_id)) if pd.notna(deal_id) else "",
+            "deal_id": str(deal_id).split(".")[0] if pd.notna(deal_id) else "",
             "currency": ccy,
             "perimeter": perimeter,
             "product": product,

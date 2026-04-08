@@ -84,9 +84,10 @@ def cmd_render_pnl(
 
     date_dt = datetime.strptime(date, "%Y-%m-%d")
 
-    # Configure shocks
+    # Configure shocks (save/restore to avoid polluting subsequent calls in backfill)
+    import pnl_engine.config as pnl_cfg
+    _original_shocks = list(pnl_cfg.SHOCKS)
     if shocks:
-        import pnl_engine.config as pnl_cfg
         if shocks.lower() == "extended":
             pnl_cfg.SHOCKS = list(pnl_cfg.EXTENDED_SHOCKS)
         else:
@@ -102,6 +103,8 @@ def cmd_render_pnl(
         output_dir=str(output_dir),
         funding_source=funding_source,
     )
+    # Restore global shocks now that ForecastRatePnL has captured them
+    pnl_cfg.SHOCKS = _original_shocks
 
     # Load optional ALM inputs
     budget = None

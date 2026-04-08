@@ -236,7 +236,7 @@ def _build_regulatory(result: dict) -> dict:
                 "value": outlier.get("worst_pct", 0),
                 "threshold": 15.0,
                 "unit": "%",
-                "status": outlier.get("status", "N/A"),
+                "status": "FAIL" if outlier.get("is_outlier") else "PASS" if "is_outlier" in outlier else outlier.get("status", "N/A"),
                 "detail": f"Worst scenario: {outlier.get('worst_scenario', 'N/A')}",
             })
         else:
@@ -256,7 +256,7 @@ def _build_regulatory(result: dict) -> dict:
     # 2. NII Floor (supervisory: NII should not drop below floor under stress)
     nii_risk = result.get("nii_at_risk", {})
     summary = result.get("summary", {})
-    base_nii = summary.get("kpis", {}).get("shock_0", {}).get("total", 0)
+    base_nii = nii_risk.get("base_total", 0) or summary.get("kpis", {}).get("shock_0", {}).get("total", 0)
     if nii_risk.get("has_data"):
         wc = nii_risk.get("worst_case", {})
         worst_nii = base_nii + wc.get("delta", 0)

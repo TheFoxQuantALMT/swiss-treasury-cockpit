@@ -69,7 +69,7 @@ def parse_wirp(path: Path) -> pd.DataFrame:
             if "index" in test_df.columns or "Indice" in test_df.columns:
                 logger.info("Detected ideal-format WIRP file: %s", path)
                 return parse_wirp_ideal(path)
-    except Exception:
+    except (ValueError, KeyError):
         pass
 
     # Legacy format

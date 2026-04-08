@@ -13,6 +13,8 @@ def parse_reference_table(path: Path) -> pd.DataFrame:
     Missing values get defaults: rating='NR', hqla_level='Non-HQLA', country='XX'.
     """
     df = pd.read_excel(path, engine="openpyxl")
+    # Normalize column names to lowercase for case-insensitive matching
+    df.columns = [str(c).strip().lower() for c in df.columns]
     expected = ["counterparty", "rating", "hqla_level", "country"]
     for col in expected:
         if col not in df.columns:

@@ -35,6 +35,9 @@ def cmd_run_all(
     try:
         cmd_analyze(date=date, data_dir=data_dir, dry_run=dry_run)
         analyze_ok = True
+    except SystemExit:
+        print("[run-all] WARNING: Analyze step exited (macro snapshot may be missing).")
+        print("[run-all] Continuing without daily brief...")
     except Exception as e:
         print(f"[run-all] WARNING: Analyze step failed (Ollama may be unavailable): {e}")
         print("[run-all] Continuing without daily brief...")

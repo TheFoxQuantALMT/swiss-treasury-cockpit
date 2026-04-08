@@ -196,7 +196,7 @@ def parse_mtd(path: Path) -> pd.DataFrame:
         if "Deals" in xl.sheet_names:
             logger.info("Detected ideal-format deals file: %s", path)
             return parse_deals(path)
-    except Exception:
+    except (ValueError, KeyError):
         pass
 
     # Legacy MTD format
@@ -206,17 +206,34 @@ def parse_mtd(path: Path) -> pd.DataFrame:
 
     rename = {k: v for k, v in _MTD_RENAME.items() if k in raw.columns}
     df = raw.rename(columns=rename)
-    df["Direction"] = df["Direction"].str[0]
+
+    # Direction: take first char, coerce non-string / NaN safely
+    if "Direction" in df.columns:
+        df["Direction"] = df["Direction"].astype(str).str[0]
+        bad_dir = ~df["Direction"].isin({"B", "D", "L", "S"})
+        if bad_dir.any():
+            logger.warning("parse_mtd: %d rows with invalid Direction (dropped)", bad_dir.sum())
+            df = df[~bad_dir].copy()
 
     # Perimeter from counterparty
-    cpty_col = "Counterparty" if "Counterparty" in df.columns else "Counterpaty"
-    df["Périmètre TOTAL"] = np.where(
-        df[cpty_col].isin(_WM_COUNTERPARTIES), "WM",
-        np.where(df[cpty_col].isin(_CIB_COUNTERPARTIES), "CIB", "CC"),
-    )
+    if "Counterparty" in df.columns:
+        cpty_col = "Counterparty"
+    else:
+        logger.warning("parse_mtd: no Counterparty column found, defaulting perimeter to CC")
+        cpty_col = None
+    if cpty_col is not None:
+        df["Périmètre TOTAL"] = np.where(
+            df[cpty_col].isin(_WM_COUNTERPARTIES), "WM",
+            np.where(df[cpty_col].isin(_CIB_COUNTERPARTIES), "CIB", "CC"),
+        )
+    else:
+        df["Périmètre TOTAL"] = "CC"
 
     # BOOK1 only
-    df = df[df["IAS Book"] == "BOOK1"].copy()
+    if "IAS Book" in df.columns:
+        df = df[df["IAS Book"] == "BOOK1"].copy()
+    else:
+        logger.warning("parse_mtd: no 'IAS Book' column, keeping all rows")
 
     # Credit spread subtraction for BND
     if "CreditSpread_FIFO" in df.columns:
@@ -233,7 +250,10 @@ def parse_mtd(path: Path) -> pd.DataFrame:
         df["Spread"] = pd.to_numeric(df["Spread"], errors="coerce").fillna(0.0) / 10_000.0
 
     # Filter: supported currencies, valid maturity
-    df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
+    if "Currency" in df.columns:
+        df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
+    else:
+        logger.warning("parse_mtd: no 'Currency' column after rename")
     mat = pd.to_datetime(df["Maturitydate"], errors="coerce", dayfirst=True)
     df = df[mat.notna()].copy()
 

@@ -30,8 +30,8 @@ def _build_basis_risk(
 
         products = deals["Product"].str.strip().values if "Product" in deals.columns else []
         currencies = deals["Currency"].str.strip().str.upper().values if "Currency" in deals.columns else []
-        unique_products = sorted(set(products))
-        unique_currencies = sorted(set(currencies))
+        unique_products = sorted(p for p in set(products) if pd.notna(p))
+        unique_currencies = sorted(c for c in set(currencies) if pd.notna(c))
 
         # Compute base NII by product and currency from pnl_by_deal
         by_product = {}
@@ -50,7 +50,7 @@ def _build_basis_risk(
             by_product[prod] = {"base_nii": round(float(prod_pnl), 0)}
             for label, bp in zip(shocks, shock_bps):
                 # Approximate annual NII impact: Nominal × spread_shock (decimal)
-                prod_nom = float(deals.loc[mask, "Amount"].sum()) if "Amount" in deals.columns else 0
+                prod_nom = float(pd.to_numeric(deals.loc[mask, "Amount"], errors="coerce").fillna(0).sum()) if "Amount" in deals.columns else 0
                 by_product[prod][label] = round(prod_nom * bp / 10_000, 0)
 
         for ccy in unique_currencies:
@@ -59,7 +59,7 @@ def _build_basis_risk(
             ccy_pnl = base[base["Dealid"].isin(deal_ids)][pnl_col].sum() if "Dealid" in base.columns and deal_ids else 0
             by_currency[ccy] = {"base_nii": round(float(ccy_pnl), 0)}
             for label, bp in zip(shocks, shock_bps):
-                ccy_nom = float(deals.loc[mask, "Amount"].sum()) if "Amount" in deals.columns else 0
+                ccy_nom = float(pd.to_numeric(deals.loc[mask, "Amount"], errors="coerce").fillna(0).sum()) if "Amount" in deals.columns else 0
                 by_currency[ccy][label] = round(ccy_nom * bp / 10_000, 0)
 
         return {
@@ -90,10 +90,10 @@ def _build_snb_reserves(
         if limits is not None and not limits.empty and "metric" in limits.columns:
             hqla_rows = limits[limits["metric"].str.strip() == "hqla"]
             if not hqla_rows.empty:
-                hqla = float(hqla_rows.iloc[0].get("limit_value", 0))
+                hqla = float(pd.to_numeric(hqla_rows.iloc[0].get("limit_value", 0), errors="coerce") or 0)
             t1_rows = limits[limits["metric"].str.strip() == "tier1_capital"]
             if not t1_rows.empty:
-                tier1 = float(t1_rows.iloc[0].get("limit_value", 0))
+                tier1 = float(pd.to_numeric(t1_rows.iloc[0].get("limit_value", 0), errors="coerce") or 0)
 
         result = compute_snb_reserves(deals, ois_rate=ois_rate, hqla_amount=hqla, tier1_capital=tier1)
         if not result.get("has_data"):
@@ -108,13 +108,13 @@ def _build_snb_reserves(
         # Build by-product breakdown for template table
         by_product = []
         if deals is not None and "Product" in deals.columns and "Direction" in deals.columns:
-            sight_mask = deals["Direction"].str.strip().str.upper() == "L"
+            sight_mask = deals["Direction"].str.strip().str.upper().isin(["D", "S"])
             if "Currency" in deals.columns:
                 sight_mask &= deals["Currency"].str.strip().str.upper() == "CHF"
             sight_deals = deals[sight_mask]
             if not sight_deals.empty and "Amount" in sight_deals.columns:
                 for prod, grp in sight_deals.groupby(sight_deals["Product"].str.strip()):
-                    balance = float(grp["Amount"].sum())
+                    balance = float(pd.to_numeric(grp["Amount"], errors="coerce").fillna(0).sum())
                     by_product.append({
                         "product": prod,
                         "balance": round(balance, 0),
@@ -142,11 +142,12 @@ def _build_peer_benchmark(result: dict) -> dict:
 
         nii_risk = result.get("nii_at_risk", {})
         if nii_risk.get("has_data"):
-            # Use worst scenario NII change as sensitivity proxy
-            scenarios = nii_risk.get("scenarios", [])
-            if scenarios:
-                worst = min((s.get("delta_nii_pct", 0) for s in scenarios), default=0)
-                bank_metrics["nii_sensitivity_pct"] = worst
+            # Use tornado data (list of dicts with "delta") for worst NII sensitivity
+            tornado = nii_risk.get("tornado", [])
+            base_total = nii_risk.get("base_total", 0)
+            if tornado and base_total:
+                worst_delta = min((t.get("delta", 0) for t in tornado if isinstance(t, dict)), default=0)
+                bank_metrics["nii_sensitivity_pct"] = worst_delta / abs(base_total) * 100 if base_total else 0
 
         if not bank_metrics:
             return {"has_data": False}

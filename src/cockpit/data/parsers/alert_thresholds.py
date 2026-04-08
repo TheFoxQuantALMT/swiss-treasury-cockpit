@@ -23,7 +23,7 @@ def parse_alert_thresholds(path: Path | str) -> dict:
     except ValueError:
         df = pd.read_excel(path, sheet_name=0, engine="openpyxl")
 
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [str(c).strip().lower() for c in df.columns]
     if "currency" not in df.columns:
         raise ValueError(f"alert_thresholds.xlsx must have 'currency' column, got: {list(df.columns)}")
 

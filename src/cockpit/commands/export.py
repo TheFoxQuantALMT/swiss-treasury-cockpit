@@ -51,6 +51,8 @@ def cmd_export_notion(
             print(f"[export-notion] Exported to Notion: {result.get('url', 'success')}")
         except Exception as e:
             print(f"[export-notion] Error: {e}")
+            import sys
+            sys.exit(1)
     else:
         print("[export-notion] No --parent-page-id provided. Blocks built but not pushed.")
         print("[export-notion] Set NOTION_TOKEN env var and provide --parent-page-id to push.")

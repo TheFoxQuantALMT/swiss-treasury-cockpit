@@ -32,6 +32,8 @@ def parse_limits(path: Path | str) -> pd.DataFrame:
 
     if "metric" not in df.columns:
         raise ValueError(f"limits.xlsx must have 'metric' column, got: {list(df.columns)}")
+    if "limit_value" not in df.columns:
+        raise ValueError(f"limits.xlsx must have 'limit_value' column, got: {list(df.columns)}")
 
     # Defaults
     if "currency" not in df.columns:

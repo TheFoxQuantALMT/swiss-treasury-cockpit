@@ -88,7 +88,7 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
         if "Schedule" in xl.sheet_names:
             logger.info("Detected ideal-format schedule file: %s", path)
             return parse_schedule(path)
-    except Exception:
+    except (ValueError, KeyError):
         pass
 
     # Legacy Echeancier format
@@ -131,7 +131,11 @@ def parse_echeancier(path: Path) -> pd.DataFrame:
     # Direction: BD@ = Bond → B, else from balance sign
     month_cols = _month_columns(df)
     is_bond = df["Deal Type"] == "BD"
-    balance_sum = df[month_cols].sum(axis=1)
+    if month_cols:
+        balance_sum = df[month_cols].sum(axis=1)
+    else:
+        logger.warning("parse_echeancier: no YYYY/MM balance columns found, direction inference unreliable")
+        balance_sum = pd.Series(0, index=df.index)
     df["Direction"] = np.where(is_bond, "B", np.where(balance_sum < 0, "L", "D"))
 
     # Currency

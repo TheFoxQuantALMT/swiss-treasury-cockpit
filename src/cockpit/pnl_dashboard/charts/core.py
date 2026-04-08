@@ -501,7 +501,7 @@ def _build_book2(
                 "currency": str(row.get("Currency Code (ISO)", row.get("Currency", ""))),
                 "direction": str(row.get("Buy / Sell", row.get("Direction", ""))),
                 "maturity": str(row.get("Maturity Date", row.get("Maturitydate", ""))),
-                "mtm": round(float(row.get("MTM", 0)), 0),
+                "mtm": round(float(pd.to_numeric(row.get("MTM", 0), errors="coerce") or 0), 0),
             })
         result["deals"] = deals
 

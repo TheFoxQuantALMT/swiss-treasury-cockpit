@@ -222,8 +222,10 @@ def _build_deposit_behavior(
             # Filter to deposit direction
             dep_ref = ref_rows[ref_rows["Direction"].isin(["D", "S"])] if "Direction" in ref_rows.columns else ref_rows
             for ccy_val in dep_ref["Deal currency"].unique() if "Deal currency" in dep_ref.columns else []:
-                ccy_ois = float(ois_rows[ois_rows["Deal currency"] == ccy_val]["Value"].mean()) if "Deal currency" in ois_rows.columns else 0
-                ccy_ref = float(dep_ref[dep_ref["Deal currency"] == ccy_val]["Value"].mean())
+                _ois_s = ois_rows[ois_rows["Deal currency"] == ccy_val]["Value"] if "Deal currency" in ois_rows.columns else pd.Series(dtype=float)
+                ccy_ois = float(_ois_s.mean()) if not _ois_s.empty and pd.notna(_ois_s.mean()) else 0
+                _ref_s = dep_ref[dep_ref["Deal currency"] == ccy_val]["Value"]
+                ccy_ref = float(_ref_s.mean()) if not _ref_s.empty and pd.notna(_ref_s.mean()) else 0
                 # Implied beta = deposit_rate / OIS_rate (simplified)
                 if ccy_ois != 0:
                     implied = ccy_ref / ccy_ois
@@ -428,8 +430,8 @@ def _build_scenario_studio(
                     if tier1 > 0 and dv01 != 0:
                         rs_eve = reverse_stress_eve(eve_d["total_eve"], tier1, dv01)
                         reverse_stress["eve"] = rs_eve
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Reverse stress test failed: %s", e)
 
     return {
         "has_data": True,

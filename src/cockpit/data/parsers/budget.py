@@ -47,7 +47,7 @@ def parse_budget(path: Path | str) -> pd.DataFrame:
         raise ValueError(f"budget.xlsx must have 'month' column, got: {list(df.columns)}")
 
     # Filter valid currencies
-    df["currency"] = df["currency"].str.upper().str.strip()
+    df["currency"] = df["currency"].astype(str).str.upper().str.strip()
     df = df[df["currency"].isin(SUPPORTED_CURRENCIES)].copy()
 
     # Ensure month is string

@@ -38,8 +38,8 @@ def cmd_what_if(
                 ois_rate = float(ois_ccy["Rate"].iloc[0])
             elif not ois_ccy.empty and "value" in ois_ccy.columns:
                 ois_rate = float(ois_ccy["value"].iloc[0])
-        except Exception:
-            pass
+        except (KeyError, ValueError, IndexError) as e:
+            print(f"[what-if] Warning: could not determine OIS rate for {currency}, using 0.0: {e}")
 
     # Map CLI direction to what-if direction: D/S (deposit/sell = liability) -> L, B (bond) -> B
     wif_direction = "L" if direction.upper() in ("D", "L") else "B"

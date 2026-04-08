@@ -110,7 +110,10 @@ def _build_repricing_gap(
     if gap_df.empty:
         return {"has_data": False, "buckets": [], "by_currency": {}}
 
-    buckets = gap_df[gap_df["currency"] == gap_df["currency"].iloc[0]]["bucket"].tolist()
+    first_ccy = gap_df["currency"].dropna().iloc[0] if gap_df["currency"].notna().any() else None
+    if first_ccy is None:
+        return {"has_data": False, "buckets": [], "by_currency": {}}
+    buckets = gap_df[gap_df["currency"] == first_ccy]["bucket"].tolist()
 
     by_currency = {}
     for ccy in sorted(gap_df["currency"].unique()):
@@ -265,8 +268,8 @@ def _build_eve(
             by_currency[ccy] = {
                 "eve": round(float(grp["eve"].sum()), 0),
                 "duration": round(float(
-                    (grp["duration"] * grp["notional_avg"]).sum() /
-                    max(grp["notional_avg"].sum(), 1e-6)
+                    (grp["duration"].fillna(0) * grp["notional_avg"].fillna(0)).sum() /
+                    max(grp["notional_avg"].fillna(0).sum(), 1e-6)
                 ), 2),
                 "deal_count": len(grp),
                 "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),

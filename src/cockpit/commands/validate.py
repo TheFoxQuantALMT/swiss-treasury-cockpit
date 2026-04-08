@@ -34,7 +34,8 @@ def cmd_validate(
             if missing:
                 errors.append(f"Deals missing required columns: {missing}")
             # Check for unknown products
-            known_products = {"IAM/LD", "BND", "FXS", "IRS", "IRS-MTM", "HCD"}
+            from pnl_engine.config import VALID_PRODUCTS
+            known_products = set(VALID_PRODUCTS)
             if "Product" in deals.columns:
                 unknown = set(deals["Product"].unique()) - known_products
                 if unknown:

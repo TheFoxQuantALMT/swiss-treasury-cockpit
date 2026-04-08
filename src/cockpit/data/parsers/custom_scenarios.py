@@ -30,7 +30,9 @@ def parse_custom_scenarios(path: Path | str) -> Optional[pd.DataFrame]:
 
     try:
         df = pd.read_excel(path, engine="openpyxl")
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Failed to parse custom scenarios %s: %s", path, e)
         return None
 
     if df.empty:
