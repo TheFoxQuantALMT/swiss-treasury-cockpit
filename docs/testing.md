@@ -294,7 +294,7 @@ After code changes, verify:
 15. NMD decay reduces nominal over time, deposit beta reduces rate passthrough
 16. P&L explain waterfall reconciles: `Prev + effects = Current`
 17. Limit utilization bars render green/yellow/red based on % of limit
-18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 35 tabs render
+18. `uv run cockpit render-pnl --date 2026-04-05 --input-dir tests/fixtures/ideal_input` -- 36 tabs render
 19. Swiss business day calendar: 10 holidays recognized, Easter algorithm correct
 20. YAML config deep merge: overrides applied correctly, cache reset works
 21. Data quality: match rates, orphan deal detection, field coverage, rate staleness

@@ -104,7 +104,7 @@ The renderer handles missing data gracefully -- each tab renders a placeholder i
 
 ### `render-pnl` -- Render Dedicated P&L Dashboard
 
-Renders the 35-tab ALM/Treasury P&L dashboard from Excel inputs. Auto-discovers optional ALM files (budget, scenarios, NMD profiles, limits, alert thresholds, liquidity schedule, custom scenarios). Hedge pairs are derived automatically from ``strategy_ias`` in deals.
+Renders the 36-tab ALM/Treasury P&L dashboard from Excel inputs. Auto-discovers optional ALM files (budget, scenarios, NMD profiles, limits, alert thresholds, liquidity schedule, custom scenarios). Hedge pairs are derived automatically from ``strategy_ias`` in deals.
 
 ```bash
 uv run cockpit render-pnl --date 2026-04-05 --input-dir path/to/excels

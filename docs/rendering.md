@@ -103,7 +103,7 @@ The rendered HTML file is self-contained:
 
 ---
 
-## P&L Dashboard (37-Tab ALM Dashboard)
+## P&L Dashboard (36-Tab ALM Dashboard)
 
 A dedicated P&L dashboard is rendered via `cockpit render-pnl`, separate from the macro cockpit. It targets treasury/ALM teams and ALCO meetings.
 
@@ -140,82 +140,80 @@ render_pnl_dashboard(
 
 All optional inputs default to `None` -- tabs render placeholders when data is absent.
 
-### Dashboard Tabs (37)
+### Dashboard Tabs (36)
 
-The 37 tabs are organized into 7 chart builder categories:
+The 36 tabs are listed below in the order they appear in `pnl_dashboard.html`. `result["limits"]` and `result["alco_decision_pack"]` are computed by the orchestrator but rendered **inside** other tabs (limit utilization bars appear in the EVE / NII-at-Risk panels; the ALCO Decision Pack is embedded in the ALCO Risk Summary tab) — they are not separate tab buttons.
 
-#### Core (7)
-
-| # | Tab | Key Content |
-|---|-----|-------------|
-| 1 | **Summary** | NII KPIs by currency, DoD bridge, CoC YTD, Locked-in NII KPI, liquidity snapshot |
-| 2 | **CoC Decomposition** | GrossCarry, FundingCost, CoC Simple/Compound monthly |
-| 3 | **P&L Series** | Monthly NII time series by currency and shock |
-| 4 | **Shock Sensitivity** | NII delta matrix (shock x currency), sensitivity explain waterfall |
-| 5 | **Strategy IAS** | IAS hedge decomposition into 4 synthetic legs |
-| 6 | **BOOK2 MTM** | IRS mark-to-market P&L |
-| 7 | **Rate Curves** | OIS forward curves and WIRP overlay |
-
-#### Risk (6)
+#### NII Core (5)
 
 | # | Tab | Key Content |
 |---|-----|-------------|
-| 8 | **FX Mismatch** | Cross-currency NII exposure |
-| 9 | **Repricing Gap** | Time-bucket repricing exposure by currency |
-| 10 | **Counterparty** | P&L concentration by counterparty |
-| 11 | **Alerts** | Threshold-based P&L, liquidity, and FTP alerts |
-| 12 | **EVE** | Economic Value of Equity, IRRBB outlier test, tenor ladder, convexity/gamma, KRD |
-| 13 | **Limit Utilization** | Board-approved limit utilization bars, breach log |
+| 1 | **ALCO** | ALCO risk summary, embedded decision pack, exec summary, decisions required |
+| 2 | **Summary** | NII KPIs by currency, DoD bridge, CoC YTD, Locked-in NII KPI, liquidity snapshot |
+| 3 | **CoC Decomposition** | GrossCarry, FundingCost, CoC Simple/Compound monthly |
+| 4 | **P&L Series** | Monthly NII time series by currency and shock |
+| 5 | **Shock Sensitivity** | NII delta matrix (shock × currency), sensitivity explain waterfall |
 
-#### Attribution (7)
-
-| # | Tab | Key Content |
-|---|-----|-------------|
-| 14 | **FTP & Business Unit** | 3-way margin split (client/ALM/total) by perimeter and currency |
-| 15 | **Liquidity Forecast** | Daily (90d) + monthly cash flows, survival horizon, top maturities |
-| 16 | **NMD Audit Trail** | Deal-level NMD profile matching (tier, decay, beta), replication portfolio, coverage stats |
-| 17 | **ALCO Decision Pack** | Exec summary, consolidated metrics, decisions required |
-| 18 | **Budget vs Actual** | NII vs budget comparison by currency |
-| 19 | **P&L Attribution** | Waterfall: time, new deals, matured, rate effect, spread effect |
-| 20 | **Forecast Tracking** | Historical NII forecast evolution, revision analytics |
-
-#### Profitability (5)
+#### Risk (8)
 
 | # | Tab | Key Content |
 |---|-----|-------------|
-| 21 | **Hedge Effectiveness** | IAS 39 dollar-offset / IFRS 9 R-squared, scenario cross-reference |
-| 22 | **NII-at-Risk** | BCBS scenario heatmap, tornado chart, parametric EaR (95%/99%) |
+| 6 | **EVE** | Economic Value of Equity, IRRBB outlier test, tenor ladder, convexity/gamma, KRD |
+| 7 | **NII-at-Risk** | BCBS scenario heatmap, tornado chart, parametric EaR (95%/99%) |
+| 8 | **Repricing Gap** | Time-bucket repricing exposure by currency |
+| 9 | **FX Mismatch** | Cross-currency NII exposure |
+| 10 | **NMD Audit** | Deal-level NMD profile matching (tier, decay, beta), replication portfolio, coverage stats |
+| 11 | **Deposits** | Deposit behavior intelligence — beta validation, beta sensitivity ±0.1, concentration |
+| 12 | **Risk Cube** | NII/EVE heatmaps across shock combinations |
+| 13 | **Regulatory** | Regulatory scorecard / compliance metrics |
+
+#### Attribution (3)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 14 | **Budget vs Actual** | NII vs budget comparison by currency |
+| 15 | **P&L Attribution** | Waterfall: time, new deals, matured, rate effect, spread effect |
+| 16 | **Forecast Tracking** | Historical NII forecast evolution, revision analytics |
+
+#### Structure & Hedging (4)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 17 | **Strategy IAS** | IAS hedge decomposition into 4 synthetic legs |
+| 18 | **Counterparty** | P&L concentration by counterparty |
+| 19 | **Hedge Effectiveness** | IAS 39 dollar-offset / IFRS 9 R-squared, scenario cross-reference |
+| 20 | **Hedge Strategy** | DV01-based IRS hedge recommendations |
+
+#### Profitability (4)
+
+| # | Tab | Key Content |
+|---|-----|-------------|
+| 21 | **NIM** | Net interest margin trends, Jaws ratio |
+| 22 | **Fixed/Float** | Fixed vs floating rate composition by currency |
 | 23 | **Deal Explorer** | Deal-level P&L drill-down |
-| 24 | **Fixed/Float Mix** | Fixed vs floating rate composition by currency |
-| 25 | **NIM & Profitability** | Net interest margin trends, Jaws ratio |
+| 24 | **Maturity Wall** | Reinvestment risk visualization, cliff detection |
 
-#### Structure (3)
-
-| # | Tab | Key Content |
-|---|-----|-------------|
-| 26 | **Maturity Wall** | Reinvestment risk visualization, cliff detection |
-| 27 | **Historical Trends** | KPI sparklines over time |
-| 28 | **Regulatory Scorecard** | Regulatory compliance metrics |
-
-#### Scenarios (4)
+#### Funding & Scenarios (3)
 
 | # | Tab | Key Content |
 |---|-----|-------------|
-| 29 | **Risk Cube** | NII/EVE heatmaps across shock combinations |
-| 30 | **Deposit Behavior Intelligence** | Beta validation, beta sensitivity +/-0.1, concentration analysis |
-| 31 | **Scenario Studio** | NII+DEVE ranking, reverse stress test, decision matrix |
-| 32 | **Hedge Strategy Optimizer** | DV01-based IRS hedge recommendations |
+| 25 | **FTP** | 3-way margin split (client/ALM/total) by perimeter and currency |
+| 26 | **Liquidity** | Daily (90d) + monthly cash flows, survival horizon, top maturities |
+| 27 | **Scenario Studio** | NII + ΔEVE ranking, reverse stress test, decision matrix |
 
-#### Monitoring (6)
+#### Market & Monitoring (9)
 
 | # | Tab | Key Content |
 |---|-----|-------------|
-| 33 | **ALCO Decision Pack** | Decision audit trail, action items |
-| 34 | **Data Quality** | Match rates, orphan deals, field coverage, rate staleness |
-| 35 | **Basis Risk** | Spread compression sensitivity by product/currency (+/-50bp) |
-| 36 | **SNB Reserves** | 2.5% minimum reserve compliance, HQLA deduction |
-| 37 | **Peer Benchmark** | FINMA aggregate IRRBB statistics comparison |
-| -- | **NMD Backtest** | Modeled vs actual runoff comparison (R-squared/RMSE/MAE) -- placeholder |
+| 28 | **BOOK2 MTM** | IRS mark-to-market P&L |
+| 29 | **Rate Curves** | OIS forward curves and WIRP overlay |
+| 30 | **Trends** | KPI sparklines over time |
+| 31 | **Basis Risk** | Spread compression sensitivity by product/currency (±50bp) |
+| 32 | **SNB Reserves** | 2.5% minimum reserve compliance, HQLA deduction |
+| 33 | **Peer Benchmark** | FINMA aggregate IRRBB statistics comparison |
+| 34 | **NMD Backtest** | Modeled vs actual runoff comparison (R²/RMSE/MAE) — placeholder |
+| 35 | **Alerts** | Threshold-based P&L, liquidity, and FTP alerts |
+| 36 | **Data Quality** | Match rates, orphan deals, field coverage, rate staleness |
 
 ### Charts Architecture
 

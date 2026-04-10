@@ -39,9 +39,11 @@ Day count is per instrument type, not just per currency:
 | GBP | Act/365 Fixed | Act/365 Fixed |
 
 The divisor `D` (360 or 365) is used in:
-- Daily P&L: `Nominal * (OIS - RateRef) / D`
+- Daily P&L: `Nominal * (OIS - RateRef) * d_i / D`
 - Simple carry: `SUM(Nominal * Rate * d_i / D)`
 - Compounded carry: `PROD(1 + r_i * d_i / D)`
+
+`d_i` is the calendar-day weight for the fixing (1 for weekdays, 3 for Friday → Monday). It is built by `cockpit.engine.pnl.matrices.build_accrual_days()` from the Swiss business calendar.
 
 ---
 
@@ -323,8 +325,8 @@ The carry-compounded function `load_carry_compounded()` uses the carry indices, 
 **How applied:**
 
 Deals with `Strategy IAS` designation are split into:
-1. **NHCD (Non-Hedge Carrying Debt):** P&L = `Nominal * (OIS - Rate) / MM` (standard formula)
-2. **HCD (Hedge Carrying Debt):** P&L = `Nominal * marginRate / MM` (no OIS subtraction)
+1. **NHCD (Non-Hedge Carrying Debt):** P&L = `Nominal * (OIS - Rate) * d_i / MM` (standard formula)
+2. **HCD (Hedge Carrying Debt):** P&L = `Nominal * marginRate * d_i / MM` (no OIS subtraction)
 
 Where `marginRate = EqOisRate + YTM - Clientrate_HCD`.
 

@@ -9,7 +9,7 @@ The system consolidates two internal projects:
 - **economic-pnl-v2** -- P&L engine, portfolio snapshot, Excel parsers
 - **macro-cbwatch** -- market data fetchers, scoring, alerts, LLM agents
 
-The CLI exposes **10 commands**: `fetch`, `compute`, `analyze`, `render`, `render-pnl`, `run-all`, `backfill`, `validate`, `what-if`, `decision`, and `export-notion`.
+The CLI exposes **11 commands**: `fetch`, `compute`, `analyze`, `render`, `render-pnl`, `run-all`, `backfill`, `validate`, `what-if`, `decision`, and `export-notion`.
 
 ## Documentation Index
 
@@ -17,7 +17,7 @@ The CLI exposes **10 commands**: `fetch`, `compute`, `analyze`, `render`, `rende
 |----------|-------------|
 | [Architecture](architecture.md) | System design, data flow, module structure |
 | [Installation](installation.md) | Requirements, setup, environment variables |
-| [CLI Reference](cli.md) | All 10 commands, options, examples |
+| [CLI Reference](cli.md) | All 11 commands, options, examples |
 | [P&L Engine](pnl-engine.md) | Daily P&L, CoC decomposition, strategy legs, BOOK1/BOOK2 |
 | [Data Models](data-models.md) | Canonical `Deal`, `RFRIndex`, `MarketData` dataclasses |
 | [Matrices & Curves](matrices-curves.md) | Numpy array construction, OIS curves, WASP integration |
@@ -26,7 +26,7 @@ The CLI exposes **10 commands**: `fetch`, `compute`, `analyze`, `render`, `rende
 | [Portfolio Snapshot](portfolio-snapshot.md) | Liquidity ladder, positions, counterparty exposure |
 | [Data Ingestion](data-ingestion.md) | Fetchers, parsers, DataManager, circuit breakers |
 | [LLM Agents](llm-agents.md) | Analyst, reviewer, reporter -- daily brief generation |
-| [Rendering](rendering.md) | Jinja2 templates, 5-tab macro cockpit + 37-tab P&L dashboard |
+| [Rendering](rendering.md) | Jinja2 templates, 5-tab macro cockpit + 36-tab P&L dashboard |
 | [Configuration](configuration.md) | YAML-based config (`config_loader.py`), constants, thresholds |
 | [Testing](testing.md) | Test structure, fixtures, running tests |
 | [Regulatory Reference](regulatory-reference.md) | ISDA, IFRS 9, BCBS 368, FINMA standards applied |
@@ -40,7 +40,7 @@ uv sync
 # Run the full pipeline
 uv run cockpit run-all --date 2026-04-04
 
-# Render the 37-tab P&L dashboard (HTML)
+# Render the 36-tab P&L dashboard (HTML)
 uv run cockpit render-pnl --date 2026-04-04 --input-dir path/to/excels
 
 # Export to all formats (HTML + Excel + PDF)
@@ -74,19 +74,21 @@ render-pnl (standalone) ──────────────────�
   |  reads Excel inputs directly (deals, echeancier, WIRP, IRS stock, etc.)
 ```
 
-Each stage is independent. You can re-run `render` without re-fetching, or skip `analyze` if Ollama is unavailable. The `render-pnl` path is a major standalone workflow that reads Excel inputs directly and produces a 37-tab P&L dashboard.
+Each stage is independent. You can re-run `render` without re-fetching, or skip `analyze` if Ollama is unavailable. The `render-pnl` path is a major standalone workflow that reads Excel inputs directly and produces a 36-tab P&L dashboard.
 
-## P&L Dashboard Tabs (37)
+## P&L Dashboard Tabs (36)
 
-Organized in waves:
+Grouped by category (matches the order rendered in `pnl_dashboard.html`):
 
-- **Core (7)**: ALCO Risk Summary, Summary, CoC Decomposition, P&L Series, Shock Sensitivity, Rate Curves, Alerts
-- **Risk**: EVE, NII-at-Risk, Repricing Gap, FX Mismatch, Risk Cube, Regulatory Scorecard, Counterparty, Limits
-- **Attribution**: FTP & Business Unit, Liquidity Forecast, NMD Audit Trail, Budget vs Actual, P&L Attribution, Forecast Tracking, ALCO Decision Pack
-- **Profitability**: Hedge Effectiveness, NIM & Profitability, Fixed/Float Mix, Deal Explorer, NII-at-Risk
-- **Structure**: Maturity Wall, Historical Trends, BOOK2 MTM
-- **Scenarios**: Deposit Behavior Intelligence, Scenario Studio, Hedge Strategy Optimizer
-- **Monitoring**: Data Quality, Basis Risk, SNB Reserves, Peer Benchmark, NMD Backtest
+- **NII Core (5)**: ALCO, Summary, CoC Decomposition, P&L Series, Shock Sensitivity
+- **Risk (8)**: EVE, NII-at-Risk, Repricing Gap, FX Mismatch, NMD Audit, Deposits, Risk Cube, Regulatory
+- **Attribution (3)**: Budget vs Actual, P&L Attribution, Forecast Tracking
+- **Structure & Hedging (4)**: Strategy IAS, Counterparty, Hedge Effectiveness, Hedge Strategy
+- **Profitability (4)**: NIM, Fixed/Float, Deal Explorer, Maturity Wall
+- **Funding & Scenarios (3)**: FTP, Liquidity, Scenario Studio
+- **Market & Monitoring (9)**: BOOK2 MTM, Rate Curves, Trends, Basis Risk, SNB Reserves, Peer Benchmark, NMD Backtest, Alerts, Data Quality
+
+Embedded panels rendered inside the above tabs (no separate buttons): Limit Utilization (in EVE / NII-at-Risk), ALCO Decision Pack (in ALCO).
 
 ## Key Modules
 

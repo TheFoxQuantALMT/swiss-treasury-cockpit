@@ -62,19 +62,37 @@ Ideal format is tried first (`*deals*` glob); falls back to legacy if not found.
 | `pnlAll` | DataFrame | Final P&L in wide format (months as columns) |
 | `pnlAllS` | DataFrame | Final P&L in stacked/long format |
 
+## Direction Convention
+
+Deal direction is encoded with single-letter codes that determine **balance-sheet side** and **nominal sign** uniformly across the engine and analytical modules. The canonical source is `config.DIRECTION_SIDE`:
+
+| Code | Meaning | Side | Nominal sign |
+|------|---------|------|--------------|
+| `L` | Loan | Asset | Negative |
+| `B` | Bond (bought) | Asset | Negative |
+| `D` | Deposit | Liability | Positive |
+| `S` | Sold bond | Liability | Positive |
+
+The echeancier carries **already-signed** nominals: assets negative, liabilities positive. The P&L core (`compute_daily_pnl`) consumes the signed nominal directly. Analytical modules (EVE, repricing gap, SNB reserves, dashboard charts) classify positions via `config.ASSET_DIRECTIONS` / `config.LIABILITY_DIRECTIONS` rather than reinterpreting signs.
+
+Convention-related cross-cutting fixes were landed in commits `a01d16a` and `6776348` after a quant audit; any code that explicitly flips signs based on direction is dead code and should be removed.
+
 ## Core Formula
 
 ### Daily P&L (BOOK1)
 
 ```
-PnL_daily = Nominal * (OIS_fwd - RateRef) / MM
+PnL_daily = Nominal * (OIS_fwd - RateRef) * d_i / MM
 ```
 
 Where:
-- `Nominal` = outstanding amount for the day (from echeancier schedule)
+- `Nominal` = outstanding amount for the day (from echeancier schedule, **signed**: negative for assets L/B, positive for liabilities D/S)
 - `OIS_fwd` = OIS forward rate for that day and currency
 - `RateRef` = deal reference rate (see [Rate Resolution](#rate-resolution))
-- `MM` = day count divisor (360 or 365 per ISDA 2006 section 4.16)
+- `d_i` = accrual days the fixing covers (1 for a normal weekday; 3 for Friday → Monday; built by `build_accrual_days()` from the Swiss business calendar)
+- `MM` = day count divisor (360 for ACT/360 — CHF/EUR/USD; 365 for ACT/365 — GBP) per ISDA 2006 section 4.16
+
+Because `Nominal` is already signed per the [direction convention](#direction-convention), the P&L sign follows naturally — there is no separate sign-flipping step.
 
 ### Monthly Aggregation
 

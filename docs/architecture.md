@@ -79,9 +79,9 @@ Excel Files (MTD, Echeancier, WIRP, IRS,     FRED / ECB / SNB / yfinance
 ```
 src/cockpit/
   __init__.py
-  cli.py                    CLI entry point (10 commands: fetch, compute, analyze,
-                             render, render-pnl, backfill, validate, what-if,
-                             decision, export-notion)
+  cli.py                    CLI entry point (11 commands: fetch, compute, analyze,
+                             render, render-pnl, run-all, backfill, validate,
+                             what-if, decision, export-notion)
   config.py                 All constants, thresholds, mappings
   config_loader.py          YAML-based runtime config with caching (load_config(),
                              reset_cache()), reads config/cockpit.config.yaml
