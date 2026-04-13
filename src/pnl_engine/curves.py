@@ -40,7 +40,8 @@ def load_daily_curves(
         shock_f = 0.0 if shock == "wirp" else float(shock)
 
         # Pre-load all ramp markets (registers mktUSD/mktEUR/… handles)
-        wt.loadAllRampMarket(date, Shock=shock_f)
+        # Must adjust to last business day — same as dailyFwdRate does internally
+        wt.loadAllRampMarket(wt.lastBusinessDay(date), Shock=shock_f)
 
         def _load_one(indice: str) -> pd.DataFrame:
             ccy = wt.indiceDict.get(indice)
@@ -81,9 +82,10 @@ def _ensure_ramp_loaded(date: Any, shock: float = 0.0) -> None:
     """Call ``loadAllRampMarket`` once per (date, shock) to populate mkt handles."""
     if wt is None:
         return
-    key = (str(date), shock)
+    bday = wt.lastBusinessDay(date)
+    key = (str(bday), shock)
     if key not in _ramp_loaded:
-        wt.loadAllRampMarket(date, Shock=shock)
+        wt.loadAllRampMarket(bday, Shock=shock)
         _ramp_loaded.add(key)
 
 
