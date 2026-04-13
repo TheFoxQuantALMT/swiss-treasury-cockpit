@@ -50,7 +50,8 @@ def sample_stacked():
     for shock in ("0", "50"):
         for ccy in ("CHF", "EUR"):
             for indice in ("PnL", "Nominal", "OISfwd", "RateRef",
-                           "GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"):
+                           "GrossCarry", "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
+                           "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"):
                 for m in months:
                     for pnl_type in ("Realized", "Forecast"):
                         val = 100.0 if indice == "PnL" else 1_000_000.0 if indice == "Nominal" else 0.02

@@ -42,6 +42,17 @@ pnl.update_pnl(Shock="50")
 | `output_dir` | Path | auto | Directory for output files. |
 | `funding_source` | str | `"ois"` | Funding rate for CoC: `"ois"` (OIS curve) or `"coc"` (deal-level CocRate). |
 
+### Advanced Parameters (PnlEngine)
+
+The underlying `PnlEngine` (used by the dashboard orchestrator) accepts additional parameters not exposed via `ForecastRatePnL`:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `nmd_profiles` | DataFrame | NMD behavioral decay profiles (from `nmd_profiles.xlsx`) |
+| `production_plans` | list | Production plans for dynamic balance sheet projection |
+
+These are wired in by the dashboard orchestrator (`cmd_render_pnl`) which auto-discovers the input files.
+
 ### Data Loading
 
 `load_data()` supports two input layouts:
@@ -59,6 +70,8 @@ Ideal format is tried first (`*deals*` glob); falls back to legacy if not found.
 | `scheduleData` | DataFrame | Nominal schedule (monthly balances) |
 | `wirpData` | DataFrame | WIRP rate expectations |
 | `irsStock` | DataFrame | BOOK2 IRS stock (for WASP MTM) |
+| `fwdOIS0` | dict | Cached base OIS forward curves by currency |
+| `fwdWIRP` | dict | Cached WIRP-implied forward curves by currency |
 | `pnlAll` | DataFrame | Final P&L in wide format (months as columns) |
 | `pnlAllS` | DataFrame | Final P&L in stacked/long format |
 
@@ -202,7 +215,7 @@ When WASP is unavailable, falls back to an analytical MTM approximation:
 MTM ≈ sign × Notional × (ClientRate - OIS_proxy) × remaining_years
 ```
 
-Where sign is +1 for RECEIVE, -1 for PAY. This is a first-order PV approximation adequate for dashboard display.
+Where sign is +1 for RECEIVE, -1 for PAY. `OIS_proxy` defaults to 1.0% and is adjusted for shock scenarios (e.g. shock `"50"` adds 50bp → 1.50%). This is a first-order PV approximation adequate for dashboard display.
 
 ## BCBS 368 Scenarios
 
@@ -253,6 +266,13 @@ Standard tiers (SNB/EBA convention):
 - **Term**: contractual maturity, beta=1.0
 
 Profiles are loaded from `nmd_profiles.xlsx` and injected via `PnlEngine(nmd_profiles=...)`.
+
+Under large rate shocks (>200bp), the NMD module applies stress adjustments:
+
+- **Stressed beta**: `beta_stressed = min(1.0, beta × stress_factor)` — passthrough increases under extreme rate moves
+- **Stressed decay**: `decay_stressed = decay × stress_factor` — faster runoff as depositors seek higher-yielding alternatives
+
+These adjustments ensure NMD assumptions remain conservative in BCBS 368 tail scenarios.
 
 ## Convexity / Gamma
 
@@ -361,6 +381,24 @@ delta = compare_pnl(new_pnl, prev_pnl)
 ## Standalone Analytics Modules
 
 The following modules under `src/pnl_engine/` provide specialized analytics wired into the dashboard orchestrator.
+
+### Data Models
+
+**Module:** `pnl_engine/models.py`
+
+Canonical data models defining `Deal`, `DayCountConvention`, `CompoundingMethod`, and `FundingSource` enums. Serves as the schema reference for the ideal input format and is used for validation and type enforcement.
+
+### Dynamic Balance Sheet
+
+**Module:** `pnl_engine/dynamic_balance_sheet.py`
+
+Projects the future balance sheet by reinvesting maturing deals according to a `ProductionPlan`. When enabled, maturing notional is rolled into new deals at current forward rates, producing a more realistic NII projection than a static (runoff) balance sheet. Accepts production plans via `PnlEngine(production_plans=...)`.
+
+### Repricing Gap
+
+**Module:** `pnl_engine/repricing.py`
+
+Classifies deals by repricing date — maturity for fixed-rate instruments, next fixing date for floating — and computes asset/liability gaps per time bucket per currency. Outputs a gap profile used by the Repricing Gap dashboard tab and feeds into NII sensitivity analysis.
 
 ### Basis Risk
 

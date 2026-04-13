@@ -284,7 +284,7 @@ def _build_deal_explorer(
                 "summary_stats": {}, "by_product": {}, "by_currency": {}}
 
     agg_cols = {}
-    for col in ["PnL", "GrossCarry", "FundingCost"]:
+    for col in ["PnL", "GrossCarry", "FundingCost_Simple"]:
         if col in by_deal.columns:
             agg_cols[col] = (col, "sum")
     for col in ["Nominal", "OISfwd", "RateRef"]:
@@ -552,7 +552,7 @@ def _build_nim(
 
     # Use GrossCarry and FundingCost if available
     gc_rows = df[(df["Indice"] == "GrossCarry") & (df["Shock"] == "0")]
-    fc_rows = df[(df["Indice"] == "FundingCost") & (df["Shock"] == "0")]
+    fc_rows = df[(df["Indice"] == "FundingCost_Simple") & (df["Shock"] == "0")]
     has_coc = not gc_rows.empty and not fc_rows.empty
 
     if has_coc:

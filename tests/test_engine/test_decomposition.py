@@ -1,8 +1,8 @@
-"""Tests for CoC decomposition — simple, compounded, and WASP comparison.
+"""Tests for CoC decomposition — OIS forward, compounded, and WASP comparison.
 
 Verifies:
-    1. CoC_Simple == GrossCarry − FundingCost exactly (per month)
-    2. CoC_Compound diverges from CoC_Simple over longer periods
+    1. CoC_Simple == GrossCarry − FundingCost_Simple exactly (per month)
+    2. CoC_Compounded diverges from CoC_Simple over longer periods
     3. Friday→Monday compounding weights d_i=3
     4. Product-aware day count (BND→30/360, money market→Act/360, GBP→Act/365)
     5. Funding source toggle (OIS vs CocRate)
@@ -52,11 +52,11 @@ def _make_arrays(days, n_deals=1, nominal=1_000_000.0, rate=0.03, ois=0.02, fund
 
 
 # ---------------------------------------------------------------------------
-# 1. CoC_Simple == GrossCarry − FundingCost
+# 1. CoC_Simple == GrossCarry − FundingCost_Simple
 # ---------------------------------------------------------------------------
 
-def test_coc_simple_equals_gross_minus_funding(april_days):
-    """CoC_Simple must equal GrossCarry − FundingCost exactly for every month."""
+def test_coc_forward_equals_gross_minus_funding(april_days):
+    """CoC_Simple must equal GrossCarry − FundingCost_Simple exactly for every month."""
     nom, ois, rate, funding, mm, pnl = _make_arrays(april_days)
     accrual = build_accrual_days(april_days)
 
@@ -66,36 +66,37 @@ def test_coc_simple_equals_gross_minus_funding(april_days):
     )
 
     for _, row in monthly.iterrows():
-        expected = row["GrossCarry"] - row["FundingCost"]
+        expected = row["GrossCarry"] - row["FundingCost_Simple"]
         assert abs(row["CoC_Simple"] - expected) < 1e-10, (
             f"CoC_Simple ({row['CoC_Simple']}) != GrossCarry ({row['GrossCarry']}) - "
-            f"FundingCost ({row['FundingCost']}) = {expected}"
+            f"FundingCost_Simple ({row['FundingCost_Simple']}) = {expected}"
         )
 
 
 # ---------------------------------------------------------------------------
-# 2. CoC_Compound diverges from CoC_Simple
+# 2. CoC_Compounded diverges from CoC_Simple
 # ---------------------------------------------------------------------------
 
-def test_coc_compound_diverges_from_simple(two_month_days):
-    """Compounded CoC should differ from simple CoC (geometric vs linear)."""
+def test_coc_compounded_diverges_from_simple(two_month_days):
+    """Compounded CoC (carry) should differ from simple CoC (OIS fwd) when rates differ."""
     nom, ois, rate, funding, mm, pnl = _make_arrays(
         two_month_days, rate=0.05, ois=0.03, funding=0.02,
     )
+    # Carry rates slightly different from OIS forward
+    carry = np.full_like(funding, 0.021)
     accrual = build_accrual_days(two_month_days)
 
     monthly = aggregate_to_monthly(
         pnl, nom, ois, rate, two_month_days,
-        funding_daily=funding, accrual_days=accrual, mm_daily=mm,
+        funding_daily=funding, carry_funding_daily=carry,
+        accrual_days=accrual, mm_daily=mm,
     )
 
-    # Both should be non-zero and differ
     for _, row in monthly.iterrows():
         assert row["CoC_Simple"] != 0.0
-        assert row["CoC_Compound"] != 0.0
-        # They should be close but not identical (compounding effect)
-        ratio = row["CoC_Compound"] / row["CoC_Simple"] if row["CoC_Simple"] != 0 else 1.0
-        assert 0.99 < ratio < 1.01, f"Compound/Simple ratio {ratio} — expect close but not equal"
+        assert row["CoC_Compounded"] != 0.0
+        # Different funding source + method → should differ
+        assert row["CoC_Compounded"] != row["CoC_Simple"]
 
 
 # ---------------------------------------------------------------------------
@@ -195,15 +196,15 @@ def test_funding_matrix_coc_mode():
 def test_wasp_carry_comparison():
     """Compare internal compounding vs WASP carryCompounded (if available)."""
     try:
-        from cockpit.engine.pnl.curves import load_carry_compounded
-    except ImportError:
-        pytest.skip("curves module not available")
+        from pnl_engine.curves import load_carry_compounded
+        wasp_result = load_carry_compounded(
+            pd.Timestamp("2026-04-01"),
+            pd.Timestamp("2026-04-30"),
+            "CHF",
+        )
+    except (ImportError, RuntimeError):
+        pytest.skip("WASP unavailable")
 
-    wasp_result = load_carry_compounded(
-        pd.Timestamp("2026-04-01"),
-        pd.Timestamp("2026-04-30"),
-        "CHF",
-    )
     if wasp_result is None:
         pytest.skip("WASP unavailable — internal-only test passes")
 
@@ -225,10 +226,10 @@ def test_no_coc_without_funding(april_days):
     assert "PnL" in monthly.columns
     assert "Nominal" in monthly.columns
     assert "GrossCarry" not in monthly.columns
-    assert "FundingCost" not in monthly.columns
+    assert "FundingCost_Simple" not in monthly.columns
     assert "CoC_Simple" not in monthly.columns
-    assert "CoC_Compound" not in monthly.columns
-    assert "FundingRate" not in monthly.columns
+    assert "CoC_Compounded" not in monthly.columns
+    assert "FundingRate_Simple" not in monthly.columns
 
 
 # ---------------------------------------------------------------------------

@@ -450,8 +450,9 @@ class PnlEngine:
             pnl_all = pnl_all[
                 pnl_all["Indice"].isin([
                     "Nominal", "OISfwd", "PnL", "RateRef",
-                    "GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate",
-                    "CarryFundingCost", "CoC_Carry", "CoC_CarryCompound", "CarryFundingRate",
+                    "GrossCarry",
+                    "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
+                    "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded",
                 ])
             ].copy()
 
@@ -471,15 +472,17 @@ class PnlEngine:
         sum_cols = {"PnL": "sum", "Nominal": "sum"}
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
-        for coc_col in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound",
-                        "CarryFundingCost", "CoC_Carry", "CoC_CarryCompound"]:
+        for coc_col in ["GrossCarry",
+                        "FundingCost_Simple", "CoC_Simple",
+                        "FundingCost_Compounded", "CoC_Compounded"]:
             if coc_col in data.columns:
                 sum_cols[coc_col] = "sum"
         agg = data.groupby(group_cols).agg(
             **{k: (k, v) for k, v in sum_cols.items()}
         ).reset_index()
 
-        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "FundingRate"]
+        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM",
+                     "FundingRate_Simple", "FundingRate_Compounded"]
         present_rates = [c for c in rate_cols if c in data.columns]
         if present_rates:
             wavg = weighted_average(data, present_rates, "Nominal", group_cols)

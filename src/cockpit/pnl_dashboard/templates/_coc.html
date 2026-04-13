@@ -37,10 +37,12 @@
         <tr>
           <th>Month</th>
           <th>GrossCarry</th>
-          <th>FundingCost</th>
+          <th>Funding Simple</th>
           <th>CoC Simple</th>
-          <th>CoC Compound</th>
-          <th>Funding Rate</th>
+          <th>Rate Simple</th>
+          <th>Funding Compounded</th>
+          <th>CoC Compounded</th>
+          <th>Rate Compounded</th>
         </tr>
       </thead>
       <tbody>
@@ -48,10 +50,12 @@
         <tr>
           <td>{{ row.month }}</td>
           <td>{{ "{:,.2f}".format(row.GrossCarry) }}</td>
-          <td>{{ "{:,.2f}".format(row.FundingCost) }}</td>
+          <td>{{ "{:,.2f}".format(row.FundingCost_Simple) }}</td>
           <td>{{ "{:,.2f}".format(row.CoC_Simple) }}</td>
-          <td>{{ "{:,.2f}".format(row.CoC_Compound) }}</td>
-          <td>{{ "{:.4f}".format(row.FundingRate) }}</td>
+          <td>{{ "{:.4f}".format(row.FundingRate_Simple) }}</td>
+          <td>{{ "{:,.2f}".format(row.FundingCost_Compounded|default(0)) }}</td>
+          <td>{{ "{:,.2f}".format(row.CoC_Compounded|default(0)) }}</td>
+          <td>{{ "{:.4f}".format(row.FundingRate_Compounded|default(0)) }}</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -112,9 +116,9 @@
       const ccy = cocData.by_currency[cocCurrency] || {};
       const shock = ccy[cocShock] || {};
       const gc = shock.GrossCarry || [];
-      const fc = shock.FundingCost || [];
+      const fc = shock.FundingCost_Simple || [];
       const cs = shock.CoC_Simple || [];
-      const cc = shock.CoC_Compound || [];
+      const cc = shock.CoC_Compounded || [];
 
       cocChart = new Chart(ctx, {
         type: 'bar',
@@ -130,7 +134,7 @@
               order: 2,
             },
             {
-              label: 'FundingCost',
+              label: 'Funding (Fwd)',
               data: fc.map(v => -Math.abs(v)),
               backgroundColor: 'rgba(248, 81, 73, 0.6)',
               borderColor: '#f85149',

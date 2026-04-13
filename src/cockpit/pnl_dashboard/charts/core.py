@@ -101,16 +101,16 @@ def _build_summary(
                 "pnl": round(float(row["Value"]), 0),
             })
 
-    # CoC YTD: aggregate GrossCarry, FundingCost, CoC_Simple, CoC_Compound at shock=0
+    # CoC YTD: aggregate GrossCarry, FundingCost_Simple, CoC_Simple, CoC_Compounded at shock=0
     coc_ytd = None
-    coc_indices = {"GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound"}
+    coc_indices = {"GrossCarry", "FundingCost_Simple", "CoC_Simple", "CoC_Compounded"}
     coc_rows = _filter_total(df[(df["Indice"].isin(coc_indices)) & (df["Shock"] == "0")])
     if not coc_rows.empty:
         coc_ytd = {
             "gross_carry": round(float(coc_rows.loc[coc_rows["Indice"] == "GrossCarry", "Value"].sum()), 0),
-            "funding_cost": round(float(coc_rows.loc[coc_rows["Indice"] == "FundingCost", "Value"].sum()), 0),
+            "funding_cost": round(float(coc_rows.loc[coc_rows["Indice"] == "FundingCost_Simple", "Value"].sum()), 0),
             "coc_simple": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Simple", "Value"].sum()), 0),
-            "coc_compound": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Compound", "Value"].sum()), 0),
+            "coc_compound": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Compounded", "Value"].sum()), 0),
         }
 
     # Day-over-day P&L bridge (requires prev_df)
@@ -157,7 +157,9 @@ def _build_coc(df: pd.DataFrame) -> dict:
     if df.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "table": []}
 
-    coc_indices = {"GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"}
+    coc_indices = {"GrossCarry",
+                    "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
+                    "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"}
     coc_rows = df[df["Indice"].isin(coc_indices)].copy()
     if coc_rows.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "table": []}
@@ -207,7 +209,9 @@ def _build_coc(df: pd.DataFrame) -> dict:
     if "shock_0" in all_by_shock:
         for i, m in enumerate(month_labels):
             row = {"month": m}
-            for indice in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"]:
+            for indice in ["GrossCarry",
+                          "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
+                          "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"]:
                 row[indice] = all_by_shock["shock_0"].get(indice, [0.0] * len(months))[i]
             table.append(row)
 

@@ -90,18 +90,22 @@ def engine_result():
     daily_pnl = compute_daily_pnl(nominal_daily, ois_matrix, rate_matrix, mm_broadcast)
 
     funding_matrix = build_funding_matrix(merged, days, ois_matrix, funding_source="ois")
+    # Carry funding: same rate as OIS for test (so Compounded ≈ Simple)
+    carry_funding_matrix = ois_matrix.copy()
     accrual_days = build_accrual_days(days)
 
     # Two runs: with and without date_rates
     date_rates = pd.Timestamp("2026-04-10")
     monthly_split = aggregate_to_monthly(
         daily_pnl, nominal_daily, ois_matrix, rate_matrix, days,
-        funding_daily=funding_matrix, accrual_days=accrual_days, mm_daily=mm_broadcast,
+        funding_daily=funding_matrix, carry_funding_daily=carry_funding_matrix,
+        accrual_days=accrual_days, mm_daily=mm_broadcast,
         date_rates=date_rates,
     )
     monthly_total = aggregate_to_monthly(
         daily_pnl, nominal_daily, ois_matrix, rate_matrix, days,
-        funding_daily=funding_matrix, accrual_days=accrual_days, mm_daily=mm_broadcast,
+        funding_daily=funding_matrix, carry_funding_daily=carry_funding_matrix,
+        accrual_days=accrual_days, mm_daily=mm_broadcast,
         date_rates=None,
     )
 
@@ -154,7 +158,7 @@ class TestTotalEqualsRealizedPlusForecast:
                     f"Deal {deal_idx}: Total={total:.4f} != Realized({realized:.4f}) + Forecast({forecast:.4f})"
                 )
 
-    def test_coc_simple_additivity(self, engine_result):
+    def test_coc_forward_additivity(self, engine_result):
         """CoC_Simple also splits: Total = Realized + Forecast."""
         df = engine_result["monthly_split"]
         date_rates = engine_result["date_rates"]
@@ -192,23 +196,23 @@ class TestTotalEqualsRealizedPlusForecast:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Invariant 2: CoC_Simple ≈ CoC_Compound for low rates / short tenor
+# Invariant 2: CoC_Simple ≈ CoC_Compounded for low rates / short tenor
 #   Diverges with higher rates — compound > simple for positive carry
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestCoCSimpleVsCompound:
+class TestCoCForwardVsCompd:
 
     def test_close_for_low_rates(self, engine_result):
-        """For rates ~1%, simple and compound should agree within 5%."""
+        """For rates ~1%, forward and compounded should agree within 5%."""
         df = engine_result["monthly_total"]
         for _, row in df.iterrows():
             simple = row.get("CoC_Simple", 0)
-            compound = row.get("CoC_Compound", 0)
+            compound = row.get("CoC_Compounded", 0)
             if abs(simple) > 1:  # skip near-zero
                 relative = abs(compound - simple) / abs(simple)
                 assert relative < 0.05, (
                     f"Deal {row['deal_idx']}, Month {row['Month']}: "
-                    f"CoC_Simple={simple:.2f}, CoC_Compound={compound:.2f}, "
+                    f"CoC_Simple={simple:.2f}, CoC_Compounded={compound:.2f}, "
                     f"relative diff={relative:.4f}"
                 )
 
