@@ -594,11 +594,16 @@ class PnlEngine:
 
         # I7: Pre-filter
         irs = self.irs_stock.copy()
-        if "Maturity Date" in irs.columns:
-            mat = pd.to_datetime(irs["Maturity Date"], errors="coerce", dayfirst=True)
+        mat_col = "Maturity Date" if "Maturity Date" in irs.columns else "Maturitydate" if "Maturitydate" in irs.columns else None
+        if mat_col is not None:
+            mat = pd.to_datetime(irs[mat_col], errors="coerce", dayfirst=True)
             irs = irs[mat > pd.Timestamp(self.dateRun)].copy()
-        if "Strategy (Agapes IAS)" in irs.columns:
-            irs = irs[irs["Strategy (Agapes IAS)"].isna()].copy()
+        # Skip strategy filter when IRS-MTM already identified by Product (K+EUR format)
+        is_explicit_mtm = "Product" in irs.columns and (irs["Product"] == "IRS-MTM").all()
+        if not is_explicit_mtm:
+            strat_col = "Strategy (Agapes IAS)" if "Strategy (Agapes IAS)" in irs.columns else "Strategy IAS" if "Strategy IAS" in irs.columns else None
+            if strat_col is not None:
+                irs = irs[irs[strat_col].isna()].copy()
 
         if irs.empty:
             return pd.DataFrame()
@@ -615,7 +620,8 @@ class PnlEngine:
         if "Asset / Liabilities" in book2.columns:
             direction = "D" if (book2["Asset / Liabilities"] == "Actif").any() else "L"
 
-        ccy = book2.get("Currency Code (ISO)", pd.Series(["CHF"])).iloc[0] if len(book2) > 0 else "CHF"
+        ccy_series = book2.get("Currency Code (ISO)", book2.get("Currency", pd.Series(["CHF"])))
+        ccy = ccy_series.iloc[0] if len(book2) > 0 else "CHF"
         month = self._days[0].to_period("M") if self._days is not None and len(self._days) > 0 else "2026-04"
 
         row = {
