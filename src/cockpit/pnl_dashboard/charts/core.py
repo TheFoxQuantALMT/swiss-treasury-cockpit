@@ -31,7 +31,7 @@ def _build_summary(
     if df.empty:
         return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
-    pnl_rows = df[df["Indice"] == "PnL"].copy()
+    pnl_rows = df[df["Indice"] == "PnL_Simple"].copy()
     if pnl_rows.empty:
         return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
@@ -116,7 +116,7 @@ def _build_summary(
     # Day-over-day P&L bridge (requires prev_df)
     dod_bridge = None
     if prev_df is not None and not prev_df.empty and "Deal currency" in base.columns:
-        prev_pnl = _filter_total(prev_df[(prev_df["Indice"] == "PnL") & (prev_df["Shock"] == "0")])
+        prev_pnl = _filter_total(prev_df[(prev_df["Indice"] == "PnL_Simple") & (prev_df["Shock"] == "0")])
         if not prev_pnl.empty and "Deal currency" in prev_pnl.columns:
             curr_by_ccy = base.groupby("Deal currency")["Value"].sum()
             prev_by_ccy = prev_pnl.groupby("Deal currency")["Value"].sum()
@@ -218,7 +218,7 @@ def _build_coc(df: pd.DataFrame) -> dict:
     # Carry vs Roll-down decomposition (shock=0)
     # Carry = PnL_Simple (spread income), Roll-down = Total PnL - Carry
     carry_rolldown = None
-    pnl_base = _filter_total(df[(df["Indice"] == "PnL") & (df["Shock"] == "0")])
+    pnl_base = _filter_total(df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")])
     if not pnl_base.empty and "shock_0" in all_by_shock:
         total_pnl_by_month = pnl_base.groupby("Month")["Value"].sum()
         pnl_vals = [round(float(total_pnl_by_month.get(m, 0)), 0) for m in months]
@@ -243,7 +243,7 @@ def _build_pnl_series(df: pd.DataFrame, date_rates: datetime) -> dict:
     if df.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
 
-    pnl_rows = df[df["Indice"] == "PnL"].copy()
+    pnl_rows = df[df["Indice"] == "PnL_Simple"].copy()
     if pnl_rows.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "by_product": {}, "date_rates_month": ""}
 
@@ -305,7 +305,7 @@ def _build_sensitivity(df: pd.DataFrame) -> dict:
     if df.empty:
         return {"has_data": False, "months": [], "rows": [], "totals": {}}
 
-    pnl_rows = df[df["Indice"] == "PnL"].copy()
+    pnl_rows = df[df["Indice"] == "PnL_Simple"].copy()
     if pnl_rows.empty or "Shock" not in pnl_rows.columns:
         return {"has_data": False, "months": [], "rows": [], "totals": {}}
 
@@ -390,7 +390,7 @@ def _build_strategy(df: pd.DataFrame) -> dict:
     if "Product2BuyBack" not in df.columns:
         return {"has_data": False, "months": [], "legs": {}, "table": []}
 
-    strat_rows = df[(df["Product2BuyBack"].isin(strategy_legs)) & (df["Indice"] == "PnL")].copy()
+    strat_rows = df[(df["Product2BuyBack"].isin(strategy_legs)) & (df["Indice"] == "PnL_Simple")].copy()
     if strat_rows.empty:
         return {"has_data": False, "months": [], "legs": {}, "table": []}
 
@@ -482,7 +482,7 @@ def _build_book2(
     if df.empty:
         return result
 
-    mtm_rows = df[(df["Product2BuyBack"] == "IRS-MTM") & (df["Indice"] == "PnL")].copy()
+    mtm_rows = df[(df["Product2BuyBack"] == "IRS-MTM") & (df["Indice"] == "PnL_Simple")].copy()
     if mtm_rows.empty:
         return result
 

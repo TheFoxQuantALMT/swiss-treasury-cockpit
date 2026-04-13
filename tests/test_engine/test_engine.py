@@ -108,7 +108,7 @@ def test_strategy_hcd_no_ois_subtraction():
     assert len(hcd) > 0
     # marginRate = 0.005 + 0 - 0.002 = 0.003
     # PnL = -12M × 0.003 × 30/360 = -3000
-    assert abs(hcd.iloc[0]["PnL"] - (-3000.0)) < 1.0
+    assert abs(hcd.iloc[0]["PnL_Simple"] - (-3000.0)) < 1.0
 
 
 def test_run_all_shocks_smoke(mtd_path, echeancier_path, wirp_path, irs_path):

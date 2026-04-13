@@ -43,6 +43,11 @@ def export_dashboard_to_excel(
                 if rows:
                     pd.DataFrame(rows).to_excel(writer, sheet_name="Summary", index=False)
 
+            # Summary: Simple vs Compounded YTD totals
+            coc_ytd = summary.get("coc_ytd")
+            if coc_ytd:
+                pd.DataFrame([coc_ytd]).to_excel(writer, sheet_name="PnL Simple vs Compounded", index=False)
+
             # Sensitivity
             sensitivity = dashboard_data.get("sensitivity", {})
             if sensitivity.get("rows"):
@@ -63,6 +68,31 @@ def export_dashboard_to_excel(
             limits = dashboard_data.get("limits", {})
             if limits.get("has_data") and limits.get("limit_items"):
                 pd.DataFrame(limits["limit_items"]).to_excel(writer, sheet_name="Limits", index=False)
+
+            # CoC Decomposition (Simple & Compounded P&L)
+            coc = dashboard_data.get("coc", {})
+            if coc.get("has_data") and coc.get("table"):
+                pd.DataFrame(coc["table"]).to_excel(writer, sheet_name="CoC", index=False)
+
+            # CoC by currency (one sheet per shock=0 currency)
+            if coc.get("has_data") and coc.get("by_currency") and coc.get("months"):
+                coc_months = coc["months"]
+                coc_ccy_rows = []
+                for ccy, by_shock in coc["by_currency"].items():
+                    shock_data = by_shock.get("shock_0", {})
+                    if not shock_data:
+                        continue
+                    for indice, values in shock_data.items():
+                        for i, m in enumerate(coc_months):
+                            if i < len(values):
+                                coc_ccy_rows.append({
+                                    "Currency": ccy,
+                                    "Measure": indice,
+                                    "Month": m,
+                                    "Value": values[i],
+                                })
+                if coc_ccy_rows:
+                    pd.DataFrame(coc_ccy_rows).to_excel(writer, sheet_name="CoC by Currency", index=False)
 
             # FTP
             ftp = dashboard_data.get("ftp", {})

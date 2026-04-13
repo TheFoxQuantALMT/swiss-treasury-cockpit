@@ -44,11 +44,11 @@ def sample_stacked():
     rows = []
     for shock in ("0", "50"):
         for ccy in ("CHF", "EUR"):
-            for indice in ("PnL", "Nominal", "OISfwd", "RateRef",
-                           "GrossCarry", "FundingCost_Simple", "PnL_Simple"):
+            for indice in ("PnL_Simple", "Nominal", "OISfwd", "RateRef",
+                           "GrossCarry", "FundingCost_Simple"):
                 for m in months:
                     for pnl_type in ("Realized", "Forecast"):
-                        val = 100.0 if indice == "PnL" else 1_000_000.0 if indice == "Nominal" else 0.02
+                        val = 100.0 if indice == "PnL_Simple" else 1_000_000.0 if indice == "Nominal" else 0.02
                         if shock == "50":
                             val *= 1.1
                         if pnl_type == "Forecast":

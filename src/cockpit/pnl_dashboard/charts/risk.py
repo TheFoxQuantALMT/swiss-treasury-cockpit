@@ -168,7 +168,7 @@ def _build_counterparty_pnl(df: pd.DataFrame, pnl_by_deal: Optional[pd.DataFrame
         cpty_col = "Counterparty"
         prod_col = "Product2BuyBack" if "Product2BuyBack" in source.columns else "Product"
     elif not df.empty and "Counterparty" in df.columns:
-        source = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+        source = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")].copy()
         pnl_col = "Value"
         cpty_col = "Counterparty"
         prod_col = "Product2BuyBack"
@@ -522,8 +522,8 @@ def _build_limit_utilization(
 
         # Calculate actual values based on metric type
         if metric == "nii_sensitivity_50bp" and not df.empty:
-            pnl_0 = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
-            pnl_50 = df[(df["Indice"] == "PnL") & (df["Shock"] == "50")]
+            pnl_0 = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")]
+            pnl_50 = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "50")]
             if currency != "ALL":
                 pnl_0 = pnl_0[pnl_0["Deal currency"] == currency]
                 pnl_50 = pnl_50[pnl_50["Deal currency"] == currency]

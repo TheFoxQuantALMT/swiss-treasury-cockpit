@@ -42,10 +42,10 @@ def check_pnl_alerts(
     t = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     alerts: list[dict[str, Any]] = []
 
-    pnl = df[(df.get("Indice", pd.Series()) == "PnL") & (df.get("Shock", pd.Series()) == "0")]
+    pnl = df[(df.get("Indice", pd.Series()) == "PnL_Simple") & (df.get("Shock", pd.Series()) == "0")]
     if pnl.empty:
         # Try without Shock filter
-        pnl = df[df.get("Indice", pd.Series()) == "PnL"]
+        pnl = df[df.get("Indice", pd.Series()) == "PnL_Simple"]
     if pnl.empty:
         return alerts
 
@@ -121,7 +121,7 @@ def check_pnl_alerts(
 
     # 5. Shock sensitivity
     if t["shock_sensitivity_limit"] is not None:
-        shock50 = df[(df.get("Indice", pd.Series()) == "PnL") & (df.get("Shock", pd.Series()) == "50")]
+        shock50 = df[(df.get("Indice", pd.Series()) == "PnL_Simple") & (df.get("Shock", pd.Series()) == "50")]
         if not shock50.empty:
             nii_50 = shock50["Value"].sum()
             nii_0 = total_nii

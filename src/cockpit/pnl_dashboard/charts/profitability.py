@@ -41,7 +41,7 @@ def _build_hedge_effectiveness(
         source = pnl_by_deal[pnl_by_deal["Shock"] == "0"].copy()
         pnl_col = "PnL"
     elif not df.empty and "Dealid" in df.columns:
-        source = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+        source = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")].copy()
     else:
         return {"has_data": False, "pairs": [], "summary": {"pass": 0, "fail": 0, "total": 0}}
 
@@ -109,7 +109,7 @@ def _build_hedge_effectiveness(
         sc_df = scenarios_data.copy()
         if isinstance(sc_df.index, pd.MultiIndex):
             sc_df = sc_df.reset_index()
-        sc_pnl = sc_df[sc_df["Indice"] == "PnL"] if "Indice" in sc_df.columns else sc_df
+        sc_pnl = sc_df[sc_df["Indice"] == "PnL_Simple"] if "Indice" in sc_df.columns else sc_df
         if "Shock" in sc_pnl.columns and "Dealid" in sc_pnl.columns:
             scenarios_list = sorted(sc_pnl["Shock"].unique())
             for pair_info in pairs:
@@ -171,7 +171,7 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
         sc_df = sc_df.reset_index()
 
     # Filter to PnL rows
-    pnl = sc_df[sc_df["Indice"] == "PnL"] if "Indice" in sc_df.columns else sc_df
+    pnl = sc_df[sc_df["Indice"] == "PnL_Simple"] if "Indice" in sc_df.columns else sc_df
     if pnl.empty or "Shock" not in pnl.columns:
         return empty
 
@@ -181,7 +181,7 @@ def _build_nii_at_risk(df: pd.DataFrame, scenarios_data: Optional[pd.DataFrame] 
     # Also get base NII (shock=0) from the main df for delta computation
     base_nii = {}
     if not df.empty:
-        base_pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
+        base_pnl = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")]
         if "Deal currency" in base_pnl.columns:
             for ccy in currencies:
                 base_nii[ccy] = float(base_pnl[base_pnl["Deal currency"] == ccy]["Value"].sum())
@@ -485,8 +485,8 @@ def _build_fixed_float(
     # Extract from P&L stacked data if available
     sensitivity = {}
     if not df.empty and "Shock" in df.columns:
-        pnl_base = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
-        pnl_50 = df[(df["Indice"] == "PnL") & (df["Shock"] == "50")]
+        pnl_base = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")]
+        pnl_50 = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "50")]
         if not pnl_base.empty and not pnl_50.empty:
             base_total = _filter_total(pnl_base)["Value"].sum()
             shock_total = _filter_total(pnl_50)["Value"].sum()
@@ -515,7 +515,7 @@ def _build_nim(
     if df.empty:
         return {"has_data": False, "kpis": {}, "jaws": {}, "by_currency": {}, "by_month": {}}
 
-    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+    pnl = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")].copy()
     nom = df[(df["Indice"] == "Nominal") & (df["Shock"] == "0")].copy()
     ois = df[(df["Indice"] == "OISfwd") & (df["Shock"] == "0")].copy()
     ref = df[(df["Indice"] == "RateRef") & (df["Shock"] == "0")].copy()

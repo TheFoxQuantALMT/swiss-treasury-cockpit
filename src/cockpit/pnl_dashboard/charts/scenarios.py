@@ -27,7 +27,7 @@ def _build_risk_cube(
         if "Shock" in source.columns:
             source = source[source["Shock"] == "0"]
     elif not df.empty:
-        source = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")].copy()
+        source = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")].copy()
 
     if source is None or source.empty:
         return {"has_data": False, "product_currency": {}, "counterparty_product": {},

@@ -735,7 +735,7 @@ def _build_budget(
     if budget is None or budget.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "ytd": {}}
 
-    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")] if not df.empty else pd.DataFrame()
+    pnl = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")] if not df.empty else pd.DataFrame()
     if pnl.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "ytd": {}}
 

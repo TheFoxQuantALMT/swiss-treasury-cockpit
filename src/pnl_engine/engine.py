@@ -289,7 +289,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     agg = strat.groupby(present_group).agg(
         Amount=("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
         Nominal=("Nominal", "sum"),
-        PnL=("PnL", "sum") if "PnL" in strat.columns else ("pnl", "sum"),
+        PnL=("PnL", "sum"),
     ).reset_index()
 
     # Nominal-weighted average rates
@@ -367,7 +367,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl = _build_pnl(nom, rate, ois, mask, subtract_rate=True, mm=mm_iam)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-NHCD"
-    leg["PnL"] = pnl
+    leg["PnL_Simple"] = pnl
     leg["Nominal"] = nom
     leg["RateRef"] = rate
     leg["OISfwd"] = ois
@@ -381,7 +381,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_hcd = _build_pnl(nom_hcd, rate_margin, ois_hcd, mask, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-HCD"
-    leg["PnL"] = pnl_hcd
+    leg["PnL_Simple"] = pnl_hcd
     leg["Nominal"] = nom_hcd
     leg["RateRef"] = rate_margin
     leg["OISfwd"] = ois_hcd
@@ -393,7 +393,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_b = _build_pnl(nom_b, rate_b, ois_b, mask_b, subtract_rate=True, mm=mm_bnd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-NHCD"
-    leg["PnL"] = pnl_b
+    leg["PnL_Simple"] = pnl_b
     leg["Nominal"] = nom_b
     leg["RateRef"] = rate_b
     leg["OISfwd"] = ois_b
@@ -407,7 +407,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_bhcd = _build_pnl(nom_bhcd, rate_bmargin, ois_bhcd, mask_b, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-HCD"
-    leg["PnL"] = pnl_bhcd
+    leg["PnL_Simple"] = pnl_bhcd
     leg["Nominal"] = nom_bhcd
     leg["RateRef"] = rate_bmargin
     leg["OISfwd"] = ois_bhcd

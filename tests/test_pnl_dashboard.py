@@ -49,12 +49,12 @@ def sample_stacked():
     rows = []
     for shock in ("0", "50"):
         for ccy in ("CHF", "EUR"):
-            for indice in ("PnL", "Nominal", "OISfwd", "RateRef",
-                           "GrossCarry", "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
+            for indice in ("PnL_Simple", "Nominal", "OISfwd", "RateRef",
+                           "GrossCarry", "FundingCost_Simple", "FundingRate_Simple",
                            "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"):
                 for m in months:
                     for pnl_type in ("Realized", "Forecast"):
-                        val = 100.0 if indice == "PnL" else 1_000_000.0 if indice == "Nominal" else 0.02
+                        val = 100.0 if indice == "PnL_Simple" else 1_000_000.0 if indice == "Nominal" else 0.02
                         if shock == "50":
                             val *= 1.1
                         if pnl_type == "Forecast":
@@ -79,7 +79,7 @@ def sample_strategy_stacked():
     months = [pd.Period("2026-04", "M"), pd.Period("2026-05", "M")]
     rows = []
     for leg in ("IAM/LD-NHCD", "IAM/LD-HCD", "BND-NHCD", "BND-HCD"):
-        for indice in ("PnL", "Nominal", "RateRef", "OISfwd"):
+        for indice in ("PnL_Simple", "Nominal", "RateRef", "OISfwd"):
             for m in months:
                 rows.append({
                     "Périmètre TOTAL": "CC",
@@ -90,7 +90,7 @@ def sample_strategy_stacked():
                     "PnL_Type": "Total",
                     "Month": m,
                     "Shock": "0",
-                    "Value": 50.0 if indice == "PnL" else 500_000 if indice == "Nominal" else 0.015,
+                    "Value": 50.0 if indice == "PnL_Simple" else 500_000 if indice == "Nominal" else 0.015,
                 })
     return pd.DataFrame(rows)
 
@@ -370,7 +370,7 @@ class TestCounterpartyPnl:
 
     def test_with_counterparty(self):
         df = pd.DataFrame({
-            "Indice": ["PnL"] * 4,
+            "Indice": ["PnL_Simple"] * 4,
             "Shock": ["0"] * 4,
             "Counterparty": ["BankA", "BankA", "BankB", "BankC"],
             "Deal currency": ["CHF", "EUR", "CHF", "CHF"],
@@ -421,7 +421,7 @@ class TestPnlAlerts:
 
     def test_negative_nii_floor(self):
         df = pd.DataFrame({
-            "Indice": ["PnL"] * 3,
+            "Indice": ["PnL_Simple"] * 3,
             "Shock": ["0"] * 3,
             "Deal currency": ["CHF", "EUR", "USD"],
             "Value": [-100, -200, -50],
@@ -433,7 +433,7 @@ class TestPnlAlerts:
 
     def test_concentration_alert(self):
         df = pd.DataFrame({
-            "Indice": ["PnL"] * 2,
+            "Indice": ["PnL_Simple"] * 2,
             "Shock": ["0"] * 2,
             "Deal currency": ["CHF", "EUR"],
             "Value": [900, 100],  # CHF = 90% of total
@@ -575,7 +575,7 @@ class TestNiiAtRiskAndStubs:
             "Deal currency": ["CHF", "EUR", "CHF", "EUR"],
             "Product2BuyBack": ["IAM/LD"] * 4,
             "Direction": ["D"] * 4,
-            "Indice": ["PnL"] * 4,
+            "Indice": ["PnL_Simple"] * 4,
             "PnL_Type": ["Total"] * 4,
             "Month": [pd.Period("2026-04", "M")] * 4,
             "Shock": ["parallel_up", "parallel_up", "steepener", "steepener"],

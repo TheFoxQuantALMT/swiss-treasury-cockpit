@@ -408,7 +408,7 @@ class PnlEngine:
         # I5: Remove IRS-MTM PnL from non-strategy (§12.1 — BOOK2 provides it)
         if not pnl_no_strat.empty and "Indice" in pnl_no_strat.columns:
             pnl_no_strat = pnl_no_strat[
-                ~((pnl_no_strat["Product2BuyBack"] == "IRS-MTM") & (pnl_no_strat["Indice"] == "PnL"))
+                ~((pnl_no_strat["Product2BuyBack"] == "IRS-MTM") & (pnl_no_strat["Indice"] == "PnL_Simple"))
             ].copy()
 
         # --- 2. Strategy (§10): 4 synthetic legs ---
@@ -449,7 +449,7 @@ class PnlEngine:
         if "Indice" in pnl_all.columns:
             pnl_all = pnl_all[
                 pnl_all["Indice"].isin([
-                    "Nominal", "OISfwd", "PnL", "RateRef",
+                    "Nominal", "OISfwd", "RateRef",
                     "GrossCarry",
                     "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
                     "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded",
@@ -469,7 +469,7 @@ class PnlEngine:
 
         group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
 
-        sum_cols = {"PnL": "sum", "Nominal": "sum"}
+        sum_cols = {"Nominal": "sum"}
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
         for coc_col in ["GrossCarry",
@@ -503,7 +503,7 @@ class PnlEngine:
         coc_sum_cols = ["GrossCarry",
                         "FundingCost_Simple", "PnL_Simple",
                         "FundingCost_Compounded", "PnL_Compounded"]
-        measure_cols = ["Amount", "Nominal", "PnL"] + present_rates + coc_sum_cols
+        measure_cols = ["Amount", "Nominal"] + present_rates + coc_sum_cols
         present_measures = [c for c in measure_cols if c in agg.columns]
 
         agg_long = agg.melt(
@@ -547,7 +547,7 @@ class PnlEngine:
         group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
         present_group = [c for c in group_cols if c in strategy.columns]
 
-        sum_cols = {"PnL": "sum", "Nominal": "sum"}
+        sum_cols = {"PnL_Simple": "sum", "Nominal": "sum"}
         if "Amount" in strategy.columns:
             sum_cols["Amount"] = "sum"
         agg = strategy.groupby(present_group).agg(**{k: (k, v) for k, v in sum_cols.items()}).reset_index()
@@ -633,7 +633,7 @@ class PnlEngine:
             "Deal currency": ccy if pd.notna(ccy) else "CHF",
             "Product2BuyBack": "IRS-MTM",
             "Direction": direction,
-            "Indice": "PnL",
+            "Indice": "PnL_Simple",
             "Shock": shock,
             month: total_mtm,
         }

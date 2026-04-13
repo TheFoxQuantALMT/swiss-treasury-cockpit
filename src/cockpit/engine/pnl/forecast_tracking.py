@@ -35,7 +35,7 @@ def save_nii_forecast(
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
 
-    pnl = df[(df["Indice"] == "PnL") & (df["Shock"] == "0")]
+    pnl = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")]
     if pnl.empty:
         return None
 
