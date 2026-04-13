@@ -418,10 +418,18 @@ def compute_book2_mtm(
     """
     try:
         from pnl_engine.curves import wt  # reuse the WASP_TOOLS_PATH-aware import
-        stockSwapMTM = wt.stockSwapMTM  # type: ignore[union-attr]
-        mtm = stockSwapMTM(irs_stock, calc_date, shock)
+        if wt is None:
+            raise RuntimeError("waspTools unavailable")
+        shock_bps = 0
+        if shock and shock not in ("0", "wirp"):
+            try:
+                shock_bps = int(shock)
+            except (ValueError, TypeError):
+                pass
+        mtm = wt.stockSwapMTM(calc_date, irs_stock, Shock=shock_bps)
         return mtm
-    except (ImportError, Exception):
+    except Exception as exc:
+        logger.info("WASP stockSwapMTM unavailable (%s), using analytical fallback", exc)
         # Analytical MTM fallback: PV of rate differential
         # MTM ≈ Notional × (fixed_rate - OIS_fwd) × remaining_years
         # First-order approximation — adequate for dashboard, not regulatory

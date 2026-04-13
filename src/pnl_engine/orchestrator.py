@@ -291,6 +291,7 @@ class PnlEngine:
                 shock=shock,
             )
         except RuntimeError:
+            logger.info("WASP unavailable for ref curves %s (shock=%s), skipping", self._float_wasp_indices, shock)
             return None
 
         self._fwd_cache.put(cache_key, curves)

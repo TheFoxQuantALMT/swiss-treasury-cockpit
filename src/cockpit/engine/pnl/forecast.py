@@ -46,6 +46,7 @@ import pandas as pd
 from pnl_engine.config import FUNDING_SOURCE
 from pnl_engine.orchestrator import PnlEngine
 from cockpit.data.parsers import (
+    parse_book,
     parse_deals,
     parse_echeancier,
     parse_irs_stock,
@@ -120,15 +121,28 @@ class ForecastRatePnL:
     def load_data(self) -> None:
         """Load deal data, schedule, WIRP, and IRS stock from Excel files.
 
-        Supports two input layouts:
-        - **Ideal format**: ``deals.xlsx`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
+        Supports three input layouts (tried in order):
+        - **K+EUR format**: ``*Daily Rate PnL*`` (Book1 + Book2 sheets, IRS-MTM from Folder Short Name)
+        - **Ideal format**: ``*deals*`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
         - **Legacy format**: ``*MTD*``, ``*Echeancier*``, ``*WIRP*``, ``*IRS*`` (separate files)
-
-        Ideal format is tried first; falls back to legacy if no ``*deals*`` file found.
         """
-        # --- Deals: try unified deals file, fall back to legacy MTD + IRS ---
+        # --- Deals: K+EUR format → ideal → legacy ---
+        book_files = list(self.input_dir.glob("*Daily Rate PnL*"))
         deals_files = list(self.input_dir.glob("*deals*"))
-        if deals_files:
+
+        if book_files:
+            book_file = book_files[0]
+            date_run_ts = pd.Timestamp(self.dateRun)
+            book1 = parse_book(book_file, date_run_ts, "Book1")
+            book2 = parse_book(book_file, date_run_ts, "Book2")
+            self.pnlData = pd.concat([book1, book2], ignore_index=True)
+            # IRS-MTM deals (Folder Short Name == TMSWBFIGE) serve as irsStock
+            self.irsStock = self._irs_stock_from_pnl_data()
+            logger.info(
+                "Loaded K+EUR format: %s (Book1=%d, Book2=%d, IRS-MTM=%d)",
+                book_file.name, len(book1), len(book2), len(self.irsStock),
+            )
+        elif deals_files:
             all_deals = parse_deals(deals_files[0])
             self.pnlData, self.irsStock = self._split_deals_by_book(all_deals)
             logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
@@ -136,7 +150,7 @@ class ForecastRatePnL:
         else:
             mtd_candidates = list(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
             if not mtd_candidates:
-                raise FileNotFoundError(f"No MTD file found in {self.input_dir}")
+                raise FileNotFoundError(f"No deal file found in {self.input_dir}")
             mtd_file = mtd_candidates[0]
             irs_candidates = list(self.input_dir.glob("*IRS*"))
             if not irs_candidates:
@@ -165,16 +179,19 @@ class ForecastRatePnL:
         wirp_file = wirp_files[0]
         self.wirpData = parse_wirp(wirp_file)
 
-        # Filter TMSWBFIGE folder for IRS-MTM deals (legacy schedule only)
-        if "Folder" in self.scheduleData.columns:
-            self.scheduleDataMTM = self.scheduleData[
-                self.scheduleData["Folder"].isin(["TMSWBFIGE"])
-            ]
-            self._append_mtm_from_schedule()
+        # Filter TMSWBFIGE folder for IRS-MTM deals (legacy schedule only, not K+EUR)
+        if not book_files:
+            if "Folder" in self.scheduleData.columns:
+                self.scheduleDataMTM = self.scheduleData[
+                    self.scheduleData["Folder"].isin(["TMSWBFIGE"])
+                ]
+                self._append_mtm_from_schedule()
+            else:
+                self.scheduleDataMTM = pd.DataFrame()
+                if not deals_files:
+                    logger.warning("Folder column not found in Echeancier — skipping MTM schedule append")
         else:
             self.scheduleDataMTM = pd.DataFrame()
-            if not deals_files:
-                logger.warning("Folder column not found in Echeancier — skipping MTM schedule append")
 
         logger.info("load_data Done (%d deals, %d schedule rows)", len(self.pnlData), len(self.scheduleData))
 
@@ -211,6 +228,20 @@ class ForecastRatePnL:
             )
 
         return book1, irs_stock.reset_index(drop=True)
+
+    def _irs_stock_from_pnl_data(self) -> pd.DataFrame:
+        """Extract IRS-MTM deals from pnlData for compute_book2_mtm."""
+        mtm = self.pnlData[self.pnlData["Product"] == "IRS-MTM"].copy()
+        if mtm.empty:
+            return pd.DataFrame()
+
+        # Derive Pay/Receive from Direction: L/B → RECEIVE, D/S → PAY
+        if "Direction" in mtm.columns:
+            mtm["Pay/Receive"] = np.where(
+                mtm["Direction"].isin(["L", "B"]), "RECEIVE", "PAY"
+            )
+
+        return mtm.reset_index(drop=True)
 
     def _append_mtm_from_schedule(self) -> None:
         """Append IRS-MTM deals from TMSWBFIGE schedule rows missing in conso."""

@@ -1,4 +1,5 @@
 from cockpit.data.parsers.mtd import parse_mtd, parse_deals
+from cockpit.data.parsers.book import parse_book
 from cockpit.data.parsers.echeancier import parse_echeancier, parse_schedule
 from cockpit.data.parsers.wirp import parse_wirp, parse_wirp_ideal
 from cockpit.data.parsers.irs_stock import parse_irs_stock
@@ -18,6 +19,8 @@ __all__ = [
     "parse_deals",
     "parse_schedule",
     "parse_wirp_ideal",
+    # K+EUR Daily Rate PnL format
+    "parse_book",
     # Legacy format parsers (auto-detect ideal format and delegate)
     "parse_mtd",
     "parse_echeancier",

@@ -39,8 +39,13 @@ def load_daily_curves(
     else:
         shock_f = 0.0 if shock == "wirp" else float(shock)
 
+        # Pre-load all ramp markets before per-indice calls
+        market_dict = wt.loadAllRampMarket(date, Shock=shock_f)
+
         def _load_one(indice: str) -> pd.DataFrame:
-            return wt.dailyFwdRate(dateC=date, indice=indice, startDay=-31, endDay=end_day, Shock=shock_f)
+            ccy = wt.indiceDict.get(indice)
+            mkt = market_dict.get(ccy) if ccy else None
+            return wt.dailyFwdRate(dateC=date, indice=indice, mkt=mkt, startDay=-31, endDay=end_day, Shock=shock_f)
 
         with ThreadPoolExecutor(max_workers=len(indices)) as pool:
             frames = list(pool.map(_load_one, indices))
@@ -72,6 +77,19 @@ def overlay_wirp(base: pd.DataFrame, wirp: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+def _ensure_ramp_loaded(date: Any, shock: float = 0.0) -> None:
+    """Call ``loadAllRampMarket`` once per (date, shock) to populate mkt handles."""
+    if wt is None:
+        return
+    key = (str(date), shock)
+    if key not in _ramp_loaded:
+        wt.loadAllRampMarket(date, Shock=shock)
+        _ramp_loaded.add(key)
+
+
+_ramp_loaded: set[tuple] = set()
+
+
 def load_carry_compounded(
     start: Any,
     end: Any,
@@ -96,6 +114,7 @@ def load_carry_compounded(
         return None
 
     try:
+        _ensure_ramp_loaded(start)
         start_excel = wt.datetime_to_excel_date(start)
         end_excel = wt.datetime_to_excel_date(end)
         mkt_name = f"mkt{currency}"
