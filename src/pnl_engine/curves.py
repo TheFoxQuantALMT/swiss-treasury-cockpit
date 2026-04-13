@@ -39,12 +39,12 @@ def load_daily_curves(
     else:
         shock_f = 0.0 if shock == "wirp" else float(shock)
 
-        # Pre-load all ramp markets before per-indice calls
-        market_dict = wt.loadAllRampMarket(date, Shock=shock_f)
+        # Pre-load all ramp markets (registers mktUSD/mktEUR/… handles)
+        wt.loadAllRampMarket(date, Shock=shock_f)
 
         def _load_one(indice: str) -> pd.DataFrame:
             ccy = wt.indiceDict.get(indice)
-            mkt = market_dict.get(ccy) if ccy else None
+            mkt = f"mkt{ccy}" if ccy else None
             return wt.dailyFwdRate(dateC=date, indice=indice, mkt=mkt, startDay=-31, endDay=end_day, Shock=shock_f)
 
         with ThreadPoolExecutor(max_workers=len(indices)) as pool:
