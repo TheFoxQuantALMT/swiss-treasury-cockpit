@@ -412,62 +412,24 @@ def compute_book2_mtm(
     calc_date: str,
     shock: Optional[str] = None,
 ) -> pd.DataFrame:
-    """BOOK2 IRS MTM via waspTools.stockSwapMTM; falls back to deterministic mock.
+    """BOOK2 IRS MTM via waspTools.stockSwapMTM.
 
     Returns a DataFrame with MTM values per deal.
     """
-    try:
-        from pnl_engine.curves import wt  # reuse the WASP_TOOLS_PATH-aware import
-        if wt is None:
-            raise RuntimeError("waspTools unavailable")
-        shock_bps = 0
-        if shock and shock not in ("0", "wirp"):
-            try:
-                shock_bps = int(shock)
-            except (ValueError, TypeError):
-                pass
-        mtm = wt.stockSwapMTM(calc_date, irs_stock, Shock=shock_bps)
-        return mtm
-    except Exception as exc:
-        logger.info("WASP stockSwapMTM unavailable (%s), using analytical fallback", exc)
-        # Analytical MTM fallback: PV of rate differential
-        # MTM ≈ Notional × (fixed_rate - OIS_fwd) × remaining_years
-        # First-order approximation — adequate for dashboard, not regulatory
-        if irs_stock.empty:
-            return pd.DataFrame(columns=["Deal", "Currency", "MTM"])
-        result = irs_stock.copy()
+    from pnl_engine.curves import wt, _require_wasp
+    _require_wasp()
 
-        calc_ts = pd.Timestamp(calc_date)
-        notional = pd.to_numeric(
-            result.get("Notional", result.get("notional", pd.Series(dtype=float))),
-            errors="coerce",
-        ).fillna(0)
-        rate = pd.to_numeric(
-            result.get("Rate", result.get("Clientrate", result.get("rate", pd.Series(dtype=float)))),
-            errors="coerce",
-        ).fillna(0)
-        maturity = pd.to_datetime(
-            result.get("Maturity Date", result.get("Maturitydate", pd.Series(dtype="datetime64[ns]"))),
-            errors="coerce",
-        )
-        remaining_years = ((maturity - calc_ts).dt.days / 365.0).clip(lower=0).fillna(0)
+    if irs_stock.empty:
+        return pd.DataFrame(columns=["Deal", "Currency", "MTM"])
 
-        # Assume OIS fwd ≈ 1% (conservative mid for CHF/EUR/USD)
-        # Shock adjusts: +50bp → 1.50%, etc.
-        ois_proxy = 0.01
-        if shock and shock not in ("0", "wirp"):
-            try:
-                ois_proxy += int(shock) / 10000
-            except (ValueError, TypeError):
-                pass
+    shock_bps = 0
+    if shock and shock not in ("0", "wirp"):
+        try:
+            shock_bps = int(shock)
+        except (ValueError, TypeError):
+            pass
 
-        # Pay fixed → MTM positive when OIS rises above fixed rate
-        # Receive fixed → MTM positive when OIS falls below fixed rate
-        pay_receive = result.get("Pay/Receive", result.get("pay_receive", pd.Series(["PAY"] * len(result))))
-        sign = np.where(pay_receive.str.upper().str.contains("REC", na=False), 1.0, -1.0)
-
-        result["MTM"] = sign * notional * (rate - ois_proxy) * remaining_years
-        return result
+    return wt.stockSwapMTM(calc_date, irs_stock, Shock=shock_bps)
 
 
 def merge_results(

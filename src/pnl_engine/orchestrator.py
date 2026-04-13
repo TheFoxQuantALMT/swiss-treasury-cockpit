@@ -29,7 +29,6 @@ from pnl_engine.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PROD
 from pnl_engine.curves import CurveCache, load_daily_curves, overlay_wirp
 from pnl_engine.engine import (
     _build_ois_matrix,
-    _mock_curves_from_wirp,
     _month_columns,
     _resolve_rate_ref,
     aggregate_to_monthly,
@@ -261,15 +260,11 @@ class PnlEngine:
         if cached is not None:
             return cached
 
-        try:
-            curves = load_daily_curves(
-                date=self.dateRates,
-                indices=self._ois_indices,
-                shock=shock,
-            )
-        except RuntimeError:
-            logger.info("WASP unavailable, building mock curves from WIRP (shock=%s)", shock)
-            curves = _mock_curves_from_wirp(self.wirp, self._days, shock=shock)
+        curves = load_daily_curves(
+            date=self.dateRates,
+            indices=self._ois_indices,
+            shock=shock,
+        )
 
         self._fwd_cache.put(cache_key, curves)
         return curves
@@ -284,15 +279,11 @@ class PnlEngine:
         if cached is not None:
             return cached
 
-        try:
-            curves = load_daily_curves(
-                date=self.dateRates,
-                indices=self._float_wasp_indices,
-                shock=shock,
-            )
-        except RuntimeError:
-            logger.info("WASP unavailable for ref curves %s (shock=%s), skipping", self._float_wasp_indices, shock)
-            return None
+        curves = load_daily_curves(
+            date=self.dateRates,
+            indices=self._float_wasp_indices,
+            shock=shock,
+        )
 
         self._fwd_cache.put(cache_key, curves)
         return curves
