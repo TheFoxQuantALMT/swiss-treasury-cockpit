@@ -500,7 +500,10 @@ class PnlEngine:
 
         # Stack measures into Indice rows
         id_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
-        measure_cols = ["Amount", "Nominal", "PnL"] + present_rates
+        coc_sum_cols = ["GrossCarry",
+                        "FundingCost_Simple", "CoC_Simple",
+                        "FundingCost_Compounded", "CoC_Compounded"]
+        measure_cols = ["Amount", "Nominal", "PnL"] + present_rates + coc_sum_cols
         present_measures = [c for c in measure_cols if c in agg.columns]
 
         agg_long = agg.melt(
