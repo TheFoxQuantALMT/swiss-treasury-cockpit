@@ -58,10 +58,12 @@ def _aggregate_slice(
     funding_daily: np.ndarray | None,
     accrual_days: np.ndarray | None,
     mm_daily: np.ndarray | None,
+    carry_funding_daily: np.ndarray | None = None,
 ) -> dict:
     """Aggregate daily arrays over a boolean day-mask into a single column of metrics.
 
     Returns dict of (n_deals,) arrays for all core + CoC metrics.
+    Computes both OIS-based and carry-compounded funding when carry_funding_daily is provided.
     """
     n_deals = daily_pnl.shape[0]
     n_mask_days = mask.sum()
@@ -101,9 +103,26 @@ def _aggregate_slice(
 
         fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
         out["FundingRate"] = fund_x_nom / safe_nom
+
+        # Carry-compounded funding (WASP carryCompounded)
+        if carry_funding_daily is not None:
+            carry_slice = carry_funding_daily[:, mask]
+            carry_fund = (nom_slice * carry_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+            carry_factors = 1.0 + carry_slice * d_i[np.newaxis, :] / mm_slice
+            carry_fund_x_nom = (carry_slice * nom_slice).sum(axis=1)
+
+            out["CarryFundingCost"] = carry_fund
+            out["CoC_Carry"] = gross - carry_fund
+            out["CoC_CarryCompound"] = nom_avg * (np.prod(rate_factors, axis=1) - np.prod(carry_factors, axis=1))
+            out["CarryFundingRate"] = carry_fund_x_nom / safe_nom
     elif funding_daily is not None:
         zeros = np.zeros(n_deals)
         for k in ("GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"):
+            out[k] = zeros
+
+    if carry_funding_daily is not None and "CarryFundingCost" not in out:
+        zeros = np.zeros(n_deals)
+        for k in ("CarryFundingCost", "CoC_Carry", "CoC_CarryCompound", "CarryFundingRate"):
             out[k] = zeros
 
     return out
@@ -119,6 +138,7 @@ def aggregate_to_monthly(
     accrual_days: np.ndarray | None = None,
     mm_daily: np.ndarray | None = None,
     date_rates: "pd.Timestamp | None" = None,
+    carry_funding_daily: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Aggregate daily arrays to monthly per deal.
 
@@ -137,6 +157,12 @@ def aggregate_to_monthly(
                       per ISDA 2021 §6.9 compounding in arrears.
         FundingRate: nominal-weighted average of funding rate.
 
+    Carry-compounded columns (when ``carry_funding_daily`` is provided):
+        CarryFundingCost: sum(Nominal x CarryRate x d_i / D).
+        CoC_Carry: GrossCarry - CarryFundingCost.
+        CoC_CarryCompound: compounded version using WASP carry rates.
+        CarryFundingRate: nominal-weighted average of carry funding rate.
+
     Realized / Forecast split (when ``date_rates`` is provided):
         Adds a PnL_Type column: past months -> Realized, future months -> Forecast,
         current month (containing date_rates) -> Total + Realized + Forecast rows.
@@ -152,6 +178,7 @@ def aggregate_to_monthly(
         daily_pnl=daily_pnl, nominal_daily=nominal_daily,
         ois_daily=ois_daily, rate_daily=rate_daily,
         funding_daily=funding_daily, accrual_days=accrual_days, mm_daily=mm_daily,
+        carry_funding_daily=carry_funding_daily,
     )
 
     rows: list[dict] = []

@@ -340,10 +340,14 @@ class PnlEngine:
             accrual_days=self._accrual_days,
         )
 
-        # --- Funding matrix for CoC decomposition ---
+        # --- Funding matrices for CoC decomposition ---
         funding_matrix = build_funding_matrix(
             self._deals_use, self._days, ois_matrix,
             funding_source=self._funding_source,
+        )
+        carry_funding_matrix = build_funding_matrix(
+            self._deals_use, self._days, ois_matrix,
+            funding_source="carry",
         )
 
         # --- Monthly aggregation (deal-level) ---
@@ -353,6 +357,7 @@ class PnlEngine:
             accrual_days=self._accrual_days,
             mm_daily=mm_broadcast,
             date_rates=pd.Timestamp(self.dateRates),
+            carry_funding_daily=carry_funding_matrix,
         )
 
         # Enrich with deal metadata
@@ -446,6 +451,7 @@ class PnlEngine:
                 pnl_all["Indice"].isin([
                     "Nominal", "OISfwd", "PnL", "RateRef",
                     "GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate",
+                    "CarryFundingCost", "CoC_Carry", "CoC_CarryCompound", "CarryFundingRate",
                 ])
             ].copy()
 
@@ -465,7 +471,8 @@ class PnlEngine:
         sum_cols = {"PnL": "sum", "Nominal": "sum"}
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
-        for coc_col in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound"]:
+        for coc_col in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound",
+                        "CarryFundingCost", "CoC_Carry", "CoC_CarryCompound"]:
             if coc_col in data.columns:
                 sum_cols[coc_col] = "sum"
         agg = data.groupby(group_cols).agg(

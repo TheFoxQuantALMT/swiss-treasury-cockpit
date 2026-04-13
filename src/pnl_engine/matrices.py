@@ -201,17 +201,71 @@ def build_funding_matrix(
     deals: pd.DataFrame,
     days: pd.DatetimeIndex,
     ois_matrix: np.ndarray,
-    funding_source: str = "ois",
+    funding_source: str = "carry",
 ) -> np.ndarray:
     """Build (n_deals x n_days) funding rate matrix.
 
     Args:
-        funding_source: "ois" uses the OIS forward curve (default, ISDA CSA standard),
-                        "coc" uses the deal-level CocRate.
+        funding_source:
+            "carry" (default) uses WASP carry-compounded rates per currency/month.
+            "ois" uses the OIS forward curve (ISDA CSA standard).
+            "coc" uses the deal-level CocRate.
     """
     if funding_source == "coc" and "CocRate" in deals.columns:
         n_deals = len(deals)
         coc_rates = deals["CocRate"].fillna(0.0).values
         return np.broadcast_to(coc_rates[:, np.newaxis], ois_matrix.shape).copy()
-    # Default: OIS curve = standard post-LIBOR funding rate
+
+    if funding_source == "carry":
+        return _build_carry_funding_matrix(deals, days, ois_matrix)
+
+    # "ois": OIS curve = standard post-LIBOR funding rate
     return ois_matrix
+
+
+def _build_carry_funding_matrix(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    ois_matrix: np.ndarray,
+) -> np.ndarray:
+    """Build funding matrix from WASP carry-compounded rates per (currency, month).
+
+    For each currency, loads one carry-compounded rate per month via WASP,
+    then fills all days in that month with that rate. Falls back to OIS
+    matrix for currencies where carry loading fails.
+    """
+    import logging
+    from pnl_engine.config import CURRENCY_TO_CARRY_INDEX, SUPPORTED_CURRENCIES
+    from pnl_engine.curves import load_carry_compounded
+
+    logger = logging.getLogger(__name__)
+    n_deals = len(deals)
+    n_days = len(days)
+    result = ois_matrix.copy()  # fallback: OIS
+
+    # Build month boundaries
+    months = days.to_period("M").unique()
+
+    for ccy in SUPPORTED_CURRENCIES:
+        if ccy not in CURRENCY_TO_CARRY_INDEX:
+            continue
+        deal_mask = (deals["Currency"] == ccy).values
+        if not deal_mask.any():
+            continue
+
+        for month in months:
+            month_start = month.start_time
+            month_end = month.end_time
+            day_mask = (days.to_period("M") == month).values
+            if not day_mask.any():
+                continue
+
+            try:
+                carry_rate = load_carry_compounded(month_start, month_end, ccy)
+                result[np.ix_(deal_mask, day_mask)] = carry_rate
+            except Exception as exc:
+                logger.warning(
+                    "Carry compounded failed %s %s, keeping OIS: %s", ccy, month, exc
+                )
+
+    return result

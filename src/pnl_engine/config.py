@@ -86,7 +86,7 @@ EXTENDED_SHOCKS: list[str] = ["-200", "-100", "-50", "0", "50", "100", "200", "w
 # Cost of Carry / Funding
 # ---------------------------------------------------------------------------
 
-FUNDING_SOURCE: str = "ois"  # "ois" (default) or "coc"
+FUNDING_SOURCE: str = "ois"  # "ois" (default), "carry", or "coc"
 
 # WASP carry-compounded curve indices (differ from OIS forward indices for EUR/CHF)
 CURRENCY_TO_CARRY_INDEX: dict[str, str] = {

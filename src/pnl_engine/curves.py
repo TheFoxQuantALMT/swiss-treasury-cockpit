@@ -83,10 +83,26 @@ def _ensure_ramp_loaded(date: Any, shock: float = 0.0) -> None:
     """Call ``loadAllRampMarket`` once per (date, shock) to populate mkt handles."""
     _require_wasp()
     bday = wt.lastBusinessDay(date)
-    key = (str(bday), shock)
+    key = ("agg", str(bday), shock)
     if key not in _ramp_loaded:
         wt.loadAllRampMarket(bday, Shock=shock)
         _ramp_loaded.add(key)
+
+
+def _ensure_carry_ramp_loaded(date: Any) -> None:
+    """Load MESA MARKET ALMT ramp via wt.loadCarryCompoundedMarket.
+
+    Note: this overwrites mkt{CCY} handles (shared with AGG ramp).
+    Call AGG ramp reload after carry if both are needed in same session.
+    """
+    _require_wasp()
+    bday = wt.lastBusinessDay(date)
+    key = ("carry", str(bday))
+    if key not in _ramp_loaded:
+        wt.loadCarryCompoundedMarket(bday)
+        _ramp_loaded.add(key)
+        # Invalidate AGG ramp cache since handles were overwritten
+        _ramp_loaded.discard(("agg", str(bday), 0.0))
 
 
 _ramp_loaded: set[tuple] = set()
@@ -103,18 +119,8 @@ def load_carry_compounded(
     GBP->GBPOIS) and the ``MESA MARKET ALMT`` ramp.
     """
     _require_wasp()
-    from pnl_engine.config import CURRENCY_TO_CARRY_INDEX
-
-    indice = CURRENCY_TO_CARRY_INDEX.get(currency)
-    if indice is None:
-        raise ValueError(f"No carry index for currency {currency}")
-
-    _ensure_ramp_loaded(start)
-    start_excel = wt.datetime_to_excel_date(start)
-    end_excel = wt.datetime_to_excel_date(end)
-    mkt_name = f"mkt{currency}"
-    res = wt.Fwd(start_excel, end_excel, indice, mkt_name)
-    return res.to_list()[0][0][0]
+    _ensure_carry_ramp_loaded(start)
+    return wt.carryCompounded(start, end, currency)
 
 
 def load_carry_compounded_series(
