@@ -1,13 +1,13 @@
-"""Tests for CoC decomposition — OIS forward, compounded, and WASP comparison.
+"""Tests for P&L decomposition — OIS forward, compounded, and WASP comparison.
 
 Verifies:
-    1. CoC_Simple == GrossCarry − FundingCost_Simple exactly (per month)
-    2. CoC_Compounded diverges from CoC_Simple over longer periods
+    1. PnL_Simple == FundingCost_Simple − GrossCarry exactly (per month)
+    2. PnL_Compounded diverges from PnL_Simple over longer periods
     3. Friday→Monday compounding weights d_i=3
     4. Product-aware day count (BND→30/360, money market→Act/360, GBP→Act/365)
     5. Funding source toggle (OIS vs CocRate)
     6. WASP carry comparison (when available)
-    7. Backward compatibility (no funding_daily → no CoC columns)
+    7. Backward compatibility (no funding_daily → no P&L decomposition columns)
 """
 
 import numpy as np
@@ -52,11 +52,11 @@ def _make_arrays(days, n_deals=1, nominal=1_000_000.0, rate=0.03, ois=0.02, fund
 
 
 # ---------------------------------------------------------------------------
-# 1. CoC_Simple == GrossCarry − FundingCost_Simple
+# 1. PnL_Simple == FundingCost_Simple − GrossCarry
 # ---------------------------------------------------------------------------
 
-def test_coc_forward_equals_gross_minus_funding(april_days):
-    """CoC_Simple must equal GrossCarry − FundingCost_Simple exactly for every month."""
+def test_pnl_simple_equals_funding_minus_gross(april_days):
+    """PnL_Simple must equal FundingCost_Simple − GrossCarry exactly for every month."""
     nom, ois, rate, funding, mm, pnl = _make_arrays(april_days)
     accrual = build_accrual_days(april_days)
 
@@ -66,15 +66,15 @@ def test_coc_forward_equals_gross_minus_funding(april_days):
     )
 
     for _, row in monthly.iterrows():
-        expected = row["GrossCarry"] - row["FundingCost_Simple"]
-        assert abs(row["CoC_Simple"] - expected) < 1e-10, (
-            f"CoC_Simple ({row['CoC_Simple']}) != GrossCarry ({row['GrossCarry']}) - "
-            f"FundingCost_Simple ({row['FundingCost_Simple']}) = {expected}"
+        expected = row["FundingCost_Simple"] - row["GrossCarry"]
+        assert abs(row["PnL_Simple"] - expected) < 1e-10, (
+            f"PnL_Simple ({row['PnL_Simple']}) != FundingCost_Simple ({row['FundingCost_Simple']}) - "
+            f"GrossCarry ({row['GrossCarry']}) = {expected}"
         )
 
 
 # ---------------------------------------------------------------------------
-# 2. CoC_Compounded diverges from CoC_Simple
+# 2. PnL_Compounded diverges from PnL_Simple
 # ---------------------------------------------------------------------------
 
 def test_coc_compounded_diverges_from_simple(two_month_days):
@@ -93,10 +93,10 @@ def test_coc_compounded_diverges_from_simple(two_month_days):
     )
 
     for _, row in monthly.iterrows():
-        assert row["CoC_Simple"] != 0.0
-        assert row["CoC_Compounded"] != 0.0
+        assert row["PnL_Simple"] != 0.0
+        assert row["PnL_Compounded"] != 0.0
         # Different funding source + method → should differ
-        assert row["CoC_Compounded"] != row["CoC_Simple"]
+        assert row["PnL_Compounded"] != row["PnL_Simple"]
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +227,8 @@ def test_no_coc_without_funding(april_days):
     assert "Nominal" in monthly.columns
     assert "GrossCarry" not in monthly.columns
     assert "FundingCost_Simple" not in monthly.columns
-    assert "CoC_Simple" not in monthly.columns
-    assert "CoC_Compounded" not in monthly.columns
+    assert "PnL_Simple" not in monthly.columns
+    assert "PnL_Compounded" not in monthly.columns
     assert "FundingRate_Simple" not in monthly.columns
 
 

@@ -23,8 +23,8 @@
       <canvas id="chart-coc"></canvas>
     </div>
     <p class="footnote">
-      CoC Simple = GrossCarry &minus; FundingCost (NII, BCBS 368).
-      CoC Compound = Nom &times; [&prod;(1+r&middot;d/D) &minus; &prod;(1+f&middot;d/D)] (ISDA 2021 &sect;6.9).
+      P&amp;L Simple = FundingCost &minus; GrossCarry (OIS forward, linear).
+      P&amp;L Compounded = Nom &times; [&prod;(1+f&middot;d/D) &minus; &prod;(1+r&middot;d/D)] (WASP carry, geometric).
     </p>
   </div>
 
@@ -38,10 +38,10 @@
           <th>Month</th>
           <th>GrossCarry</th>
           <th>Funding Simple</th>
-          <th>CoC Simple</th>
+          <th>P&L Simple</th>
           <th>Rate Simple</th>
           <th>Funding Compounded</th>
-          <th>CoC Compounded</th>
+          <th>P&L Compounded</th>
           <th>Rate Compounded</th>
         </tr>
       </thead>
@@ -51,10 +51,10 @@
           <td>{{ row.month }}</td>
           <td>{{ "{:,.2f}".format(row.GrossCarry) }}</td>
           <td>{{ "{:,.2f}".format(row.FundingCost_Simple) }}</td>
-          <td>{{ "{:,.2f}".format(row.CoC_Simple) }}</td>
+          <td>{{ "{:,.2f}".format(row.PnL_Simple) }}</td>
           <td>{{ "{:.4f}".format(row.FundingRate_Simple) }}</td>
           <td>{{ "{:,.2f}".format(row.FundingCost_Compounded|default(0)) }}</td>
-          <td>{{ "{:,.2f}".format(row.CoC_Compounded|default(0)) }}</td>
+          <td>{{ "{:,.2f}".format(row.PnL_Compounded|default(0)) }}</td>
           <td>{{ "{:.4f}".format(row.FundingRate_Compounded|default(0)) }}</td>
         </tr>
       {% endfor %}
@@ -70,7 +70,7 @@
     <div class="chart-container chart-sm">
       <canvas id="chart-carry-rolldown"></canvas>
     </div>
-    <p class="footnote">Carry = CoC Simple (spread income). Roll-down = Total NII P&amp;L &minus; Carry (curve shape &amp; time effects).</p>
+    <p class="footnote">Carry = P&amp;L Simple (spread income). Roll-down = Total NII P&amp;L &minus; Carry (curve shape &amp; time effects).</p>
   </div>
   <script>
   (function() {
@@ -117,8 +117,8 @@
       const shock = ccy[cocShock] || {};
       const gc = shock.GrossCarry || [];
       const fc = shock.FundingCost_Simple || [];
-      const cs = shock.CoC_Simple || [];
-      const cc = shock.CoC_Compounded || [];
+      const cs = shock.PnL_Simple || [];
+      const cc = shock.PnL_Compounded || [];
 
       cocChart = new Chart(ctx, {
         type: 'bar',
@@ -142,7 +142,7 @@
               order: 2,
             },
             {
-              label: 'CoC Simple',
+              label: 'P&L Simple',
               data: cs,
               type: 'line',
               borderColor: '#58a6ff',
@@ -153,7 +153,7 @@
               order: 1,
             },
             {
-              label: 'CoC Compound',
+              label: 'P&L Compounded',
               data: cc,
               type: 'line',
               borderColor: '#58a6ff',

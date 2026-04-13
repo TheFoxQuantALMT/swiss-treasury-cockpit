@@ -95,13 +95,13 @@ def _aggregate_slice(
         fund = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
         out["GrossCarry"] = gross
 
-        # Simple: OIS forward (WASP dailyFwdRate, MESA AGG)
+        # Simple: OIS forward, linear (WASP dailyFwdRate, MESA AGG)
         out["FundingCost_Simple"] = fund
-        out["CoC_Simple"] = gross - fund
+        out["PnL_Simple"] = fund - gross
         fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
         out["FundingRate_Simple"] = fund_x_nom / safe_nom
 
-        # Compounded: WASP carryCompounded (MESA ALMT)
+        # Compounded: WASP carryCompounded, geometric (MESA ALMT)
         if carry_funding_daily is not None:
             carry_slice = carry_funding_daily[:, mask]
             rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
@@ -110,16 +110,16 @@ def _aggregate_slice(
 
             carry_fund = (nom_slice * carry_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
             out["FundingCost_Compounded"] = carry_fund
-            out["CoC_Compounded"] = nom_avg * (np.prod(rate_factors, axis=1) - np.prod(carry_factors, axis=1))
+            out["PnL_Compounded"] = nom_avg * (np.prod(carry_factors, axis=1) - np.prod(rate_factors, axis=1))
             out["FundingRate_Compounded"] = carry_fund_x_nom / safe_nom
     elif funding_daily is not None:
         zeros = np.zeros(n_deals)
-        for k in ("GrossCarry", "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple"):
+        for k in ("GrossCarry", "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple"):
             out[k] = zeros
 
     if carry_funding_daily is not None and "FundingCost_Compounded" not in out:
         zeros = np.zeros(n_deals)
-        for k in ("FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"):
+        for k in ("FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"):
             out[k] = zeros
 
     return out
@@ -149,12 +149,12 @@ def aggregate_to_monthly(
     Simple columns — OIS forward, linear (WASP dailyFwdRate, MESA AGG):
         GrossCarry: Σ(Nominal × RateRef × d_i / D) per IFRS 9.B5.4.5.
         FundingCost_Simple: Σ(Nominal × OISfwd × d_i / D).
-        CoC_Simple: GrossCarry − FundingCost_Simple.
+        PnL_Simple: FundingCost_Simple − GrossCarry (= −CoC).
         FundingRate_Simple: Σ(OISfwd × Nom) / Σ(Nom).
 
     Compounded columns — WASP carry, geometric (carryCompounded, MESA ALMT):
         FundingCost_Compounded: Σ(Nominal × CarryRate × d_i / D).
-        CoC_Compounded: Nom_avg × [∏(1 + RateRef × d_i/D) − ∏(1 + CarryRate × d_i/D)].
+        PnL_Compounded: Nom_avg × [∏(1 + CarryRate × d_i/D) − ∏(1 + RateRef × d_i/D)].
         FundingRate_Compounded: Σ(CarryRate × Nom) / Σ(Nom).
 
     Realized / Forecast split (when ``date_rates`` is provided):

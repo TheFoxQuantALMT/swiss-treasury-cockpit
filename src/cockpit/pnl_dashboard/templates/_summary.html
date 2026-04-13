@@ -60,10 +60,10 @@
                 css_class="positive" if summary.coc_ytd.gross_carry >= 0 else "negative") }}
     {{ kpi_card("YTD Funding Cost", "{:,.0f}".format(summary.coc_ytd.funding_cost),
                 css_class="positive" if summary.coc_ytd.funding_cost <= 0 else "negative") }}
-    {{ kpi_card("YTD CoC (Simple)", "{:,.0f}".format(summary.coc_ytd.coc_simple),
-                css_class="positive" if summary.coc_ytd.coc_simple >= 0 else "negative") }}
-    {{ kpi_card("YTD CoC (Compound)", "{:,.0f}".format(summary.coc_ytd.coc_compound),
-                css_class="positive" if summary.coc_ytd.coc_compound >= 0 else "negative") }}
+    {{ kpi_card("YTD P&L (Simple)", "{:,.0f}".format(summary.coc_ytd.pnl_simple),
+                css_class="positive" if summary.coc_ytd.pnl_simple >= 0 else "negative") }}
+    {{ kpi_card("YTD P&L (Compounded)", "{:,.0f}".format(summary.coc_ytd.pnl_compounded),
+                css_class="positive" if summary.coc_ytd.pnl_compounded >= 0 else "negative") }}
   </div>
   {% endif %}
 

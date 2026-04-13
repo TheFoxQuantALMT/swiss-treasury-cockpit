@@ -13,7 +13,7 @@ DEFAULT_THRESHOLDS = {
     "annual_nii_floor": 0,           # Alert if total NII < this
     "mom_delta_pct": 30.0,           # Month-on-month change > X%
     "ccy_concentration_pct": 70.0,   # Single currency > X% of total
-    "negative_coc_alert": True,      # Alert when CoC_Simple < 0
+    "negative_coc_alert": True,      # Alert when PnL_Simple < 0
     "shock_sensitivity_limit": None, # Absolute NII delta (50-0); None = skip
 }
 
@@ -104,7 +104,7 @@ def check_pnl_alerts(
 
     # 4. Negative CoC (funding cost exceeds carry)
     if t["negative_coc_alert"]:
-        coc_rows = df[(df.get("Indice", pd.Series()) == "CoC_Simple") & (df.get("Shock", pd.Series()) == "0")]
+        coc_rows = df[(df.get("Indice", pd.Series()) == "PnL_Simple") & (df.get("Shock", pd.Series()) == "0")]
         if not coc_rows.empty and "Deal currency" in coc_rows.columns:
             coc_by_ccy = coc_rows.groupby("Deal currency")["Value"].sum()
             for ccy, val in coc_by_ccy.items():

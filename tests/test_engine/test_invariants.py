@@ -159,7 +159,7 @@ class TestTotalEqualsRealizedPlusForecast:
                 )
 
     def test_coc_forward_additivity(self, engine_result):
-        """CoC_Simple also splits: Total = Realized + Forecast."""
+        """PnL_Simple also splits: Total = Realized + Forecast."""
         df = engine_result["monthly_split"]
         date_rates = engine_result["date_rates"]
         current_month = date_rates.to_period("M")
@@ -168,10 +168,10 @@ class TestTotalEqualsRealizedPlusForecast:
         for deal_idx in current["deal_idx"].unique():
             deal_rows = current[current["deal_idx"] == deal_idx]
             types = set(deal_rows["PnL_Type"])
-            if {"Total", "Realized", "Forecast"} <= types and "CoC_Simple" in deal_rows.columns:
-                total = deal_rows[deal_rows["PnL_Type"] == "Total"]["CoC_Simple"].iloc[0]
-                realized = deal_rows[deal_rows["PnL_Type"] == "Realized"]["CoC_Simple"].iloc[0]
-                forecast = deal_rows[deal_rows["PnL_Type"] == "Forecast"]["CoC_Simple"].iloc[0]
+            if {"Total", "Realized", "Forecast"} <= types and "PnL_Simple" in deal_rows.columns:
+                total = deal_rows[deal_rows["PnL_Type"] == "Total"]["PnL_Simple"].iloc[0]
+                realized = deal_rows[deal_rows["PnL_Type"] == "Realized"]["PnL_Simple"].iloc[0]
+                forecast = deal_rows[deal_rows["PnL_Type"] == "Forecast"]["PnL_Simple"].iloc[0]
                 assert abs(total - (realized + forecast)) < 0.01
 
     def test_past_months_are_realized(self, engine_result):
@@ -196,8 +196,8 @@ class TestTotalEqualsRealizedPlusForecast:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Invariant 2: CoC_Simple ≈ CoC_Compounded for low rates / short tenor
-#   Diverges with higher rates — compound > simple for positive carry
+# Invariant 2: PnL_Simple ≈ PnL_Compounded for low rates / short tenor
+#   Diverges with higher rates when funding curves differ
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestCoCForwardVsCompd:
@@ -206,13 +206,13 @@ class TestCoCForwardVsCompd:
         """For rates ~1%, forward and compounded should agree within 5%."""
         df = engine_result["monthly_total"]
         for _, row in df.iterrows():
-            simple = row.get("CoC_Simple", 0)
-            compound = row.get("CoC_Compounded", 0)
+            simple = row.get("PnL_Simple", 0)
+            compound = row.get("PnL_Compounded", 0)
             if abs(simple) > 1:  # skip near-zero
                 relative = abs(compound - simple) / abs(simple)
                 assert relative < 0.05, (
                     f"Deal {row['deal_idx']}, Month {row['Month']}: "
-                    f"CoC_Simple={simple:.2f}, CoC_Compounded={compound:.2f}, "
+                    f"PnL_Simple={simple:.2f}, PnL_Compounded={compound:.2f}, "
                     f"relative diff={relative:.4f}"
                 )
 

@@ -101,16 +101,16 @@ def _build_summary(
                 "pnl": round(float(row["Value"]), 0),
             })
 
-    # CoC YTD: aggregate GrossCarry, FundingCost_Simple, CoC_Simple, CoC_Compounded at shock=0
+    # P&L YTD: aggregate GrossCarry, FundingCost_Simple, PnL_Simple, PnL_Compounded at shock=0
     coc_ytd = None
-    coc_indices = {"GrossCarry", "FundingCost_Simple", "CoC_Simple", "CoC_Compounded"}
+    coc_indices = {"GrossCarry", "FundingCost_Simple", "PnL_Simple", "PnL_Compounded"}
     coc_rows = _filter_total(df[(df["Indice"].isin(coc_indices)) & (df["Shock"] == "0")])
     if not coc_rows.empty:
         coc_ytd = {
             "gross_carry": round(float(coc_rows.loc[coc_rows["Indice"] == "GrossCarry", "Value"].sum()), 0),
             "funding_cost": round(float(coc_rows.loc[coc_rows["Indice"] == "FundingCost_Simple", "Value"].sum()), 0),
-            "coc_simple": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Simple", "Value"].sum()), 0),
-            "coc_compound": round(float(coc_rows.loc[coc_rows["Indice"] == "CoC_Compounded", "Value"].sum()), 0),
+            "pnl_simple": round(float(coc_rows.loc[coc_rows["Indice"] == "PnL_Simple", "Value"].sum()), 0),
+            "pnl_compounded": round(float(coc_rows.loc[coc_rows["Indice"] == "PnL_Compounded", "Value"].sum()), 0),
         }
 
     # Day-over-day P&L bridge (requires prev_df)
@@ -158,8 +158,8 @@ def _build_coc(df: pd.DataFrame) -> dict:
         return {"has_data": False, "months": [], "by_currency": {}, "table": []}
 
     coc_indices = {"GrossCarry",
-                    "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
-                    "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"}
+                    "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
+                    "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"}
     coc_rows = df[df["Indice"].isin(coc_indices)].copy()
     if coc_rows.empty:
         return {"has_data": False, "months": [], "by_currency": {}, "table": []}
@@ -210,19 +210,19 @@ def _build_coc(df: pd.DataFrame) -> dict:
         for i, m in enumerate(month_labels):
             row = {"month": m}
             for indice in ["GrossCarry",
-                          "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
-                          "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded"]:
+                          "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
+                          "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"]:
                 row[indice] = all_by_shock["shock_0"].get(indice, [0.0] * len(months))[i]
             table.append(row)
 
     # Carry vs Roll-down decomposition (shock=0)
-    # Carry = CoC_Simple (spread income), Roll-down = Total PnL - Carry
+    # Carry = PnL_Simple (spread income), Roll-down = Total PnL - Carry
     carry_rolldown = None
     pnl_base = _filter_total(df[(df["Indice"] == "PnL") & (df["Shock"] == "0")])
     if not pnl_base.empty and "shock_0" in all_by_shock:
         total_pnl_by_month = pnl_base.groupby("Month")["Value"].sum()
         pnl_vals = [round(float(total_pnl_by_month.get(m, 0)), 0) for m in months]
-        carry = all_by_shock["shock_0"].get("CoC_Simple", [0.0] * len(months))
+        carry = all_by_shock["shock_0"].get("PnL_Simple", [0.0] * len(months))
         rolldown = [round(p - c, 0) for p, c in zip(pnl_vals, carry)]
         carry_rolldown = {
             "months": month_labels,

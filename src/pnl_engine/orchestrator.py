@@ -451,8 +451,8 @@ class PnlEngine:
                 pnl_all["Indice"].isin([
                     "Nominal", "OISfwd", "PnL", "RateRef",
                     "GrossCarry",
-                    "FundingCost_Simple", "CoC_Simple", "FundingRate_Simple",
-                    "FundingCost_Compounded", "CoC_Compounded", "FundingRate_Compounded",
+                    "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
+                    "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded",
                 ])
             ].copy()
 
@@ -473,8 +473,8 @@ class PnlEngine:
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
         for coc_col in ["GrossCarry",
-                        "FundingCost_Simple", "CoC_Simple",
-                        "FundingCost_Compounded", "CoC_Compounded"]:
+                        "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]:
             if coc_col in data.columns:
                 sum_cols[coc_col] = "sum"
         agg = data.groupby(group_cols).agg(
@@ -501,8 +501,8 @@ class PnlEngine:
         # Stack measures into Indice rows
         id_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
         coc_sum_cols = ["GrossCarry",
-                        "FundingCost_Simple", "CoC_Simple",
-                        "FundingCost_Compounded", "CoC_Compounded"]
+                        "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]
         measure_cols = ["Amount", "Nominal", "PnL"] + present_rates + coc_sum_cols
         present_measures = [c for c in measure_cols if c in agg.columns]
 

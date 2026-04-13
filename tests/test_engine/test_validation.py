@@ -303,16 +303,16 @@ class TestMidMonthMaturity:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Test 5: Cost of Carry — Forward (IFRS 9 B5.4.5)
-#   CoC_Simple = GrossCarry − FundingCost_Simple
+# Test 5: P&L Simple — Forward (IFRS 9 B5.4.5)
+#   PnL_Simple = FundingCost_Simple − GrossCarry
 #   GrossCarry = Σ(Nominal × RateRef × d_i / MM)
 #   FundingCost_Simple = Σ(Nominal × FundingRate_Forward × d_i / MM)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestCoCForward:
-    """IFRS 9 B5.4.5: Cost of Carry = interest accrual minus funding cost."""
+class TestPnLSimple:
+    """IFRS 9 B5.4.5: P&L Simple = funding income minus client rate cost."""
 
-    def test_coc_simple_ois_funding(self):
+    def test_pnl_simple_ois_funding(self):
         """When funding_source='ois', FundingRate = OIS rate."""
         deal = _make_deal(
             Clientrate=0.0100, EqOisRate=0.0100,
@@ -339,9 +339,9 @@ class TestCoCForward:
         # Simpler: since rate and nominal are constant,
         # GrossCarry = Σ_over_april_days( Nom × Rate × d_i / 360 )
         # FundingCost = Σ_over_april_days( Nom × OIS × d_i / 360 )
-        # CoC_Simple = GrossCarry - FundingCost_Simple
-        #            = Σ( Nom × (Rate - OIS) × d_i / 360 )
-        #            = Nom × (Rate - OIS) × Σ(d_i) / 360
+        # PnL_Simple = FundingCost_Simple - GrossCarry
+        #            = Σ( Nom × (OIS - Rate) × d_i / 360 )
+        #            = Nom × (OIS - Rate) × Σ(d_i) / 360
 
         # Build expected from actual d_i
         days = build_date_grid(pd.Timestamp("2026-04-01"), months=3)
@@ -351,12 +351,12 @@ class TestCoCForward:
 
         expected_gross = 10_000_000 * 0.0100 * sum_di / 360
         expected_fund = 10_000_000 * 0.0150 * sum_di / 360
-        expected_coc = expected_gross - expected_fund
+        expected_pnl = expected_fund - expected_gross
 
-        actual_coc = apr_total["CoC_Simple"].iloc[0]
-        assert abs(actual_coc - expected_coc) < 0.01, f"Expected {expected_coc:.2f}, got {actual_coc:.2f}"
+        actual_pnl = apr_total["PnL_Simple"].iloc[0]
+        assert abs(actual_pnl - expected_pnl) < 0.01, f"Expected {expected_pnl:.2f}, got {actual_pnl:.2f}"
 
-    def test_coc_simple_coc_funding(self):
+    def test_pnl_simple_coc_funding(self):
         """When funding_source='coc', FundingRate = CocRate."""
         deal = _make_deal(
             Clientrate=0.0100, EqOisRate=0.0100,
@@ -377,18 +377,18 @@ class TestCoCForward:
         # FundingRate = CocRate = 0.005
         expected_gross = 10_000_000 * 0.0100 * sum_di / 360
         expected_fund = 10_000_000 * 0.0050 * sum_di / 360
-        expected_coc = expected_gross - expected_fund
+        expected_pnl = expected_fund - expected_gross
 
-        actual_coc = apr_total["CoC_Simple"].iloc[0]
-        assert abs(actual_coc - expected_coc) < 0.01
+        actual_pnl = apr_total["PnL_Simple"].iloc[0]
+        assert abs(actual_pnl - expected_pnl) < 0.01
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Test 6: Cost of Carry — Compounded (WASP carry, geometric)
-#   CoC_Compounded = Nom_avg × [∏(1 + r_i × d_i/MM) − ∏(1 + carry_i × d_i/MM)]
+# Test 6: P&L Compounded (WASP carry, geometric)
+#   PnL_Compounded = Nom_avg × [∏(1 + carry_i × d_i/MM) − ∏(1 + r_i × d_i/MM)]
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestCoCCompounded:
+class TestPnLCompounded:
     """ISDA 2021 §6.9: compounded in arrears using WASP carry rates."""
 
     def test_compound_close_to_simple_when_same_rate(self):
@@ -405,15 +405,15 @@ class TestCoCCompounded:
         apr = monthly[monthly["Month"].astype(str) == "2026-04"]
         apr_total = apr[apr["PnL_Type"] == "Total"] if "PnL_Type" in apr.columns else apr
 
-        simple = apr_total["CoC_Simple"].iloc[0]
-        compound = apr_total["CoC_Compounded"].iloc[0]
+        simple = apr_total["PnL_Simple"].iloc[0]
+        compound = apr_total["PnL_Compounded"].iloc[0]
 
         # For 1 month at low rates with same funding, compound ≈ simple within 1%
         if abs(simple) > 1:  # avoid division by zero
             assert abs(compound - simple) / abs(simple) < 0.01
 
     def test_compound_explicit_calculation(self):
-        """Verify compound formula: Nom_avg × [∏(1+r×d_i/MM) - ∏(1+carry×d_i/MM)]."""
+        """Verify compound formula: Nom_avg × [∏(1+carry×d_i/MM) - ∏(1+r×d_i/MM)]."""
         carry_rate = 0.0300
         deal = _make_deal(
             Clientrate=0.0500, EqOisRate=0.0500,  # Higher rate to see compounding effect
@@ -435,9 +435,9 @@ class TestCoCCompounded:
         funding_factors = np.prod(1.0 + carry_rate * d_i_apr / 360)
         n_cal = apr_mask.sum()
         nom_avg = 100_000_000  # constant nominal, alive all month
-        expected_compound = nom_avg * (rate_factors - funding_factors)
+        expected_compound = nom_avg * (funding_factors - rate_factors)
 
-        actual = apr_total["CoC_Compounded"].iloc[0]
+        actual = apr_total["PnL_Compounded"].iloc[0]
         assert abs(actual - expected_compound) < 0.01, f"Expected {expected_compound:.2f}, got {actual:.2f}"
 
 
