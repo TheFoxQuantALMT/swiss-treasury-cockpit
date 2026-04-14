@@ -59,11 +59,16 @@ def _aggregate_slice(
     accrual_days: np.ndarray | None,
     mm_daily: np.ndarray | None,
     carry_funding_daily: np.ndarray | None = None,
+    carry_factor_month: np.ndarray | None = None,
+    rate_factor_month: np.ndarray | None = None,
 ) -> dict:
     """Aggregate daily arrays over a boolean day-mask into a single column of metrics.
 
     Returns dict of (n_deals,) arrays for all core + CoC metrics.
-    Computes both OIS-based and carry-compounded funding when carry_funding_daily is provided.
+
+    Compounded metrics use cumulative factors from value date when
+    carry_factor_month / rate_factor_month are provided. Otherwise falls back
+    to per-month products from carry_funding_daily.
     """
     n_deals = daily_pnl.shape[0]
     n_mask_days = mask.sum()
@@ -101,23 +106,31 @@ def _aggregate_slice(
         fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
         out["FundingRate_Simple"] = fund_x_nom / safe_nom
 
-        # Compounded: WASP carryCompounded, geometric (MESA ALMT)
-        if carry_funding_daily is not None:
+        # Compounded: value-date cumulative factors (preferred) or per-month fallback
+        if carry_factor_month is not None and rate_factor_month is not None:
+            # From cumulative WASP carryCompounded(VD, month_end)
+            total_d = d_i.sum()
+            safe_total_d = total_d if total_d > 0 else 1.0
+            out["FundingCost_Compounded"] = nom_avg * (carry_factor_month - 1.0)
+            out["PnL_Compounded"] = nom_avg * (carry_factor_month - rate_factor_month)
+            out["FundingRate_Compounded"] = (carry_factor_month - 1.0) * mm_slice[:, 0] / safe_total_d
+        elif carry_funding_daily is not None:
+            # Fallback: per-month product (for tests without cumulative data)
             carry_slice = carry_funding_daily[:, mask]
             rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
             carry_factors = 1.0 + carry_slice * d_i[np.newaxis, :] / mm_slice
-            carry_fund_x_nom = (carry_slice * nom_slice).sum(axis=1)
-
-            carry_fund = (nom_slice * carry_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
-            out["FundingCost_Compounded"] = carry_fund
+            total_d = d_i.sum()
+            safe_total_d = total_d if total_d > 0 else 1.0
+            out["FundingCost_Compounded"] = (nom_slice * carry_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
             out["PnL_Compounded"] = nom_avg * (np.prod(carry_factors, axis=1) - np.prod(rate_factors, axis=1))
-            out["FundingRate_Compounded"] = carry_fund_x_nom / safe_nom
+            out["FundingRate_Compounded"] = (np.prod(carry_factors, axis=1) - 1.0) * mm_slice[:, 0] / safe_total_d
     elif funding_daily is not None:
         zeros = np.zeros(n_deals)
         for k in ("GrossCarry", "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple"):
             out[k] = zeros
 
-    if carry_funding_daily is not None and "FundingCost_Compounded" not in out:
+    has_compounded = "FundingCost_Compounded" in out
+    if not has_compounded and (carry_funding_daily is not None or carry_factor_month is not None):
         zeros = np.zeros(n_deals)
         for k in ("FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"):
             out[k] = zeros
@@ -136,6 +149,8 @@ def aggregate_to_monthly(
     mm_daily: np.ndarray | None = None,
     date_rates: "pd.Timestamp | None" = None,
     carry_funding_daily: np.ndarray | None = None,
+    cum_carry_factors: np.ndarray | None = None,
+    cum_rate_factors: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Aggregate daily arrays to monthly per deal.
 
@@ -152,10 +167,11 @@ def aggregate_to_monthly(
         PnL_Simple: FundingCost_Simple − GrossCarry (= −CoC).
         FundingRate_Simple: Σ(OISfwd × Nom) / Σ(Nom).
 
-    Compounded columns — WASP carry, geometric (carryCompounded, MESA ALMT):
-        FundingCost_Compounded: Σ(Nominal × CarryRate × d_i / D).
-        PnL_Compounded: Nom_avg × [∏(1 + CarryRate × d_i/D) − ∏(1 + RateRef × d_i/D)].
-        FundingRate_Compounded: Σ(CarryRate × Nom) / Σ(Nom).
+    Compounded columns — WASP carry, geometric from deal value date:
+        FundingCost_Compounded: NomAvg × (carry_factor_month − 1).
+        PnL_Compounded: NomAvg × (carry_factor_month − rate_factor_month).
+        FundingRate_Compounded: effective annualized rate from carry factor.
+        Where monthly factors = ratio of consecutive cumulative factors from VD.
 
     Realized / Forecast split (when ``date_rates`` is provided):
         Adds a PnL_Type column: past months -> Realized, future months -> Forecast,
@@ -175,16 +191,59 @@ def aggregate_to_monthly(
         carry_funding_daily=carry_funding_daily,
     )
 
+    # --- Build boundary-to-month mapping for cumulative factors ---
+    # cum_carry_factors / cum_rate_factors have columns:
+    #   [0: start=1.0, 1: boundary_0, 2: boundary_1, ...]
+    # Boundaries may include an extra date_rates point.
+    # We need to map each unique month j to the right boundary columns.
+    use_cum = cum_carry_factors is not None and cum_rate_factors is not None
+    boundary_map = {}  # month_idx j -> (col_start, col_end)
+    dr_boundary_col = None  # column index for the date_rates boundary (if inserted)
+    if use_cum:
+        # Reconstruct boundary dates (same logic as matrices.py)
+        months_sorted = unique_months.sort_values()
+        boundary_dates = [m_.end_time for m_ in months_sorted]
+        if date_rates is not None:
+            dr_ts = pd.Timestamp(date_rates)
+            for k, bd in enumerate(boundary_dates):
+                if dr_ts <= bd:
+                    if dr_ts.date() != bd.date():
+                        boundary_dates.insert(k, dr_ts)
+                        dr_boundary_col = k + 1  # +1 because col 0 is "start"
+                    break
+        # Map month j -> boundary columns
+        bd_idx = 0
+        for j, m_ in enumerate(months_sorted):
+            col_start = bd_idx  # column in cum array (0-based, shifted by +1 in array)
+            # Skip any boundaries that are before this month's end (e.g. date_rates)
+            while bd_idx < len(boundary_dates) and boundary_dates[bd_idx] <= m_.end_time:
+                bd_idx += 1
+            col_end = bd_idx  # column after this month's last boundary
+            boundary_map[j] = (col_start, col_end)
+
     rows: list[dict] = []
 
     for j, m in enumerate(unique_months):
         month_mask = np.asarray(month_idx == m)
         n_cal_days = int(month_mask.sum())
 
-        agg_total = _aggregate_slice(mask=month_mask, n_cal_days=n_cal_days, **common_kw)
+        # Compute monthly carry/rate factors from cumulative arrays
+        carry_factor_total = None
+        rate_factor_total = None
+        if use_cum and j in boundary_map:
+            col_start, col_end = boundary_map[j]
+            # Total month factor = cum[col_end] / cum[col_start]
+            carry_factor_total = cum_carry_factors[:, col_end] / np.maximum(cum_carry_factors[:, col_start], 1e-15)
+            rate_factor_total = cum_rate_factors[:, col_end] / np.maximum(cum_rate_factors[:, col_start], 1e-15)
+
+        agg_total = _aggregate_slice(
+            mask=month_mask, n_cal_days=n_cal_days,
+            carry_factor_month=carry_factor_total,
+            rate_factor_month=rate_factor_total,
+            **common_kw,
+        )
 
         if date_rates is None:
-            # Backward compat: no split
             for deal_i in range(n_deals):
                 row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Total"}
                 for k, arr in agg_total.items():
@@ -199,8 +258,31 @@ def aggregate_to_monthly(
 
             n_realized_days = int(realized_within.sum())
             n_forecast_days = int(forecast_within.sum())
-            agg_real = _aggregate_slice(mask=realized_within, n_cal_days=n_realized_days, **common_kw)
-            agg_fore = _aggregate_slice(mask=forecast_within, n_cal_days=n_forecast_days, **common_kw)
+
+            # Compute realized/forecast factors using date_rates boundary
+            carry_factor_real = None
+            rate_factor_real = None
+            carry_factor_fore = None
+            rate_factor_fore = None
+            if use_cum and j in boundary_map and dr_boundary_col is not None:
+                col_start, col_end = boundary_map[j]
+                # Realized: col_start → dr_boundary_col
+                carry_factor_real = cum_carry_factors[:, dr_boundary_col] / np.maximum(cum_carry_factors[:, col_start], 1e-15)
+                rate_factor_real = cum_rate_factors[:, dr_boundary_col] / np.maximum(cum_rate_factors[:, col_start], 1e-15)
+                # Forecast: dr_boundary_col → col_end
+                carry_factor_fore = cum_carry_factors[:, col_end] / np.maximum(cum_carry_factors[:, dr_boundary_col], 1e-15)
+                rate_factor_fore = cum_rate_factors[:, col_end] / np.maximum(cum_rate_factors[:, dr_boundary_col], 1e-15)
+
+            agg_real = _aggregate_slice(
+                mask=realized_within, n_cal_days=n_realized_days,
+                carry_factor_month=carry_factor_real, rate_factor_month=rate_factor_real,
+                **common_kw,
+            )
+            agg_fore = _aggregate_slice(
+                mask=forecast_within, n_cal_days=n_forecast_days,
+                carry_factor_month=carry_factor_fore, rate_factor_month=rate_factor_fore,
+                **common_kw,
+            )
 
             for deal_i in range(n_deals):
                 for pnl_type, agg in [("Total", agg_total), ("Realized", agg_real), ("Forecast", agg_fore)]:
@@ -209,7 +291,6 @@ def aggregate_to_monthly(
                         row[k] = arr[deal_i]
                     rows.append(row)
         elif m < rates_month:
-            # Past month: all realized
             for deal_i in range(n_deals):
                 row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Realized"}
                 for k, arr in agg_total.items():
@@ -286,11 +367,15 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     present_group = [c for c in group_cols if c in strat.columns]
 
     # Sums
-    agg = strat.groupby(present_group).agg(
-        Amount=("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
-        Nominal=("Nominal", "sum"),
-        PnL=("PnL", "sum"),
-    ).reset_index()
+    has_compounded = "PnL_Compounded" in strat.columns
+    agg_spec = {
+        "Amount": ("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
+        "Nominal": ("Nominal", "sum"),
+        "PnL": ("PnL", "sum"),
+    }
+    if has_compounded:
+        agg_spec["PnL_Compounded"] = ("PnL_Compounded", "sum")
+    agg = strat.groupby(present_group).agg(**agg_spec).reset_index()
 
     # Nominal-weighted average rates
     rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM"]
@@ -306,7 +391,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     # -- Step 2: Pivot by Product (§10.2) --
     idx_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "Days in Month", "PnL_Type"]
     idx_cols = [c for c in idx_cols if c in agg.columns]
-    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL"]
+    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL", "PnL_Compounded"]
     present_vals = [v for v in pivot_vals if v in agg.columns]
 
     pivoted = pd.pivot_table(
@@ -418,6 +503,26 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
 
     # Remove rows where condition was false (all values = 0)
     combined = combined[combined["Nominal"] != 0].copy()
+
+    # --- Proportional allocation of PnL_Compounded to legs ---
+    if has_compounded:
+        # Total compounded P&L from pivoted product-level data
+        pivoted["_PnL_Compounded_total"] = (
+            _safe(pivoted, "PnL_Compounded_IAM/LD")
+            + _safe(pivoted, "PnL_Compounded_BND")
+            + _safe(pivoted, "PnL_Compounded_HCD")
+        )
+        comp_map = pivoted[base_cols + ["_PnL_Compounded_total"]]
+        combined = combined.merge(comp_map, on=base_cols, how="left")
+
+        # Per-group total Simple for proportional weights
+        simple_total = combined.groupby(base_cols)["PnL_Simple"].transform("sum")
+        combined["PnL_Compounded"] = np.where(
+            simple_total != 0,
+            combined["PnL_Simple"] / simple_total * combined["_PnL_Compounded_total"],
+            0.0,
+        )
+        combined = combined.drop(columns=["_PnL_Compounded_total"])
 
     # Merge direction from non-HCD deals (§10.7)
     combined = pd.merge(direction_map, combined, how="right", on=["Strategy IAS"])

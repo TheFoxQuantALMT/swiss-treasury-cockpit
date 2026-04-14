@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PRODUCTS
-from pnl_engine.curves import CurveCache, load_daily_curves, overlay_wirp
+from pnl_engine.curves import CurveCache, clear_carry_cache, load_daily_curves, overlay_wirp
 from pnl_engine.engine import (
     _build_ois_matrix,
     _month_columns,
@@ -41,6 +41,8 @@ from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
     build_client_rate_matrix,
+    build_cumulative_carry_factors,
+    build_cumulative_rate_factors,
     build_date_grid,
     build_funding_matrix,
     build_mm_vector,
@@ -123,6 +125,7 @@ class PnlEngine:
         self._ois_indices: Optional[list[str]] = None
         self._float_wasp_indices: Optional[list[str]] = None
         self._accrual_days: Optional[np.ndarray] = None
+        self._alive_mask: Optional[np.ndarray] = None
 
     def _build_static_matrices(self) -> None:
         """Build deal-level matrices that don't change across shocks."""
@@ -161,6 +164,7 @@ class PnlEngine:
         # Build matrices (C6: alive mask caps start at first of dateRun's month)
         self._nominal_daily = expand_nominal_to_daily(self._deals_use[self._month_cols], self._days)
         alive = build_alive_mask(self._deals_use, self._days, date_run=pd.Timestamp(self.dateRun))
+        self._alive_mask = alive
         self._nominal_daily = self._nominal_daily * alive
 
         # Apply NMD behavioral decay if profiles provided
@@ -350,6 +354,23 @@ class PnlEngine:
             funding_source="carry",
         )
 
+        # --- Cumulative factors for value-date compounding ---
+        clear_carry_cache()
+        try:
+            cum_carry, _carry_boundaries = build_cumulative_carry_factors(
+                self._deals_use, self._days,
+                date_rates=pd.Timestamp(self.dateRates),
+            )
+            cum_rate = build_cumulative_rate_factors(
+                rate_matrix, self._accrual_days, mm_broadcast,
+                self._alive_mask, self._days,
+                date_rates=pd.Timestamp(self.dateRates),
+            )
+        except Exception:
+            logger.warning("Cumulative factor build failed — falling back to per-month compounding", exc_info=True)
+            cum_carry = None
+            cum_rate = None
+
         # --- Monthly aggregation (deal-level) ---
         monthly = aggregate_to_monthly(
             daily_pnl, self._nominal_daily, ois_matrix, rate_matrix, self._days,
@@ -358,6 +379,8 @@ class PnlEngine:
             mm_daily=mm_broadcast,
             date_rates=pd.Timestamp(self.dateRates),
             carry_funding_daily=carry_funding_matrix,
+            cum_carry_factors=cum_carry,
+            cum_rate_factors=cum_rate,
         )
 
         # Enrich with deal metadata
@@ -548,6 +571,8 @@ class PnlEngine:
         present_group = [c for c in group_cols if c in strategy.columns]
 
         sum_cols = {"PnL_Simple": "sum", "Nominal": "sum"}
+        if "PnL_Compounded" in strategy.columns:
+            sum_cols["PnL_Compounded"] = "sum"
         if "Amount" in strategy.columns:
             sum_cols["Amount"] = "sum"
         agg = strategy.groupby(present_group).agg(**{k: (k, v) for k, v in sum_cols.items()}).reset_index()

@@ -269,3 +269,137 @@ def _build_carry_funding_matrix(
                 )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cumulative factor arrays for value-date compounding
+# ---------------------------------------------------------------------------
+
+def build_cumulative_carry_factors(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    date_rates: "pd.Timestamp | None" = None,
+) -> tuple[np.ndarray, list]:
+    """Build cumulative carry factors from each deal's value date to each boundary.
+
+    Calls WASP carryCompounded(value_date, boundary, currency) per unique
+    (currency, value_date) group.  Results are cached to avoid duplicate calls.
+
+    Args:
+        deals: DataFrame with 'Currency' and 'Valuedate' columns.
+        days: Full daily date grid.
+        date_rates: If provided, inserted as an extra boundary for Realized/Forecast split.
+
+    Returns:
+        cum_carry: (n_deals, n_boundaries+1) array.  cum_carry[i, 0] = 1.0 (at or before VD).
+                   cum_carry[i, j+1] = 1 + carryCompounded(VD_i, boundary_j, ccy_i).
+        boundaries: list of boundary dates (pd.Timestamp), length = n_boundaries.
+    """
+    from pnl_engine.config import SUPPORTED_CURRENCIES, CURRENCY_TO_CARRY_INDEX
+    from pnl_engine.curves import load_carry_compounded_cached
+
+    n_deals = len(deals)
+    months = days.to_period("M").unique().sort_values()
+
+    # Build boundary dates: end of each month
+    boundary_dates = [m.end_time for m in months]
+
+    # Insert date_rates as extra boundary if it falls within the grid
+    if date_rates is not None:
+        dr_ts = pd.Timestamp(date_rates)
+        for k, bd in enumerate(boundary_dates):
+            if dr_ts <= bd:
+                if dr_ts.date() != bd.date():
+                    boundary_dates.insert(k, dr_ts)
+                break
+
+    n_boundaries = len(boundary_dates)
+
+    # Column 0 = virtual "start" boundary (factor = 1.0 for all deals)
+    cum = np.ones((n_deals, n_boundaries + 1), dtype=np.float64)
+
+    # Parse value dates
+    value_dates = pd.to_datetime(deals["Valuedate"], dayfirst=True, errors="coerce")
+    currencies = deals["Currency"].values
+
+    # Group by (currency, value_date) to minimize WASP calls
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i in range(n_deals):
+        ccy = currencies[i]
+        vd = value_dates.iloc[i]
+        if pd.isna(vd) or ccy not in CURRENCY_TO_CARRY_INDEX:
+            continue
+        key = (ccy, str(vd.date()))
+        groups.setdefault(key, []).append(i)
+
+    for (ccy, vd_str), deal_indices in groups.items():
+        vd = pd.Timestamp(vd_str)
+        for j, bd in enumerate(boundary_dates):
+            if bd < vd:
+                continue
+            try:
+                cc = load_carry_compounded_cached(vd, bd, ccy)
+                for i in deal_indices:
+                    cum[i, j + 1] = 1.0 + cc
+            except Exception as exc:
+                logger.warning(
+                    "Cumulative carry failed %s VD=%s BD=%s: %s", ccy, vd_str, bd.date(), exc,
+                )
+
+    return cum, boundary_dates
+
+
+def build_cumulative_rate_factors(
+    rate_daily: np.ndarray,
+    accrual_days: np.ndarray,
+    mm_daily: np.ndarray,
+    alive_mask: np.ndarray,
+    days: pd.DatetimeIndex,
+    date_rates: "pd.Timestamp | None" = None,
+) -> np.ndarray:
+    """Build cumulative rate factors from each deal's value date to each boundary.
+
+    Compounds (1 + rate * d_i / MM) daily, starting from each deal's first alive day.
+    Sampled at the same boundaries as build_cumulative_carry_factors.
+
+    Returns:
+        cum_rate: (n_deals, n_boundaries+1) array matching the carry boundaries layout.
+                  Column 0 = 1.0 (start), columns 1..N = cumulative product at each boundary.
+    """
+    n_deals, n_days = rate_daily.shape
+    months = days.to_period("M").unique().sort_values()
+
+    # Build boundary dates (same logic as carry)
+    boundary_dates = [m.end_time for m in months]
+    if date_rates is not None:
+        dr_ts = pd.Timestamp(date_rates)
+        for k, bd in enumerate(boundary_dates):
+            if dr_ts <= bd:
+                if dr_ts.date() != bd.date():
+                    boundary_dates.insert(k, dr_ts)
+                break
+
+    n_boundaries = len(boundary_dates)
+
+    # Daily factors: where alive, (1 + rate * d / MM); where not alive, 1.0
+    daily_factors = np.ones((n_deals, n_days), dtype=np.float64)
+    for d in range(n_days):
+        alive_d = alive_mask[:, d]
+        daily_factors[alive_d, d] = (
+            1.0 + rate_daily[alive_d, d] * accrual_days[d] / mm_daily[alive_d, d]
+        )
+
+    # Cumulative product along day axis
+    cum_prod = np.cumprod(daily_factors, axis=1)
+
+    # Sample at boundary dates
+    cum = np.ones((n_deals, n_boundaries + 1), dtype=np.float64)
+    day_dates = days.normalize()
+    for j, bd in enumerate(boundary_dates):
+        bd_date = pd.Timestamp(bd).normalize()
+        mask = day_dates <= bd_date
+        if mask.any():
+            day_idx = int(np.where(mask)[0][-1])
+            cum[:, j + 1] = cum_prod[:, day_idx]
+
+    return cum

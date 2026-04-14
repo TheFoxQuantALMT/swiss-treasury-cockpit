@@ -123,6 +123,30 @@ def load_carry_compounded(
     return wt.carryCompounded(start, end, currency)
 
 
+_carry_cache: dict[tuple[str, str, str], float] = {}
+
+
+def load_carry_compounded_cached(
+    start: Any,
+    end: Any,
+    currency: str,
+) -> float:
+    """Cached version of load_carry_compounded — avoids duplicate WASP calls.
+
+    Cache key is (currency, start_date_str, end_date_str).
+    Call clear_carry_cache() between runs to reset.
+    """
+    key = (currency, str(pd.Timestamp(start).date()), str(pd.Timestamp(end).date()))
+    if key not in _carry_cache:
+        _carry_cache[key] = load_carry_compounded(start, end, currency)
+    return _carry_cache[key]
+
+
+def clear_carry_cache() -> None:
+    """Reset the carry-compounded cache between engine runs."""
+    _carry_cache.clear()
+
+
 def load_carry_compounded_series(
     start: Any,
     end: Any,
