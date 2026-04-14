@@ -1,6 +1,6 @@
 ============================================================
 PNL_ENGINE BUNDLE — swiss-treasury-cockpit
-Generated: 2026-04-12
+Generated: 2026-04-14
 ============================================================
 
 STEP 1: Save this entire file as "pnl_engine_bundle.txt"
@@ -369,7 +369,7 @@ EXTENDED_SHOCKS: list[str] = ["-200", "-100", "-50", "0", "50", "100", "200", "w
 # Cost of Carry / Funding
 # ---------------------------------------------------------------------------
 
-FUNDING_SOURCE: str = "ois"  # "ois" (default) or "coc"
+FUNDING_SOURCE: str = "ois"  # "ois" (default), "carry", or "coc"
 
 # WASP carry-compounded curve indices (differ from OIS forward indices for EUR/CHF)
 CURRENCY_TO_CARRY_INDEX: dict[str, str] = {
@@ -435,7 +435,7 @@ VALID_FLOAT_INDICES: set[str] = {"SARON", "ESTR", "SOFR", "SONIA", ""}
 ===FILE END=== src/pnl_engine/config.py
 
 ===FILE START=== src/pnl_engine/curves.py
-"""Forward curve loading — WASP daily grid, WIRP overlay, mock fallback."""
+"""Forward curve loading — WASP daily grid and WIRP overlay."""
 from __future__ import annotations
 
 import logging
@@ -461,27 +461,34 @@ else:
     _WASP_ERROR = None
 
 
+def _require_wasp():
+    """Raise immediately if waspTools is not available."""
+    if wt is None:
+        raise RuntimeError(f"waspTools is required but unavailable: {_WASP_ERROR}")
+
+
 def load_daily_curves(
     date: Any,
     indices: list[str],
     shock: str,
     *,
-    mock_data: Optional[pd.DataFrame] = None,
     end_day: int = 1856,
 ) -> pd.DataFrame:
-    if mock_data is not None:
-        df = mock_data.copy()
-    elif wt is None:
-        raise RuntimeError(f"waspTools unavailable ({_WASP_ERROR}) and no mock_data provided")
-    else:
-        shock_f = 0.0 if shock == "wirp" else float(shock)
+    """Load daily forward curves from WASP for the given indices and shock."""
+    _require_wasp()
+    shock_f = 0.0 if shock == "wirp" else float(shock)
 
-        def _load_one(indice: str) -> pd.DataFrame:
-            return wt.dailyFwdRate(dateC=date, indice=indice, startDay=-31, endDay=end_day, Shock=shock_f)
+    # Pre-load all ramp markets (registers mktUSD/mktEUR/… handles)
+    wt.loadAllRampMarket(wt.lastBusinessDay(date), Shock=shock_f)
 
-        with ThreadPoolExecutor(max_workers=len(indices)) as pool:
-            frames = list(pool.map(_load_one, indices))
-        df = pd.concat(frames, ignore_index=True)
+    def _load_one(indice: str) -> pd.DataFrame:
+        ccy = wt.indiceDict.get(indice)
+        mkt = f"mkt{ccy}" if ccy else None
+        return wt.dailyFwdRate(dateC=date, indice=indice, mkt=mkt, startDay=-31, endDay=end_day, Shock=shock_f)
+
+    with ThreadPoolExecutor(max_workers=len(indices)) as pool:
+        frames = list(pool.map(_load_one, indices))
+    df = pd.concat(frames, ignore_index=True)
 
     df["Date"] = pd.to_datetime(df["Date"])
     df["dateM"] = df["Date"].dt.to_period("M")
@@ -509,53 +516,81 @@ def overlay_wirp(base: pd.DataFrame, wirp: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+def _ensure_ramp_loaded(date: Any, shock: float = 0.0) -> None:
+    """Call ``loadAllRampMarket`` once per (date, shock) to populate mkt handles."""
+    _require_wasp()
+    bday = wt.lastBusinessDay(date)
+    key = ("agg", str(bday), shock)
+    if key not in _ramp_loaded:
+        wt.loadAllRampMarket(bday, Shock=shock)
+        _ramp_loaded.add(key)
+
+
+def _ensure_carry_ramp_loaded(date: Any) -> None:
+    """Load MESA MARKET ALMT ramp via wt.loadCarryCompoundedMarket.
+
+    Note: this overwrites mkt{CCY} handles (shared with AGG ramp).
+    Call AGG ramp reload after carry if both are needed in same session.
+    """
+    _require_wasp()
+    bday = wt.lastBusinessDay(date)
+    key = ("carry", str(bday))
+    if key not in _ramp_loaded:
+        wt.loadCarryCompoundedMarket(bday)
+        _ramp_loaded.add(key)
+        # Invalidate AGG ramp cache since handles were overwritten
+        _ramp_loaded.discard(("agg", str(bday), 0.0))
+
+
+_ramp_loaded: set[tuple] = set()
+
+
 def load_carry_compounded(
     start: Any,
     end: Any,
     currency: str,
-) -> Optional[float]:
+) -> float:
     """Load WASP carry-compounded rate for a (start, end, currency) period.
 
-    Uses the WASP ``carryCompounded`` function with carry-specific indices
-    (CHF->CSCML5, EUR->ESAVB1, USD->USSOFR, GBP->GBPOIS) and the
-    ``MESA MARKET ALMT`` ramp — distinct from OIS forward curves.
-
-    Returns the compounded rate as a float, or None if WASP is unavailable.
+    Uses carry-specific indices (CHF->CSCML5, EUR->ESAVB1, USD->USSOFR,
+    GBP->GBPOIS) and the ``MESA MARKET ALMT`` ramp.
     """
-    if wt is None:
-        return None
+    _require_wasp()
+    _ensure_carry_ramp_loaded(start)
+    return wt.carryCompounded(start, end, currency)
 
-    from pnl_engine.config import CURRENCY_TO_CARRY_INDEX
 
-    indice = CURRENCY_TO_CARRY_INDEX.get(currency)
-    if indice is None:
-        logger.warning("No carry index for currency %s", currency)
-        return None
+_carry_cache: dict[tuple[str, str, str], float] = {}
 
-    try:
-        start_excel = wt.datetime_to_excel_date(start)
-        end_excel = wt.datetime_to_excel_date(end)
-        mkt_name = f"mkt{currency}"
-        res = wt.Fwd(start_excel, end_excel, indice, mkt_name)
-        return res.to_list()[0][0][0]
-    except Exception as exc:
-        logger.warning("carryCompounded failed %s [%s, %s]: %s", currency, start, end, exc)
-        return None
+
+def load_carry_compounded_cached(
+    start: Any,
+    end: Any,
+    currency: str,
+) -> float:
+    """Cached version of load_carry_compounded — avoids duplicate WASP calls.
+
+    Cache key is (currency, start_date_str, end_date_str).
+    Call clear_carry_cache() between runs to reset.
+    """
+    key = (currency, str(pd.Timestamp(start).date()), str(pd.Timestamp(end).date()))
+    if key not in _carry_cache:
+        _carry_cache[key] = load_carry_compounded(start, end, currency)
+    return _carry_cache[key]
+
+
+def clear_carry_cache() -> None:
+    """Reset the carry-compounded cache between engine runs."""
+    _carry_cache.clear()
 
 
 def load_carry_compounded_series(
     start: Any,
     end: Any,
     currency: str,
-) -> Optional[pd.DataFrame]:
-    """Monthly carry-compounded series via WASP for validation.
-
-    Returns DataFrame with columns [Date, CarryCompounded] where each row
-    is a month-end carry rate from start to end, or None if WASP unavailable.
-    """
-    if wt is None:
-        return None
-
+) -> pd.DataFrame:
+    """Monthly carry-compounded series via WASP for validation."""
+    _require_wasp()
     months = pd.date_range(start=start, end=end, freq="ME").to_list()
     if pd.Timestamp(end) not in [pd.Timestamp(m) for m in months]:
         months.append(pd.Timestamp(end))
@@ -871,10 +906,17 @@ def _aggregate_slice(
     funding_daily: np.ndarray | None,
     accrual_days: np.ndarray | None,
     mm_daily: np.ndarray | None,
+    carry_funding_daily: np.ndarray | None = None,
+    carry_factor_month: np.ndarray | None = None,
+    rate_factor_month: np.ndarray | None = None,
 ) -> dict:
     """Aggregate daily arrays over a boolean day-mask into a single column of metrics.
 
     Returns dict of (n_deals,) arrays for all core + CoC metrics.
+
+    Compounded metrics use cumulative factors from value date when
+    carry_factor_month / rate_factor_month are provided. Otherwise falls back
+    to per-month products from carry_funding_daily.
     """
     n_deals = daily_pnl.shape[0]
     n_mask_days = mask.sum()
@@ -905,18 +947,40 @@ def _aggregate_slice(
         gross = (nom_slice * rate_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
         fund = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
         out["GrossCarry"] = gross
-        out["FundingCost"] = fund
-        out["CoC_Simple"] = gross - fund
 
-        rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
-        funding_factors = 1.0 + funding_slice * d_i[np.newaxis, :] / mm_slice
-        out["CoC_Compound"] = nom_avg * (np.prod(rate_factors, axis=1) - np.prod(funding_factors, axis=1))
-
+        # Simple: OIS forward, linear (WASP dailyFwdRate, MESA AGG)
+        out["FundingCost_Simple"] = fund
+        out["PnL_Simple"] = fund - gross
         fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
-        out["FundingRate"] = fund_x_nom / safe_nom
+        out["FundingRate_Simple"] = fund_x_nom / safe_nom
+
+        # Compounded: value-date cumulative factors (preferred) or per-month fallback
+        if carry_factor_month is not None and rate_factor_month is not None:
+            # From cumulative WASP carryCompounded(VD, month_end)
+            total_d = d_i.sum()
+            safe_total_d = total_d if total_d > 0 else 1.0
+            out["FundingCost_Compounded"] = nom_avg * (carry_factor_month - 1.0)
+            out["PnL_Compounded"] = nom_avg * (carry_factor_month - rate_factor_month)
+            out["FundingRate_Compounded"] = (carry_factor_month - 1.0) * mm_slice[:, 0] / safe_total_d
+        elif carry_funding_daily is not None:
+            # Fallback: per-month product (for tests without cumulative data)
+            carry_slice = carry_funding_daily[:, mask]
+            rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
+            carry_factors = 1.0 + carry_slice * d_i[np.newaxis, :] / mm_slice
+            total_d = d_i.sum()
+            safe_total_d = total_d if total_d > 0 else 1.0
+            out["FundingCost_Compounded"] = (nom_slice * carry_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
+            out["PnL_Compounded"] = nom_avg * (np.prod(carry_factors, axis=1) - np.prod(rate_factors, axis=1))
+            out["FundingRate_Compounded"] = (np.prod(carry_factors, axis=1) - 1.0) * mm_slice[:, 0] / safe_total_d
     elif funding_daily is not None:
         zeros = np.zeros(n_deals)
-        for k in ("GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate"):
+        for k in ("GrossCarry", "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple"):
+            out[k] = zeros
+
+    has_compounded = "FundingCost_Compounded" in out
+    if not has_compounded and (carry_funding_daily is not None or carry_factor_month is not None):
+        zeros = np.zeros(n_deals)
+        for k in ("FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded"):
             out[k] = zeros
 
     return out
@@ -932,6 +996,9 @@ def aggregate_to_monthly(
     accrual_days: np.ndarray | None = None,
     mm_daily: np.ndarray | None = None,
     date_rates: "pd.Timestamp | None" = None,
+    carry_funding_daily: np.ndarray | None = None,
+    cum_carry_factors: np.ndarray | None = None,
+    cum_rate_factors: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Aggregate daily arrays to monthly per deal.
 
@@ -942,13 +1009,17 @@ def aggregate_to_monthly(
         RateRef: nominal-weighted average.
         nominal_days: sum of daily nominals (for rate weighting).
 
-    CoC columns (when ``funding_daily`` is provided):
-        GrossCarry: sum(Nominal x RateRef x d_i / D) per IFRS 9.B5.4.5.
-        FundingCost: sum(Nominal x FundingRate x d_i / D).
-        CoC_Simple: GrossCarry - FundingCost (NII component, BCBS 368).
-        CoC_Compound: Nom_avg x [prod(1 + r_i x d_i/D) - prod(1 + f_i x d_i/D)]
-                      per ISDA 2021 §6.9 compounding in arrears.
-        FundingRate: nominal-weighted average of funding rate.
+    Simple columns — OIS forward, linear (WASP dailyFwdRate, MESA AGG):
+        GrossCarry: Σ(Nominal × RateRef × d_i / D) per IFRS 9.B5.4.5.
+        FundingCost_Simple: Σ(Nominal × OISfwd × d_i / D).
+        PnL_Simple: FundingCost_Simple − GrossCarry (= −CoC).
+        FundingRate_Simple: Σ(OISfwd × Nom) / Σ(Nom).
+
+    Compounded columns — WASP carry, geometric from deal value date:
+        FundingCost_Compounded: NomAvg × (carry_factor_month − 1).
+        PnL_Compounded: NomAvg × (carry_factor_month − rate_factor_month).
+        FundingRate_Compounded: effective annualized rate from carry factor.
+        Where monthly factors = ratio of consecutive cumulative factors from VD.
 
     Realized / Forecast split (when ``date_rates`` is provided):
         Adds a PnL_Type column: past months -> Realized, future months -> Forecast,
@@ -965,7 +1036,38 @@ def aggregate_to_monthly(
         daily_pnl=daily_pnl, nominal_daily=nominal_daily,
         ois_daily=ois_daily, rate_daily=rate_daily,
         funding_daily=funding_daily, accrual_days=accrual_days, mm_daily=mm_daily,
+        carry_funding_daily=carry_funding_daily,
     )
+
+    # --- Build boundary-to-month mapping for cumulative factors ---
+    # cum_carry_factors / cum_rate_factors have columns:
+    #   [0: start=1.0, 1: boundary_0, 2: boundary_1, ...]
+    # Boundaries may include an extra date_rates point.
+    # We need to map each unique month j to the right boundary columns.
+    use_cum = cum_carry_factors is not None and cum_rate_factors is not None
+    boundary_map = {}  # month_idx j -> (col_start, col_end)
+    dr_boundary_col = None  # column index for the date_rates boundary (if inserted)
+    if use_cum:
+        # Reconstruct boundary dates (same logic as matrices.py)
+        months_sorted = unique_months.sort_values()
+        boundary_dates = [m_.end_time for m_ in months_sorted]
+        if date_rates is not None:
+            dr_ts = pd.Timestamp(date_rates)
+            for k, bd in enumerate(boundary_dates):
+                if dr_ts <= bd:
+                    if dr_ts.date() != bd.date():
+                        boundary_dates.insert(k, dr_ts)
+                        dr_boundary_col = k + 1  # +1 because col 0 is "start"
+                    break
+        # Map month j -> boundary columns
+        bd_idx = 0
+        for j, m_ in enumerate(months_sorted):
+            col_start = bd_idx  # column in cum array (0-based, shifted by +1 in array)
+            # Skip any boundaries that are before this month's end (e.g. date_rates)
+            while bd_idx < len(boundary_dates) and boundary_dates[bd_idx] <= m_.end_time:
+                bd_idx += 1
+            col_end = bd_idx  # column after this month's last boundary
+            boundary_map[j] = (col_start, col_end)
 
     rows: list[dict] = []
 
@@ -973,10 +1075,23 @@ def aggregate_to_monthly(
         month_mask = np.asarray(month_idx == m)
         n_cal_days = int(month_mask.sum())
 
-        agg_total = _aggregate_slice(mask=month_mask, n_cal_days=n_cal_days, **common_kw)
+        # Compute monthly carry/rate factors from cumulative arrays
+        carry_factor_total = None
+        rate_factor_total = None
+        if use_cum and j in boundary_map:
+            col_start, col_end = boundary_map[j]
+            # Total month factor = cum[col_end] / cum[col_start]
+            carry_factor_total = cum_carry_factors[:, col_end] / np.maximum(cum_carry_factors[:, col_start], 1e-15)
+            rate_factor_total = cum_rate_factors[:, col_end] / np.maximum(cum_rate_factors[:, col_start], 1e-15)
+
+        agg_total = _aggregate_slice(
+            mask=month_mask, n_cal_days=n_cal_days,
+            carry_factor_month=carry_factor_total,
+            rate_factor_month=rate_factor_total,
+            **common_kw,
+        )
 
         if date_rates is None:
-            # Backward compat: no split
             for deal_i in range(n_deals):
                 row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Total"}
                 for k, arr in agg_total.items():
@@ -991,8 +1106,31 @@ def aggregate_to_monthly(
 
             n_realized_days = int(realized_within.sum())
             n_forecast_days = int(forecast_within.sum())
-            agg_real = _aggregate_slice(mask=realized_within, n_cal_days=n_realized_days, **common_kw)
-            agg_fore = _aggregate_slice(mask=forecast_within, n_cal_days=n_forecast_days, **common_kw)
+
+            # Compute realized/forecast factors using date_rates boundary
+            carry_factor_real = None
+            rate_factor_real = None
+            carry_factor_fore = None
+            rate_factor_fore = None
+            if use_cum and j in boundary_map and dr_boundary_col is not None:
+                col_start, col_end = boundary_map[j]
+                # Realized: col_start → dr_boundary_col
+                carry_factor_real = cum_carry_factors[:, dr_boundary_col] / np.maximum(cum_carry_factors[:, col_start], 1e-15)
+                rate_factor_real = cum_rate_factors[:, dr_boundary_col] / np.maximum(cum_rate_factors[:, col_start], 1e-15)
+                # Forecast: dr_boundary_col → col_end
+                carry_factor_fore = cum_carry_factors[:, col_end] / np.maximum(cum_carry_factors[:, dr_boundary_col], 1e-15)
+                rate_factor_fore = cum_rate_factors[:, col_end] / np.maximum(cum_rate_factors[:, dr_boundary_col], 1e-15)
+
+            agg_real = _aggregate_slice(
+                mask=realized_within, n_cal_days=n_realized_days,
+                carry_factor_month=carry_factor_real, rate_factor_month=rate_factor_real,
+                **common_kw,
+            )
+            agg_fore = _aggregate_slice(
+                mask=forecast_within, n_cal_days=n_forecast_days,
+                carry_factor_month=carry_factor_fore, rate_factor_month=rate_factor_fore,
+                **common_kw,
+            )
 
             for deal_i in range(n_deals):
                 for pnl_type, agg in [("Total", agg_total), ("Realized", agg_real), ("Forecast", agg_fore)]:
@@ -1001,7 +1139,6 @@ def aggregate_to_monthly(
                         row[k] = arr[deal_i]
                     rows.append(row)
         elif m < rates_month:
-            # Past month: all realized
             for deal_i in range(n_deals):
                 row = {"deal_idx": deal_i, "Month": m, "PnL_Type": "Realized"}
                 for k, arr in agg_total.items():
@@ -1081,7 +1218,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     agg = strat.groupby(present_group).agg(
         Amount=("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
         Nominal=("Nominal", "sum"),
-        PnL=("PnL", "sum") if "PnL" in strat.columns else ("pnl", "sum"),
+        PnL=("PnL", "sum"),
     ).reset_index()
 
     # Nominal-weighted average rates
@@ -1159,7 +1296,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl = _build_pnl(nom, rate, ois, mask, subtract_rate=True, mm=mm_iam)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-NHCD"
-    leg["PnL"] = pnl
+    leg["PnL_Simple"] = pnl
     leg["Nominal"] = nom
     leg["RateRef"] = rate
     leg["OISfwd"] = ois
@@ -1173,7 +1310,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_hcd = _build_pnl(nom_hcd, rate_margin, ois_hcd, mask, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "IAM/LD-HCD"
-    leg["PnL"] = pnl_hcd
+    leg["PnL_Simple"] = pnl_hcd
     leg["Nominal"] = nom_hcd
     leg["RateRef"] = rate_margin
     leg["OISfwd"] = ois_hcd
@@ -1185,7 +1322,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_b = _build_pnl(nom_b, rate_b, ois_b, mask_b, subtract_rate=True, mm=mm_bnd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-NHCD"
-    leg["PnL"] = pnl_b
+    leg["PnL_Simple"] = pnl_b
     leg["Nominal"] = nom_b
     leg["RateRef"] = rate_b
     leg["OISfwd"] = ois_b
@@ -1199,7 +1336,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     pnl_bhcd = _build_pnl(nom_bhcd, rate_bmargin, ois_bhcd, mask_b, subtract_rate=False, mm=mm_hcd)
     leg = base.copy()
     leg["Product2BuyBack"] = "BND-HCD"
-    leg["PnL"] = pnl_bhcd
+    leg["PnL_Simple"] = pnl_bhcd
     leg["Nominal"] = nom_bhcd
     leg["RateRef"] = rate_bmargin
     leg["OISfwd"] = ois_bhcd
@@ -1225,54 +1362,24 @@ def compute_book2_mtm(
     calc_date: str,
     shock: Optional[str] = None,
 ) -> pd.DataFrame:
-    """BOOK2 IRS MTM via waspTools.stockSwapMTM; falls back to deterministic mock.
+    """BOOK2 IRS MTM via waspTools.stockSwapMTM.
 
     Returns a DataFrame with MTM values per deal.
     """
-    try:
-        from pnl_engine.curves import wt  # reuse the WASP_TOOLS_PATH-aware import
-        stockSwapMTM = wt.stockSwapMTM  # type: ignore[union-attr]
-        mtm = stockSwapMTM(irs_stock, calc_date, shock)
-        return mtm
-    except (ImportError, Exception):
-        # Analytical MTM fallback: PV of rate differential
-        # MTM ≈ Notional × (fixed_rate - OIS_fwd) × remaining_years
-        # First-order approximation — adequate for dashboard, not regulatory
-        if irs_stock.empty:
-            return pd.DataFrame(columns=["Deal", "Currency", "MTM"])
-        result = irs_stock.copy()
+    from pnl_engine.curves import wt, _require_wasp
+    _require_wasp()
 
-        calc_ts = pd.Timestamp(calc_date)
-        notional = pd.to_numeric(
-            result.get("Notional", result.get("notional", pd.Series(dtype=float))),
-            errors="coerce",
-        ).fillna(0)
-        rate = pd.to_numeric(
-            result.get("Rate", result.get("Clientrate", result.get("rate", pd.Series(dtype=float)))),
-            errors="coerce",
-        ).fillna(0)
-        maturity = pd.to_datetime(
-            result.get("Maturity Date", result.get("Maturitydate", pd.Series(dtype="datetime64[ns]"))),
-            errors="coerce",
-        )
-        remaining_years = ((maturity - calc_ts).dt.days / 365.0).clip(lower=0).fillna(0)
+    if irs_stock.empty:
+        return pd.DataFrame(columns=["Deal", "Currency", "MTM"])
 
-        # Assume OIS fwd ≈ 1% (conservative mid for CHF/EUR/USD)
-        # Shock adjusts: +50bp → 1.50%, etc.
-        ois_proxy = 0.01
-        if shock and shock not in ("0", "wirp"):
-            try:
-                ois_proxy += int(shock) / 10000
-            except (ValueError, TypeError):
-                pass
+    shock_bps = 0
+    if shock and shock not in ("0", "wirp"):
+        try:
+            shock_bps = int(shock)
+        except (ValueError, TypeError):
+            pass
 
-        # Pay fixed → MTM positive when OIS rises above fixed rate
-        # Receive fixed → MTM positive when OIS falls below fixed rate
-        pay_receive = result.get("Pay/Receive", result.get("pay_receive", pd.Series(["PAY"] * len(result))))
-        sign = np.where(pay_receive.str.upper().str.contains("REC", na=False), 1.0, -1.0)
-
-        result["MTM"] = sign * notional * (rate - ois_proxy) * remaining_years
-        return result
+    return wt.stockSwapMTM(calc_date, irs_stock, Shock=shock_bps)
 
 
 def merge_results(
@@ -2516,20 +2623,208 @@ def build_funding_matrix(
     deals: pd.DataFrame,
     days: pd.DatetimeIndex,
     ois_matrix: np.ndarray,
-    funding_source: str = "ois",
+    funding_source: str = "carry",
 ) -> np.ndarray:
     """Build (n_deals x n_days) funding rate matrix.
 
     Args:
-        funding_source: "ois" uses the OIS forward curve (default, ISDA CSA standard),
-                        "coc" uses the deal-level CocRate.
+        funding_source:
+            "carry" (default) uses WASP carry-compounded rates per currency/month.
+            "ois" uses the OIS forward curve (ISDA CSA standard).
+            "coc" uses the deal-level CocRate.
     """
     if funding_source == "coc" and "CocRate" in deals.columns:
         n_deals = len(deals)
         coc_rates = deals["CocRate"].fillna(0.0).values
         return np.broadcast_to(coc_rates[:, np.newaxis], ois_matrix.shape).copy()
-    # Default: OIS curve = standard post-LIBOR funding rate
+
+    if funding_source == "carry":
+        return _build_carry_funding_matrix(deals, days, ois_matrix)
+
+    # "ois": OIS curve = standard post-LIBOR funding rate
     return ois_matrix
+
+
+def _build_carry_funding_matrix(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    ois_matrix: np.ndarray,
+) -> np.ndarray:
+    """Build funding matrix from WASP carry-compounded rates per (currency, month).
+
+    For each currency, loads one carry-compounded rate per month via WASP,
+    then fills all days in that month with that rate. Falls back to OIS
+    matrix for currencies where carry loading fails.
+    """
+    import logging
+    from pnl_engine.config import CURRENCY_TO_CARRY_INDEX, SUPPORTED_CURRENCIES
+    from pnl_engine.curves import load_carry_compounded
+
+    logger = logging.getLogger(__name__)
+    n_deals = len(deals)
+    n_days = len(days)
+    result = ois_matrix.copy()  # fallback: OIS
+
+    # Build month boundaries
+    months = days.to_period("M").unique()
+
+    for ccy in SUPPORTED_CURRENCIES:
+        if ccy not in CURRENCY_TO_CARRY_INDEX:
+            continue
+        deal_mask = (deals["Currency"] == ccy).values
+        if not deal_mask.any():
+            continue
+
+        for month in months:
+            month_start = month.start_time
+            month_end = month.end_time
+            day_mask = (days.to_period("M") == month).values
+            if not day_mask.any():
+                continue
+
+            try:
+                carry_rate = load_carry_compounded(month_start, month_end, ccy)
+                result[np.ix_(deal_mask, day_mask)] = carry_rate
+            except Exception as exc:
+                logger.warning(
+                    "Carry compounded failed %s %s, keeping OIS: %s", ccy, month, exc
+                )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Cumulative factor arrays for value-date compounding
+# ---------------------------------------------------------------------------
+
+def build_cumulative_carry_factors(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    date_rates: "pd.Timestamp | None" = None,
+) -> tuple[np.ndarray, list]:
+    """Build cumulative carry factors from each deal's value date to each boundary.
+
+    Calls WASP carryCompounded(value_date, boundary, currency) per unique
+    (currency, value_date) group.  Results are cached to avoid duplicate calls.
+
+    Args:
+        deals: DataFrame with 'Currency' and 'Valuedate' columns.
+        days: Full daily date grid.
+        date_rates: If provided, inserted as an extra boundary for Realized/Forecast split.
+
+    Returns:
+        cum_carry: (n_deals, n_boundaries+1) array.  cum_carry[i, 0] = 1.0 (at or before VD).
+                   cum_carry[i, j+1] = 1 + carryCompounded(VD_i, boundary_j, ccy_i).
+        boundaries: list of boundary dates (pd.Timestamp), length = n_boundaries.
+    """
+    from pnl_engine.config import SUPPORTED_CURRENCIES, CURRENCY_TO_CARRY_INDEX
+    from pnl_engine.curves import load_carry_compounded_cached
+
+    n_deals = len(deals)
+    months = days.to_period("M").unique().sort_values()
+
+    # Build boundary dates: end of each month
+    boundary_dates = [m.end_time for m in months]
+
+    # Insert date_rates as extra boundary if it falls within the grid
+    if date_rates is not None:
+        dr_ts = pd.Timestamp(date_rates)
+        for k, bd in enumerate(boundary_dates):
+            if dr_ts <= bd:
+                if dr_ts.date() != bd.date():
+                    boundary_dates.insert(k, dr_ts)
+                break
+
+    n_boundaries = len(boundary_dates)
+
+    # Column 0 = virtual "start" boundary (factor = 1.0 for all deals)
+    cum = np.ones((n_deals, n_boundaries + 1), dtype=np.float64)
+
+    # Parse value dates
+    value_dates = pd.to_dateti  me(deals["Valuedate"], dayfirst=True, errors="coerce")
+    currencies = deals["Currency"].values
+
+    # Group by (currency, value_date) to minimize WASP calls
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i in range(n_deals):
+        ccy = currencies[i]
+        vd = value_dates.iloc[i]
+        if pd.isna(vd) or ccy not in CURRENCY_TO_CARRY_INDEX:
+            continue
+        key = (ccy, str(vd.date()))
+        groups.setdefault(key, []).append(i)
+
+    for (ccy, vd_str), deal_indices in groups.items():
+        vd = pd.Timestamp(vd_str)
+        for j, bd in enumerate(boundary_dates):
+            if bd < vd:
+                continue
+            try:
+                cc = load_carry_compounded_cached(vd, bd, ccy)
+                for i in deal_indices:
+                    cum[i, j + 1] = 1.0 + cc
+            except Exception as exc:
+                logger.warning(
+                    "Cumulative carry failed %s VD=%s BD=%s: %s", ccy, vd_str, bd.date(), exc,
+                )
+
+    return cum, boundary_dates
+
+
+def build_cumulative_rate_factors(
+    rate_daily: np.ndarray,
+    accrual_days: np.ndarray,
+    mm_daily: np.ndarray,
+    alive_mask: np.ndarray,
+    days: pd.DatetimeIndex,
+    date_rates: "pd.Timestamp | None" = None,
+) -> np.ndarray:
+    """Build cumulative rate factors from each deal's value date to each boundary.
+
+    Compounds (1 + rate * d_i / MM) daily, starting from each deal's first alive day.
+    Sampled at the same boundaries as build_cumulative_carry_factors.
+
+    Returns:
+        cum_rate: (n_deals, n_boundaries+1) array matching the carry boundaries layout.
+                  Column 0 = 1.0 (start), columns 1..N = cumulative product at each boundary.
+    """
+    n_deals, n_days = rate_daily.shape
+    months = days.to_period("M").unique().sort_values()
+
+    # Build boundary dates (same logic as carry)
+    boundary_dates = [m.end_time for m in months]
+    if date_rates is not None:
+        dr_ts = pd.Timestamp(date_rates)
+        for k, bd in enumerate(boundary_dates):
+            if dr_ts <= bd:
+                if dr_ts.date() != bd.date():
+                    boundary_dates.insert(k, dr_ts)
+                break
+
+    n_boundaries = len(boundary_dates)
+
+    # Daily factors: where alive, (1 + rate * d / MM); where not alive, 1.0
+    daily_factors = np.ones((n_deals, n_days), dtype=np.float64)
+    for d in range(n_days):
+        alive_d = alive_mask[:, d]
+        daily_factors[alive_d, d] = (
+            1.0 + rate_daily[alive_d, d] * accrual_days[d] / mm_daily[alive_d, d]
+        )
+
+    # Cumulative product along day axis
+    cum_prod = np.cumprod(daily_factors, axis=1)
+
+    # Sample at boundary dates
+    cum = np.ones((n_deals, n_boundaries + 1), dtype=np.float64)
+    day_dates = days.normalize()
+    for j, bd in enumerate(boundary_dates):
+        bd_date = pd.Timestamp(bd).normalize()
+        mask = day_dates <= bd_date
+        if mask.any():
+            day_idx = int(np.where(mask)[0][-1])
+            cum[:, j + 1] = cum_prod[:, day_idx]
+
+    return cum
 
 ===FILE END=== src/pnl_engine/matrices.py
 
@@ -3352,10 +3647,9 @@ import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PRODUCTS
-from pnl_engine.curves import CurveCache, load_daily_curves, overlay_wirp
+from pnl_engine.curves import CurveCache, clear_carry_cache, load_daily_curves, overlay_wirp
 from pnl_engine.engine import (
     _build_ois_matrix,
-    _mock_curves_from_wirp,
     _month_columns,
     _resolve_rate_ref,
     aggregate_to_monthly,
@@ -3368,6 +3662,8 @@ from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
     build_client_rate_matrix,
+    build_cumulative_carry_factors,
+    build_cumulative_rate_factors,
     build_date_grid,
     build_funding_matrix,
     build_mm_vector,
@@ -3587,15 +3883,11 @@ class PnlEngine:
         if cached is not None:
             return cached
 
-        try:
-            curves = load_daily_curves(
-                date=self.dateRates,
-                indices=self._ois_indices,
-                shock=shock,
-            )
-        except RuntimeError:
-            logger.info("WASP unavailable, building mock curves from WIRP (shock=%s)", shock)
-            curves = _mock_curves_from_wirp(self.wirp, self._days, shock=shock)
+        curves = load_daily_curves(
+            date=self.dateRates,
+            indices=self._ois_indices,
+            shock=shock,
+        )
 
         self._fwd_cache.put(cache_key, curves)
         return curves
@@ -3610,14 +3902,11 @@ class PnlEngine:
         if cached is not None:
             return cached
 
-        try:
-            curves = load_daily_curves(
-                date=self.dateRates,
-                indices=self._float_wasp_indices,
-                shock=shock,
-            )
-        except RuntimeError:
-            return None
+        curves = load_daily_curves(
+            date=self.dateRates,
+            indices=self._float_wasp_indices,
+            shock=shock,
+        )
 
         self._fwd_cache.put(cache_key, curves)
         return curves
@@ -3674,11 +3963,32 @@ class PnlEngine:
             accrual_days=self._accrual_days,
         )
 
-        # --- Funding matrix for CoC decomposition ---
+        # --- Funding matrices for CoC decomposition ---
         funding_matrix = build_funding_matrix(
             self._deals_use, self._days, ois_matrix,
             funding_source=self._funding_source,
         )
+        carry_funding_matrix = build_funding_matrix(
+            self._deals_use, self._days, ois_matrix,
+            funding_source="carry",
+        )
+
+        # --- Cumulative factors for value-date compounding ---
+        clear_carry_cache()
+        try:
+            cum_carry, _carry_boundaries = build_cumulative_carry_factors(
+                self._deals_use, self._days,
+                date_rates=pd.Timestamp(self.dateRates),
+            )
+            cum_rate = build_cumulative_rate_factors(
+                rate_matrix, self._accrual_days, mm_broadcast,
+                self._alive_mask, self._days,
+                date_rates=pd.Timestamp(self.dateRates),
+            )
+        except Exception:
+            logger.warning("Cumulative factor build failed — falling back to per-month compounding", exc_info=True)
+            cum_carry = None
+            cum_rate = None
 
         # --- Monthly aggregation (deal-level) ---
         monthly = aggregate_to_monthly(
@@ -3687,6 +3997,9 @@ class PnlEngine:
             accrual_days=self._accrual_days,
             mm_daily=mm_broadcast,
             date_rates=pd.Timestamp(self.dateRates),
+            carry_funding_daily=carry_funding_matrix,
+            cum_carry_factors=cum_carry,
+            cum_rate_factors=cum_rate,
         )
 
         # Enrich with deal metadata
@@ -3737,7 +4050,7 @@ class PnlEngine:
         # I5: Remove IRS-MTM PnL from non-strategy (§12.1 — BOOK2 provides it)
         if not pnl_no_strat.empty and "Indice" in pnl_no_strat.columns:
             pnl_no_strat = pnl_no_strat[
-                ~((pnl_no_strat["Product2BuyBack"] == "IRS-MTM") & (pnl_no_strat["Indice"] == "PnL"))
+                ~((pnl_no_strat["Product2BuyBack"] == "IRS-MTM") & (pnl_no_strat["Indice"] == "PnL_Simple"))
             ].copy()
 
         # --- 2. Strategy (§10): 4 synthetic legs ---
@@ -3778,8 +4091,10 @@ class PnlEngine:
         if "Indice" in pnl_all.columns:
             pnl_all = pnl_all[
                 pnl_all["Indice"].isin([
-                    "Nominal", "OISfwd", "PnL", "RateRef",
-                    "GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound", "FundingRate",
+                    "Nominal", "OISfwd", "RateRef",
+                    "GrossCarry",
+                    "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple",
+                    "FundingCost_Compounded", "PnL_Compounded", "FundingRate_Compounded",
                 ])
             ].copy()
 
@@ -3796,17 +4111,20 @@ class PnlEngine:
 
         group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
 
-        sum_cols = {"PnL": "sum", "Nominal": "sum"}
+        sum_cols = {"Nominal": "sum"}
         if "Amount" in data.columns:
             sum_cols["Amount"] = "sum"
-        for coc_col in ["GrossCarry", "FundingCost", "CoC_Simple", "CoC_Compound"]:
+        for coc_col in ["GrossCarry",
+                        "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]:
             if coc_col in data.columns:
                 sum_cols[coc_col] = "sum"
         agg = data.groupby(group_cols).agg(
             **{k: (k, v) for k, v in sum_cols.items()}
         ).reset_index()
 
-        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "FundingRate"]
+        rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM",
+                     "FundingRate_Simple", "FundingRate_Compounded"]
         present_rates = [c for c in rate_cols if c in data.columns]
         if present_rates:
             wavg = weighted_average(data, present_rates, "Nominal", group_cols)
@@ -3824,7 +4142,10 @@ class PnlEngine:
 
         # Stack measures into Indice rows
         id_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
-        measure_cols = ["Amount", "Nominal", "PnL"] + present_rates
+        coc_sum_cols = ["GrossCarry",
+                        "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]
+        measure_cols = ["Amount", "Nominal"] + present_rates + coc_sum_cols
         present_measures = [c for c in measure_cols if c in agg.columns]
 
         agg_long = agg.melt(
@@ -3868,7 +4189,7 @@ class PnlEngine:
         group_cols = ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "PnL_Type", "Month"]
         present_group = [c for c in group_cols if c in strategy.columns]
 
-        sum_cols = {"PnL": "sum", "Nominal": "sum"}
+        sum_cols = {"PnL_Simple": "sum", "Nominal": "sum"}
         if "Amount" in strategy.columns:
             sum_cols["Amount"] = "sum"
         agg = strategy.groupby(present_group).agg(**{k: (k, v) for k, v in sum_cols.items()}).reset_index()
@@ -3919,11 +4240,16 @@ class PnlEngine:
 
         # I7: Pre-filter
         irs = self.irs_stock.copy()
-        if "Maturity Date" in irs.columns:
-            mat = pd.to_datetime(irs["Maturity Date"], errors="coerce", dayfirst=True)
+        mat_col = "Maturity Date" if "Maturity Date" in irs.columns else "Maturitydate" if "Maturitydate" in irs.columns else None
+        if mat_col is not None:
+            mat = pd.to_datetime(irs[mat_col], errors="coerce", dayfirst=True)
             irs = irs[mat > pd.Timestamp(self.dateRun)].copy()
-        if "Strategy (Agapes IAS)" in irs.columns:
-            irs = irs[irs["Strategy (Agapes IAS)"].isna()].copy()
+        # Skip strategy filter when IRS-MTM already identified by Product (K+EUR format)
+        is_explicit_mtm = "Product" in irs.columns and (irs["Product"] == "IRS-MTM").all()
+        if not is_explicit_mtm:
+            strat_col = "Strategy (Agapes IAS)" if "Strategy (Agapes IAS)" in irs.columns else "Strategy IAS" if "Strategy IAS" in irs.columns else None
+            if strat_col is not None:
+                irs = irs[irs[strat_col].isna()].copy()
 
         if irs.empty:
             return pd.DataFrame()
@@ -3940,7 +4266,8 @@ class PnlEngine:
         if "Asset / Liabilities" in book2.columns:
             direction = "D" if (book2["Asset / Liabilities"] == "Actif").any() else "L"
 
-        ccy = book2.get("Currency Code (ISO)", pd.Series(["CHF"])).iloc[0] if len(book2) > 0 else "CHF"
+        ccy_series = book2.get("Currency Code (ISO)", book2.get("Currency", pd.Series(["CHF"])))
+        ccy = ccy_series.iloc[0] if len(book2) > 0 else "CHF"
         month = self._days[0].to_period("M") if self._days is not None and len(self._days) > 0 else "2026-04"
 
         row = {
@@ -3948,7 +4275,7 @@ class PnlEngine:
             "Deal currency": ccy if pd.notna(ccy) else "CHF",
             "Product2BuyBack": "IRS-MTM",
             "Direction": direction,
-            "Indice": "PnL",
+            "Indice": "PnL_Simple",
             "Shock": shock,
             month: total_mtm,
         }
@@ -5482,6 +5809,702 @@ def compute_snb_reserves(
     }
 
 ===FILE END=== src/pnl_engine/snb_reserves.py
+
+===FILE START=== src/pnl_engine/wasptools.py
+"""
+WASP / Westminster integration for rates, FX, swaps, and option-style pricing.
+
+Depends on proprietary binaries (``PyWestminster``, ``PyWestRamp``, ``PyFPGTools``)
+and network paths configured below. Forward and MTM helpers load **MESA AGG** ramp
+markets per currency.
+
+Conventions
+-----------
+- **Shock** / **YCParallelShift**: values are in **basis points** (e.g. ``50`` → +0.50%
+  parallel yield shift) when passed to ``LoadMarketRamp`` via ``ParamRange``.
+- WASP failures in ``realizedRate`` / ``forwardRate`` / ``carryCompounded`` are logged
+  and return ``None`` where applicable.
+
+This module is environment-specific (library paths, ramp names); adjust
+``WESTMINSTER_LIBRARIES_FLAG`` and ``rampMarketDict`` for your deployment.
+"""
+import logging
+import os
+import os.path
+import sys
+import datetime as dt
+from warnings import filterwarnings
+
+import numpy as np
+import pandas as pd
+from pandas.tseries.offsets import BMonthEnd, BDay
+from dateutil.relativedelta import relativedelta
+from multiprocessing.dummy import Pool as ThreadPool
+
+filterwarnings('ignore')
+
+_logger = logging.getLogger(__name__)
+
+_WASP_LOCAL_CACHE = r"C:\Temp\WaspPRD_136.0.0"
+_USE_NAMED_PARAMS = os.path.isdir(_WASP_LOCAL_CACHE)
+
+
+###################
+# WASP Parameters #
+###################
+
+
+WASP_VERSION = "233.0.0"
+WESTMINSTER_LIBRARIES_FLAG = os.path.join(r"\\lonwasp001\wasp\WaspRelease", WASP_VERSION, "Bin")
+sys.path.append(os.path.normpath(WESTMINSTER_LIBRARIES_FLAG))
+
+import PyWestminster as west
+import PyWestRamp as wramp
+import PyFPGTools as FPGTools
+
+from PyWestRamp import LoadMarketRamp, RampReadFixings, RampReadCurve
+from PyWestminster import Fwd, Add, Swap, CapGreeks, Df, FXGetMultiSpot, Level, GetRefRateList, FxFwd, GetMarketList, GetFixingDetails
+from PyFPGTools import MESA_FxFwd
+
+def datetime_to_excel_date(date):
+    """Serial day count from 1899-12-30 (Excel date convention used by WASP)."""
+    xldate = dt.datetime(date.year, date.month, date.day) - dt.datetime(1899, 12, 30)
+    return xldate.days
+    
+def excel_date_to_datetime(date):
+    """Inverse of ``datetime_to_excel_date`` for integer Excel serials."""
+    return dt.datetime(1899, 12, 30) + dt.timedelta(days=int(date))
+
+# WASP global variables
+# WASP parameters
+rampItem = "MESA AGG MARKET"
+rampItemCarry = "MESA MARKET ALMT"
+
+
+rampSet = "OFFICIAL"
+
+# Indice Market Dictionnary
+
+currDict = ['EUR', 'USD', 'GBP', 'CHF']
+
+indiceDict = {'EUREST' : 'EUR'
+              ,'ERIBO1' : 'EUR'
+              ,'ERIBO3' : 'EUR'
+              ,'ERIBO6' : 'EUR'
+              ,'ERIB12' : 'EUR'
+
+              ,'UOPFDF' : 'USD'
+              ,'UTIBO1' : 'USD'
+              ,'UTIBO3' : 'USD'
+
+              ,'USSOFR' : 'USD'
+#              ,'U1MCME' : 'USD'
+#              ,'U3MCME' : 'USD'
+#              ,'U6MCME' : 'USD'}
+              ,'USTC1M' : 'USD'
+              ,'USTC3M' : 'USD'
+              ,'USTC6M' : 'USD'
+              ,'USTC12' : 'USD'
+              ,'CHFSON' : 'CHF'
+              ,'CHFOIS' : 'CHF'
+              ,'GBPOIS' : 'GBP'
+              }
+
+indiceOISDict = {'EUR' : 'EUREST'
+              ,'USD' : 'USSOFR'
+              ,'CHF' : 'CHFSON'
+              ,'GBP' : 'GBPOIS'
+              }
+
+indiceWASPDict = {'EURIBOR1M' : 'ERIBO1'
+                , 'EURIBOR3M' : 'ERIBO3'
+                , 'EUR-ESTRS' : 'EUREST'
+                , 'EUR-ESTSSW' : 'EUREST'
+                , 'USD-OIS' : 'USSOFR'
+                , 'USD-SFROIS' : 'USSOFR'
+                , 'CHF-SAROIS' : 'CHFSON'
+                , 'SRNCBT02' : 'CHFSON'
+                , 'GBP-OIS' : 'GBPOIS'
+                , '' : "Fixed"
+              }
+
+
+def _resolve_swap_indice(index_name):
+    """Map Agapes swap index name to WASP indice; unknown names log warning and use ``Fixed``."""
+    wasp_indice = indiceWASPDict.get(index_name)
+    if wasp_indice is None:
+        _logger.warning("Unknown swap index %r, treating as Fixed", index_name)
+        return "Fixed"
+    return wasp_indice
+
+
+indiceTrueName = {'EUREST' : '€STR'
+              ,'ERIBO1' : 'Euribor 1M'
+              ,'ERIBO3' : 'Euribor 3M'
+              ,'ERIBO6' : 'Euribor 6M'
+              ,'ERIB12' : 'Euribor 12M'
+
+              ,'UOPFDF' : 'USD Fed Funds'
+              ,'UTIBO1' : 'USD 1M Libor'
+              ,'UTIBO3' : 'USD 3M Libor'
+
+              ,'USSOFR' : 'USD SOFR'
+              ,'CHFSON' : 'CHF SARON'
+              ,'CHFOIS' : 'CHF OIS'
+              ,'GBPOIS' : 'SONIA'
+#              ,'U1MCME' : 'USD 1M Term SOFR'
+#              ,'U3MCME' : 'USD 3M Term SOFR'
+#              ,'U6MCME' : 'USD 6M Term SOFR'}
+              ,'USTC1M' : 'USD 1M Term SOFR'
+              ,'USTC3M' : 'USD 3M Term SOFR'
+              ,'USTC6M' : 'USD 6M Term SOFR'
+              ,'USTC12' : 'USD 12M Term SOFR'}
+
+indiceCollarDict = {'EUR' : 'ERIBO1'
+                    ,'USD' : 'UTIBO1'}
+
+
+rampMarketDict = {'USD' : "USD AGG NOSWAP SABRAF MARKET"
+            , 'EUR' : "EUR AGG NOSWAP SABRAF MARKET"
+            , 'CHF' : "CHF AGG NOSWAP SABRAF MARKET"
+            , 'GBP' : "GBP AGG NOSWAP SABRAF MARKET"}
+
+def loadAllRampMarket(calcDate, Shock=0):
+    """Load USD/EUR/CHF/GBP aggregate markets; ``Shock`` is YCParallelShift in bps."""
+    ParamRange = [['*MESAMARKET', 'YCParallelShift', Shock]]
+    calcDate = datetime_to_excel_date(calcDate)
+    
+    mktUSD = LoadMarketRamp("mktUSD",[rampItem, rampMarketDict['USD']], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')
+    mktEUR = LoadMarketRamp("mktEUR",[rampItem, rampMarketDict['EUR']], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')
+    mktCHF = LoadMarketRamp("mktCHF",[rampItem, rampMarketDict['CHF']], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')   
+    mktGBP = LoadMarketRamp("mktGBP",[rampItem, rampMarketDict['GBP']], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')   
+    
+    marketDict = {'USD' : mktUSD
+                , 'EUR' : mktEUR
+                , 'CHF' : mktCHF
+                , 'GBP' : mktGBP}
+    
+    return marketDict
+
+
+def lastBusinessDay(dateC):
+    """Return the most recent weekday on or before ``dateC`` (Mon–Fri; no holiday calendar)."""
+    offset = 0 if (dateC.weekday() <=4) else ((dateC.weekday() + 6) % 7 - 3)
+    dateC = dateC - relativedelta(days=offset) # most recent previous business day
+    return dateC
+
+
+##################
+# WASP Functions #
+##################
+
+
+#################################################################################################################
+# WASP FORWARD                                                                                                  #       
+#################################################################################################################
+def getFxRate(dateC, curr='EUR', mkt = None):
+    '''Function returns all Forward Rate curves indices in indiceDict
+    dateC: Calculation date
+    Use example: getFxRate(dateC=dt.datetime(2022, 5, 31))
+    '''
+    dateC = lastBusinessDay(dateC)
+    # Function return Forward Rate curve for 120 months for all indice in indiceDict
+    calcDate = datetime_to_excel_date(dateC) #nombre de jours depuis le 1er janvier 1900
+
+    if not mkt:
+        if _USE_NAMED_PARAMS:
+            mkt = LoadMarketRamp("mkt","SPOT FX RATES",rampSet, calcDate)
+        else:
+            LoadMarketRamp("mkt","SPOT FX RATES",rampSet, calcDate)
+            mkt = "mkt"
+
+    # Load Fwd Curve for all indice listed in indiceDict
+    results = FXGetMultiSpot(mkt,  curr)
+    return pd.DataFrame(results.to_list()[0], columns=["Curr1", "Curr2", "FxRate"]).T  
+
+def realizedRate(dateC, i, ind, mkt):
+    '''Function returns the Realized Rate curve value on one date for one indice
+    dateC: Calculation date
+    i: The number of days
+    ind: Indice ex 'USSOFR'
+    mkt: market USD or EUR
+    WASP function replication
+    '''
+    dtC = datetime_to_excel_date(dateC + relativedelta(days = i))
+    
+    try:
+        res = Fwd(dtC, Add(dtC, int(ind[-1]) if ind[-1].isdigit() else 1, "m" if ind[-1].isdigit() else "bd"), ind, mkt)
+        res = res.to_list()[0][0][0]
+    except Exception as exc:
+        _logger.warning("realizedRate failed day=%d indice=%s: %s", i, ind, exc)
+        res = None
+    return res
+
+def forwardRate(dateC, i, ind, mkt):
+    '''Function returns the Forward Rate curve value on one date for one indice
+    dateC: Calculation date
+    i: The number of months
+    ind: Indice ex 'USSOFR'
+    mkt: market USD or EUR
+    WASP function replication
+    '''
+    dtC = datetime_to_excel_date(dateC + relativedelta(months=i) + relativedelta(day = 31))
+    
+    try:
+        res = Fwd(dtC, Add(dtC, int(ind[-1]) if ind[-1].isdigit() else 1, "m" if ind[-1].isdigit() else "bd"), ind, mkt)
+        res = res.to_list()[0][0][0]
+    except Exception as exc:
+        _logger.warning("forwardRate failed month=%d indice=%s: %s", i, ind, exc)
+        res = None
+    return res
+
+def dailyFwdRate(dateC, indice, mktUSD = None, mkt = None, startDay = -3630, endDay = 3630, Shock = 0):
+    '''Function returns Realized Rate curve for one indice
+    dateC: Calculation date
+    indice: Indice ex 'USSOFR'
+    mkt: Pre-loaded market handle; if None the function loads one from rampMarketDict.
+    startDay: The first day of which we want the rate. -3630 by default.
+    endDay: The last day of which we want the rate. 3630 by default.
+    Shock: YCParallelShift in basis points (e.g. 50 = +0.50% parallel shift).
+    Use example:  dailyFwdRate(dateC=dt.datetime(2022, 5, 31), indice='USSOFR')
+    '''
+    
+    calcDate = datetime_to_excel_date(lastBusinessDay(dateC))
+    currency = indiceDict[indice]
+    ParamRange = [['*MESAMARKET', 'YCParallelShift', Shock]]
+
+    if mkt is None:
+        if currency not in rampMarketDict:
+            raise ValueError(f"No ramp market configured for currency {currency!r}")
+        LoadMarketRamp(
+            "mkt",
+            [rampItem, rampMarketDict[currency]],
+            rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False',
+        )
+        mkt = "mkt"
+
+    # Load Fwd Curve for all indice listed in indiceDict
+    results = pd.DataFrame([[indice, i, realizedRate(dateC, i, indice, mkt)] for i in range(startDay,endDay)])
+    
+    results.columns = ['indice', 'day', 'value']
+    results['dateRef'] = dateC
+    results['Indice'] = indice
+    results['Date'] = dateC + pd.to_timedelta(results['day'], unit='D')
+    results['dateY'] = results['Date'].dt.strftime("%Y")
+    results['dateQ'] = results['Date'].dt.to_period('Q')
+    return results
+
+def monthlyForwardRate(dateC, indice, mkt = None, startMonth = -121, endMonth = 160):
+    '''Function returns Forward Rate curve for 120 months for one indice
+    dateC: Calculation date
+    indice: Indice ex 'USSOFR'
+    startMonth: The first month of which we want the rate. -121 by default.
+    endMonth: The last month of which we want the rate. 121 by default.
+    Use example:  monthlyForwardRate(dateC=dt.datetime(2022, 5, 31), indice='USSOFR')
+    '''
+    dateC = lastBusinessDay(dateC)
+    calcDate = datetime_to_excel_date(dateC)
+
+    currency = indiceDict[indice]
+
+    if mkt is None:
+        if currency not in rampMarketDict:
+            raise ValueError(f"No ramp market configured for currency {currency!r}")
+        LoadMarketRamp("mkt", [rampItem, rampMarketDict[currency]], rampSet, calcDate)
+        mkt = "mkt"
+
+    offset = BMonthEnd()
+    dateM = offset.rollforward(dateC)
+    endofMonthDate = dateM.to_pydatetime()
+
+    results = pd.DataFrame([[indice, i, forwardRate(endofMonthDate, i, indice, mkt)] for i in range(startMonth,endMonth)])
+    
+    results.columns = ['indice', 'month', 'value']
+    results['dateRef'] = dateC
+    results['Indice'] = indice
+    results['monthDate'] = (
+        pd.to_datetime(dateC) + results['month'].apply(lambda m: relativedelta(months=int(m), day=31))
+    )
+    results['dateY'] = results['monthDate'].dt.strftime("%Y")
+    results['dateQ'] = results['monthDate'].dt.to_period('Q')
+    return results
+
+def monthlyForwardRateMean(dateC, indice, mkt = None, startMonth = -121, endMonth = 160):
+    '''Function returns Forward Rate curve for 120 months for one indice. The foraward rate of every month is the average of everyday's rate of that month. 
+    In the contrast, monthlyForwardRate applies the rate of the last business day of every month. 
+    dateC: Calculation date
+    indice: Indice ex 'USSOFR'
+    mtkUSD: Market USD
+    mktEUR: Market EUR
+    startMonth: The first month of which we want the rate. -121 by default.
+    endMonth: The last month of which we want the rate. 121 by default.
+    Use example:  monthlyForwardRate(dateC=dt.datetime(2022, 5, 31), indice='USSOFR')
+    '''
+    dateC = lastBusinessDay(dateC)
+    calcDate = datetime_to_excel_date(dateC)
+    
+    currency = indiceDict[indice]
+
+    if mkt is None:
+        if currency not in rampMarketDict:
+            raise ValueError(f"No ramp market configured for currency {currency!r}")
+        LoadMarketRamp("mkt", [rampItem, rampMarketDict[currency]], rampSet, calcDate)
+        mkt = "mkt"
+    
+    businessDaysInMonth = pd.bdate_range(start=dateC.strftime('%Y-%m-1'), end=(dateC + relativedelta(day = 31)), freq=BDay())
+
+    results = pd.DataFrame([[indice, i, np.average([forwardRate(businessDay, i, indice, mkt) for businessDay in businessDaysInMonth])] for i in range(startMonth,endMonth)])
+    results.columns = ['indice', 'month', 'value']
+    results['dateRef'] = dateC
+    results['Indice'] = indice
+    results['monthDate'] = (
+        pd.to_datetime(dateC) + results['month'].apply(lambda m: relativedelta(months=int(m)))
+    )
+    results['dateY'] = results['monthDate'].dt.strftime("%Y")
+    results['dateQ'] = results['monthDate'].dt.to_period('Q')
+    return results
+
+#To be uopdated
+def monthlyFxRate(dateC, curr, startMonth = -121, endMonth = 121):
+    '''Function returns exchange rates of a certain currency with EUR for 120 months
+    dateC: Calculation date
+    curr: currency of which we want the exchange rate with EUR. ex: 'USD'
+    startMonth: The first month of which we want the rate. 0 by default.
+    endMonth: The last month of which we want the exchange rate. 121 by default.
+    Use example:  monthlyFxRate(dateC=dt.datetime(2022, 5, 31), curr = 'USD')
+    '''
+
+    # Load Fwd Curve for all indice listed in indiceDict
+    diff = 1 if dateC == lastBusinessDay(dateC + relativedelta(day = 31)) else 0 #A difference 0 or 1 to show the right fx rate we are on the last day of the last month or not.
+
+    LoadMarketRamp("RAMPSpots","SPOT FX RATES",rampSet, dateC)  if dateC == lastBusinessDay(dateC + relativedelta(day = 31)) else LoadMarketRamp("RAMPSpots","SPOT FX RATES"
+        ,rampSet, lastBusinessDay(dateC + relativedelta(months=-1) + relativedelta(day = 31)))
+    mktFX = "RAMPSpots"
+
+    Mesa_mkt = LoadMarketRamp('AggMarket',['MESA MARKET', 'SPOT FX RATES'], 'OFFICIAL', dateC)                               
+
+    if _USE_NAMED_PARAMS:
+        resultsFuture = pd.DataFrame([[curr, i, MESA_FxFwd(Mesa_mkt,datetime_to_excel_date(lastBusinessDay(dateC + relativedelta(months=i) + relativedelta(day = 31))),'EUR', curr)] 
+        for i in range(0+diff,endMonth)])
+    else:
+        resultsFuture = pd.DataFrame([[curr, i, MESA_FxFwd("AggMarket",datetime_to_excel_date(lastBusinessDay(dateC + relativedelta(months=i) + relativedelta(day = 31))),'EUR', curr)] 
+        for i in range(0+diff,endMonth)])
+                                    
+    resultsRealized = pd.DataFrame([[curr, i, getFxRate(lastBusinessDay(dateC + relativedelta(months=i) + relativedelta(day = 31)),mkt = mktFX).T.loc[getFxRate(lastBusinessDay(dateC + relativedelta(months=i)
+     + relativedelta(day = 31)),mkt = mktFX).T['Curr2'] == curr]['FxRate'].values[0]] for i in range(startMonth, 0+diff)]) if curr != 'EUR' else pd.DataFrame([[curr, i, 1] for i in range(startMonth,0+diff)])
+    results = pd.concat([resultsRealized, resultsFuture], ignore_index= True)
+    results.columns = ['curr', 'month', 'value']
+    results['dateRef'] = dateC
+    results['monthDate'] = results['month'].apply(
+        lambda m: lastBusinessDay(dateC + relativedelta(months=int(m), day=31))
+    )
+    results['dateY'] = results['monthDate'].dt.strftime("%Y")
+    results['dateQ'] = results['monthDate'].dt.to_period('Q')
+    return results 
+
+
+def monthlyForwardAllRate(dateC):
+    '''Function returns all LoadMarketRamp("EUR AGG NOSWAP SABRAF MARKET",[rampItem,"EUR AGG NOSWAP SABRAF MARKET"],rampSet, calcDate)Forward Rate curves indices in indiceDict
+    dateC: Calculation date
+    Use example: monthlyForwardAllRate(dateC=dt.datetime(2022, 5, 31))
+    '''
+    dateC = lastBusinessDay(dateC)
+    
+    # Load Fwd Curve for all indice listed in indiceDict
+    pool = ThreadPool(4)
+
+    results = pd.concat(pool.starmap(monthlyForwardRate, zip([dateC for indice in indiceDict.keys()],[indice for indice in indiceDict.keys()], [None for indice in indiceDict.keys()])))
+    return results
+
+def monthlyFxAllRate(dateC):
+    '''Function returns all monthly exchange rates for the currencies in currDict
+    dateC: Calculation date
+    Use example: monthlyFxAllRate(dateC=dt.datetime(2022, 5, 31))
+    '''
+    dateC = lastBusinessDay(dateC)
+    pool = ThreadPool(1)
+    results = pd.concat(pool.starmap(monthlyFxRate, zip([dateC for curr in currDict],[curr for curr in currDict])))
+    return results
+
+
+def swapPricing(dateC, startDate, matMonths, indice, mkt = None, rampSet="OFFICIAL", Frq = 'A'):
+    '''Function returns the swap rate of a swap with caracteritics:
+    dateC: Calculation date
+    startDate: Forward starting date
+    matMonths: Nb months to maturity
+    indice: Indice ex 'USSOFR'
+    Use exemple: swapPricing(dateC='8-30-2022', startDate='1-1-2023', matMonths=24, indice='USSOFR')
+    '''
+    startDt = datetime_to_excel_date(dt.datetime.strptime(startDate, '%m-%d-%Y'))
+    matDate = datetime_to_excel_date(dt.datetime.strptime(startDate, '%m-%d-%Y') + relativedelta(months=matMonths))
+
+    if (mkt == None):
+        if _USE_NAMED_PARAMS:
+            mkt = LoadMarketRamp("mkt",[rampItem,"USD AGG NOSWAP SABRAF MARKET"],rampSet, 0 if rampSet== 'LIVE' else dateC)
+        else:
+            LoadMarketRamp("mkt",[rampItem,"USD AGG NOSWAP SABRAF MARKET"],rampSet, 0 if rampSet== 'LIVE' else dateC)
+            mkt = "mkt"
+
+    if _USE_NAMED_PARAMS:
+        res = Swap(C_ActStartObj = startDt, C_TheoMatOrPrdsObj = matDate, s_FixFrq = Frq, s_FixBasis = 'BB', s_Mkt = mkt, s_RefR = indice, s_FltPayFrq = Frq)
+    else:
+        res = Swap(startDt, matDate,  Frq, 'BB', mkt, indice)
+
+    swapPricing = res.to_list()[0][0][0]
+    return(swapPricing)
+
+def swapPricingHist(dateC, startDate, matMonths, indice):
+    '''Function return the swap rate with caracteritics for the last 3 business days and 6 months before dateC:
+    dateC: Calculation date
+    startDate: Forward starting date
+    matMonths: Nb months to maturity
+    indice: Indice ex 'USSOFR'
+    Use exemple: swapPricingHist(dateC=dt.date.today(), startDate='1-1-2023', matMonths=24, indice='USSOFR')
+    '''
+    dateRange = [*pd.bdate_range(end=dateC, periods=6, freq='BM').strftime('%m-%d-%Y'), *pd.bdate_range(end=dt.date.today(), periods=3, freq='B').strftime('%m-%d-%Y')] 
+    swapPricingDT = pd.DataFrame({'date': dateRange, 'swapPricing': [swapPricing(dateC=date, startDate=startDate, matMonths=matMonths, indice=indice) for date in dateRange]})
+    return(swapPricingDT)
+
+
+#################################################################################################################
+# WASP Optional Hedges pricing                                                                                  #       
+#################################################################################################################
+
+def collarPricing(dateC, startDate, maturityDate, currency, notional, optionType, strike, indice, buySell, mkt = None, ValeurIntrinseque = False):
+    '''Pricing of a single Collar 
+    if no market is defined, then by default it reload a market from Ramp (which may be time consuming when called in a loop)
+    dateC : calculation date in a DateTime format 
+    startDate : start date in a DateTime format
+    maturityDate : maturity date in a DateTime format
+    currency (string) : currency of the collar ("USD" or "EUR" only)
+    notional (double): notional of the collar
+    optionType (string): "Cap" or "Floor"
+    strike (double): strike of the collar (cap or floor level)
+    indice (string) : reference rate of the collar
+    buysell (string) : buyer or seller of the cap/floor option
+    ValeurIntrinseque (boolean) : if true then returns the valeur intrinsèque of the collar (price assuming 0 volatility)
+
+    To use westminster function, needs to convert date from string to excel format
+    '''
+    dateCExcel = datetime_to_excel_date(dateC)
+    startDateExcel = datetime_to_excel_date(startDate)
+    maturityDateExcel = datetime_to_excel_date(maturityDate)
+
+    if (buySell == "buy"):
+        sens = 1  
+    else:
+        sens = -1
+ 
+    if (mkt == None):
+        if _USE_NAMED_PARAMS:
+            if(currency == 'USD'):
+                mkt = LoadMarketRamp("mkt",[rampItem,"USD AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+            else:
+                mkt = LoadMarketRamp("mkt",[rampItem,"EUR AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+        else:
+            if(currency == 'USD'):
+                LoadMarketRamp("mkt",[rampItem,"USD AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+                mkt = "mkt"
+            else:
+                LoadMarketRamp("mkt",[rampItem,"EUR AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+                mkt = "mkt"
+
+    if _USE_NAMED_PARAMS:
+        if ValeurIntrinseque:
+            res = sens * notional * CapGreeks(i_lActStart = startDateExcel, i_lTheoMat = maturityDateExcel, d_dStrike = strike, s_cRefRate = indice, s_cPayRec = optionType, d_dVol = 0.0000000001, s_cVolType = "Normal", s_cGreek = 'Premium', s_cMarketID = mkt, s_cFreq = 'M', s_cBasis = 'MM', s_cCSA = '-4017')
+        else:
+            res = sens * notional * CapGreeks(i_lActStart = startDateExcel, i_lTheoMat = maturityDateExcel, d_dStrike = strike, s_cRefRate = indice, s_cPayRec = optionType, s_cVolType = "Normal", s_cGreek = 'Premium', s_cMarketID = mkt, s_cFreq = 'M', s_cBasis = 'MM', s_cCSA = '-4017')
+    else:
+        if ValeurIntrinseque:
+            res = sens * notional * CapGreeks(startDateExcel, maturityDateExcel, strike, indice, optionType, 0.0000000001, "Normal", 'Premium', mkt, False, False, False, False, '', 'M', 'MM','',False,-4017)
+        else:
+            res = sens * notional * CapGreeks(startDateExcel, maturityDateExcel, strike, indice, optionType, False, "Normal", 'Premium', mkt, False, False, False, False, '', 'M', 'MM','',False,-4017)
+        
+    return(res)
+
+def swapLegPricing(dateC, startDate, maturityDate, currency, notional, indice, buySell, mkt = None, strike = 0, Shock=0):
+    '''Pricing of a single leg of a swap
+    if no market is defined, then by default it reload a market from Ramp (which may be time consuming when called in a loop)
+    dateC : calculation date in a DateTime format 
+    startDate : start date in a DateTime format
+    maturityDate : maturity date in a DateTime format
+    currency (string) : currency of the collar ("USD" or "EUR" only)
+    notional (double): notional of the collar
+    indice (string) : reference rate of the collar
+    strike (double): strike of the collar (cap or floor level)
+    buysell (string) : buyer or seller of the swap leg
+
+    To use westminster function, needs to convert date from string to excel format
+    '''
+    startDateExcel = datetime_to_excel_date(startDate)
+    maturityDateExcel = datetime_to_excel_date(maturityDate)
+    calcDate = datetime_to_excel_date(dateC)
+    ParamRange = [['*MESAMARKET', 'YCParallelShift', Shock]]
+    
+    if mkt is None:
+        if currency not in rampMarketDict:
+            raise ValueError(f"No ramp market configured for currency {currency!r}")
+        LoadMarketRamp("mkt", [rampItem, rampMarketDict[currency]], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')
+        mkt = "mkt"
+
+    if (buySell == "Loan"):
+        sens = 1  
+    else:
+        sens = -1
+
+    if (indice == "Fixed"):
+        SwapRate = strike
+    else:
+        SwapRate = Swap(startDateExcel,  maturityDateExcel, 'Q', 'MM',  mkt, indice).to_list()[0][0][0]
+        
+    Duration = Level(startDateExcel, maturityDateExcel, 'Q', 'MM', mkt, '', -4017, currency) 
+
+    res = sens * notional * SwapRate * Duration
+    
+    return(res)
+
+
+def stockSwapMTM(dateC, stockSwapsMTM, useMRX = False, Shock=0):
+    '''This function prices the stock of our optional hedges (collars and swaps) at a given date (dateStock), and at a given calculation date (dateC)
+    Prices are computed by Wasp
+    stock definition is get from the file run parameters located in the input path
+    dateC : calculation date in a datetime format 
+    dateStock : loading date of the stock in a datetime format 
+
+    YCParallelShift unit: basis points (e.g. 50 = +0.50% parallel shift)
+    '''
+    result = stockSwapsMTM.copy()
+        
+    ParamRange = [['*MESAMARKET', 'YCParallelShift', Shock]]
+    dateC = lastBusinessDay(dateC)
+    calcDate = datetime_to_excel_date(dateC)
+
+    _ccy_to_mkt = {}
+    for ccy, ramp_name in rampMarketDict.items():
+        handle = f"mkt{ccy}"
+        LoadMarketRamp(handle, [rampItem, ramp_name], rampSet, calcDate, calcDate, ParamRange, '', 1, 0, '', 'False')
+        _ccy_to_mkt[ccy] = handle
+
+    def _price_row(row):
+        mkt_handle = _ccy_to_mkt.get(row['Currency Code (ISO)'])
+        if mkt_handle is None:
+            _logger.warning("No market for currency %s, skipping MTM", row['Currency Code (ISO)'])
+            return 0.0
+        return swapLegPricing(
+            dateC,
+            row['Value Date'],
+            row['Maturity Date'],
+            row['Currency Code (ISO)'],
+            row['Amount'],
+            _resolve_swap_indice(row['Index']),
+            row['Buy / Sell'],
+            mkt_handle,
+            row['Rate'] / 100,
+        )
+
+    result['MTM'] = result.apply(_price_row, axis=1)
+    return result
+
+
+def waspRatesProbability(dateC, forwardDate, currency, strike, indice, mkt = None):
+    '''Function which returns Proba (Rate (ForwardDate, indice, currency) < strike) with the market loaded at DateC
+    if no market is defined, then by default it reload a market from Ramp (which may be time consuming when called in a loop)
+    '''
+    dateCExcel = datetime_to_excel_date(dateC)
+    forwardDateExcel = datetime_to_excel_date(forwardDate)
+    maturityDateExcel = datetime_to_excel_date(forwardDate + relativedelta(days=1))
+
+    if (mkt == None):
+        if(currency == 'USD'):
+            LoadMarketRamp("mkt",[rampItem,"USD AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+        elif(currency == 'EUR'):
+            LoadMarketRamp("mkt",[rampItem,"EUR AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)
+        elif(currency == 'CHF'):
+            LoadMarketRamp("mkt",[rampItem,"CHF AGG NOSWAP SABRAF MARKET"],rampSet, dateCExcel)   
+        mkt = "mkt"
+    
+        res = -100* CapGreeks(forwardDateExcel,  maturityDateExcel,  strike,  indice, "Floor", False , "Normal", 'Delta', mkt, False, -1, False, False, '', 'A', 'MM','',False,-4017)
+
+    return(res)
+
+
+
+def plot_WaspRatesProbability(dateC, forwardDate, currency, indice, mkt = None):
+    
+    results = pd.DataFrame([[i/1000 - 4/100, waspRatesProbability(dateC, forwardDate, currency, i/1000- 4/100, indice, mkt)] for i in range(0,190)])
+    results.columns = ['strike',forwardDate]
+
+    return(results)
+
+
+def loadCarryCompoundedMarket(RefDate, Shock=0):
+    #loadCarryCompoundedMarket(RefDate = dt.datetime(2025, 8, 22), Shock=0)
+
+    ParamRange = [['*MESAMARKET', 'YCParallelShift', Shock]]
+    calcDateExcel = datetime_to_excel_date(lastBusinessDay(RefDate))
+        
+    LoadMarketRamp("mktUSD",[rampItemCarry, rampMarketDict['USD']], rampSet, calcDateExcel, calcDateExcel, ParamRange, '', 1, 0, '', 'False')
+    LoadMarketRamp("mktEUR",[rampItemCarry, rampMarketDict['EUR']], rampSet, calcDateExcel, calcDateExcel, ParamRange, '', 1, 0, '', 'False')
+    LoadMarketRamp("mktCHF",[rampItemCarry, rampMarketDict['CHF']], rampSet, calcDateExcel, calcDateExcel, ParamRange, '', 1, 0, '', 'False')     
+    LoadMarketRamp("mktGBP",[rampItemCarry, rampMarketDict['GBP']], rampSet, calcDateExcel, calcDateExcel, ParamRange, '', 1, 0, '', 'False') 
+
+    
+
+def carryCompounded(StartDate, EndDate, Currency):
+    '''This function prices the stock of our optional hedges (collars and swaps) at a given date (dateStock), and at a given calculation date (dateC)
+    Prices are computed by Wasp
+    stock definition is get from the file run parameters located in the input path
+    dateC : calculation date in a datetime format 
+    dateStock : loading date of the stock in a datetime format 
+    '''
+    
+    if(Currency == 'USD'):
+        indice = "USSOFR"
+    elif(Currency == 'EUR'):
+        indice = "ESAVB1"
+    elif(Currency == 'CHF'):
+        indice = "CSCML5"
+    elif(Currency == 'GBP'):
+        indice = "GBPOIS"        
+    
+    startDateExcel = datetime_to_excel_date(StartDate)
+    maturityDateExcel = datetime_to_excel_date(EndDate)
+    
+    try:
+        res = Fwd(startDateExcel, maturityDateExcel, indice, "mktUSD" if Currency =="USD" else "mktEUR" if Currency =="EUR" else "mktCHF" if Currency =="CHF" else "mktGBP")
+        carry = res.to_list()[0][0][0]
+    except Exception as exc:
+        _logger.warning("carryCompounded failed %s [%s, %s]: %s", Currency, StartDate, EndDate, exc)
+        carry = None        
+
+    return(carry)
+
+
+def carryCompoundedFwd(Dealid="001", StartDate=None, EndDate=None, Currency=None):
+    '''This function prices the stock of our optional hedges (collars and swaps) at a given date (dateStock), and at a given calculation date (dateC)
+    Prices are computed by Wasp
+    stock definition is get from the file run parameters located in the input path
+    dateC : calculation date in a datetime format 
+    dateStock : loading date of the stock in a datetime format 
+    carryCompoundedFwd(StartDate= dt.datetime(2025, 8, 24), EndDate = dt.datetime(2025, 11, 15), Currency = "CHF")
+    carryCompoundedFwd(StartDate= dt.datetime(2025, 8, 24), EndDate = dt.datetime(2025, 11, 30), Currency = "CHF")
+    '''
+    
+    carryFwd = [{'Dealid':Dealid
+                 , 'Currency':Currency
+                 , 'Maturitydate': EndDate
+                 , 'Date': dateMat + relativedelta(day=31)
+                 ,  'CarryCompounded': carryCompounded(StartDate, dateMat, Currency)
+                 }  for dateMat in set([dateMat.to_pydatetime() for dateMat in pd.date_range(start=StartDate, end= EndDate, freq='M').to_list()] + [EndDate])]    
+
+    return(pd.DataFrame(carryFwd))
+
+
+
+
+
+
+===FILE END=== src/pnl_engine/wasptools.py
 
 ===FILE START=== src/pnl_engine/what_if.py
 """What-If deal simulator — incremental NII + EVE without full re-run.
