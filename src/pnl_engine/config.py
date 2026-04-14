@@ -133,13 +133,13 @@ VALID_PERIMETERS: set[str] = {"CC", "WM", "CIB"}
 #   L = Loan (bank lends money out) → asset (negative nominal in echeancier)
 #   B = Bond purchase → asset (negative nominal in echeancier)
 #   D = Deposit (bank receives funds) → liability (positive nominal in echeancier)
-#   S = Sell Bond → liability (positive nominal in echeancier)
+#   S = Sell Bond → asset (negative nominal in echeancier)
 
-ASSET_DIRECTIONS: set[str] = {"L", "B"}
-LIABILITY_DIRECTIONS: set[str] = {"D", "S"}
+ASSET_DIRECTIONS: set[str] = {"L", "B", "S"}
+LIABILITY_DIRECTIONS: set[str] = {"D"}
 DIRECTION_SIDE: dict[str, str] = {
-    "L": "asset", "B": "asset",
-    "D": "liability", "S": "liability",
+    "L": "asset", "B": "asset", "S": "asset",
+    "D": "liability",
 }
 
 # ---------------------------------------------------------------------------

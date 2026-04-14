@@ -55,7 +55,7 @@ def compute_basis_risk(
     # shocked in opposite directions.  A positive spread shock widens the
     # spread (client rate moves away from OIS):
     #   Assets  (L/B): client rate rises  → shocked_rate = rate + shock
-    #   Liabilities (D/S): client rate falls → shocked_rate = rate - shock
+    #   Liabilities (D): client rate falls → shocked_rate = rate - shock
     # We store a (n_deals, 1) sign array: +1 for assets, -1 for liabilities.
     if "Direction" in deals.columns:
         from pnl_engine.config import ASSET_DIRECTIONS

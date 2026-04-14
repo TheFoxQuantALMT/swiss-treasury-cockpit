@@ -234,7 +234,7 @@ def _build_liquidity(
     sorted_cols = sorted(date_cols, key=lambda c: col_dates[c])
 
     # Identify asset vs liability by direction
-    # L(oan)/B(ond) = asset (negative nominal), D(eposit)/S(ell bond) = liability (positive nominal)
+    # L(oan)/B(ond)/S(ell bond) = asset (negative nominal), D(eposit) = liability (positive nominal)
     from pnl_engine.config import ASSET_DIRECTIONS
     if "Direction" in df.columns:
         df["_is_asset"] = df["Direction"].isin(ASSET_DIRECTIONS)
@@ -259,7 +259,7 @@ def _build_liquidity(
             dt = col_dates[col]
             labels.append(dt.strftime("%Y-%m-%d") if "/" in col and col.count("/") == 2 else dt.strftime("%Y-%m"))
 
-            # Assets (L/B): principal returning = inflow; Liabilities (D/S): repayment = outflow
+            # Assets (L/B/S): principal returning = inflow; Liabilities (D): repayment = outflow
             inflow = float(ccy_df.loc[ccy_df["_is_asset"], col].sum())
             outflow = float(-ccy_df.loc[~ccy_df["_is_asset"], col].sum())  # negate: unsigned -> negative
 

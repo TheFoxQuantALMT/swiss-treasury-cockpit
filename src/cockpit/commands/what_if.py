@@ -41,7 +41,7 @@ def cmd_what_if(
         except (KeyError, ValueError, IndexError) as e:
             print(f"[what-if] Warning: could not determine OIS rate for {currency}, using 0.0: {e}")
 
-    # Map CLI direction to what-if direction: D/S (deposit/sell = liability) -> L, B (bond) -> B
+    # Map CLI direction to what-if direction: D (deposit = liability) -> L, B/S (bond = asset) -> B
     wif_direction = "L" if direction.upper() in ("D", "L") else "B"
 
     # Determine day-count convention from currency

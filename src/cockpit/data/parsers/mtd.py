@@ -218,10 +218,10 @@ def parse_mtd(path: Path) -> pd.DataFrame:
             df = df[~bad_dir].copy()
 
     # Cross-validate Direction against Assets/Liabilities column if present
-    # L=Loan, B=Bond → Asset; D=Deposit, S=Sell Bond → Liability
+    # L=Loan, B=Bond, S=Sell Bond → Asset; D=Deposit → Liability
     if "AssetLiability" in df.columns and "Direction" in df.columns:
         _al = df["AssetLiability"].astype(str).str.strip().str.lower()
-        _expected_side = df["Direction"].map({"L": "asset", "B": "asset", "D": "liability", "S": "liability"})
+        _expected_side = df["Direction"].map({"L": "asset", "B": "asset", "S": "asset", "D": "liability"})
         _mismatch = (_al.isin(["asset", "liability"])) & (_al != _expected_side)
         n_mismatch = int(_mismatch.sum())
         if n_mismatch > 0:

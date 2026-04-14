@@ -42,7 +42,7 @@ def compute_snb_reserves(
     if deals is None or deals.empty:
         return {"has_data": False}
 
-    # Sight liabilities: Direction D (deposit) or S (sell bond) = bank receives funds
+    # Sight liabilities: Direction D (deposit) = bank receives funds
     from pnl_engine.config import LIABILITY_DIRECTIONS
     sight_mask = pd.Series([False] * len(deals))
     if "Direction" in deals.columns:

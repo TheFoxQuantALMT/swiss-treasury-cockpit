@@ -175,7 +175,7 @@ When auditing this codebase for correctness, classify issues by severity:
 - **Hardcoded parameters**: that should be configurable per bank (product codes, thresholds, limits)
 
 ### Canonical Conventions (authoritative source of truth)
-- **Direction**: `config.DIRECTION_SIDE` — L=Loan/B=Bond → asset (negative nominal), D=Deposit/S=Sell Bond → liability (positive nominal). The echeancier carries signed nominals: negative for assets, positive for liabilities. The P&L engine core uses nominal sign directly; analytical modules (EVE, repricing, SNB reserves, dashboard charts) use `config.ASSET_DIRECTIONS` / `config.LIABILITY_DIRECTIONS` for classification.
+- **Direction**: `config.DIRECTION_SIDE` — L=Loan/B=Bond/S=Sell Bond → asset (negative nominal), D=Deposit → liability (positive nominal). The echeancier carries signed nominals: negative for assets, positive for liabilities. The P&L engine core uses nominal sign directly; analytical modules (EVE, repricing, SNB reserves, dashboard charts) use `config.ASSET_DIRECTIONS` / `config.LIABILITY_DIRECTIONS` for classification.
 - **Rates**: always decimal (0.015 = 1.5%), never percent. Shocks in bps (200 = +2%)
 - **Day count**: `config.MM_BY_CURRENCY` for NII. OIS discounting: ACT/360 CHF/EUR, ACT/365 GBP/USD
 - **P&L formula**: `Nominal × (OIS - RateRef) × accrual_days / MM` — nominal is already signed, so P&L sign follows naturally

@@ -148,7 +148,7 @@ def project_balance_sheet(
             # Build nominal schedule for new deal
             new_nominal = np.zeros(len(days))
             from pnl_engine.config import ASSET_DIRECTIONS
-            # Assets (L/B) = negative nominal, Liabilities (D/S) = positive nominal
+            # Assets (L/B/S) = negative nominal, Liabilities (D) = positive nominal
             sign = -1.0 if direction in ASSET_DIRECTIONS else 1.0
 
             for d_idx, day in enumerate(days):

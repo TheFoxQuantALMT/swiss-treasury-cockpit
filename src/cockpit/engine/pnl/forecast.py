@@ -235,10 +235,10 @@ class ForecastRatePnL:
         if mtm.empty:
             return pd.DataFrame()
 
-        # Derive Pay/Receive from Direction: L/B → RECEIVE, D/S → PAY
+        # Derive Pay/Receive from Direction: L/B/S → RECEIVE, D → PAY
         if "Direction" in mtm.columns:
             mtm["Pay/Receive"] = np.where(
-                mtm["Direction"].isin(["L", "B"]), "RECEIVE", "PAY"
+                mtm["Direction"].isin(["L", "B", "S"]), "RECEIVE", "PAY"
             )
 
         return mtm.reset_index(drop=True)
