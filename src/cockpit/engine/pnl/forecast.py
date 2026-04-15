@@ -341,19 +341,39 @@ class ForecastRatePnL:
         return pd.DataFrame()
 
     def export_files(self) -> None:
-        """Write main P&L workbook under ``output``."""
+        """Write main P&L workbook under ``output``.
+
+        Sheets:
+        - ``pnl{dateRates}``: aggregated portfolio P&L (wide format)
+        - ``Deal PnL``: deal-level P&L detail (all shocks × months)
+        """
         out = Path(self.output)
         out.mkdir(parents=True, exist_ok=True)
         path = (
             out
             / f"stock_{self.dateRun.strftime('%Y%m%d')}_rates_{self.dateRates.strftime('%Y%m%d')}_pnl.xlsx"
         )
-        self.pnlAll.to_excel(
-            path,
-            sheet_name=f"pnl{self.dateRates.strftime('%Y%m%d')}",
-            index=False,
-            engine="openpyxl",
-        )
+        with pd.ExcelWriter(str(path), engine="openpyxl") as writer:
+            self.pnlAll.to_excel(
+                writer,
+                sheet_name=f"pnl{self.dateRates.strftime('%Y%m%d')}",
+                index=False,
+            )
+            if self.pnl_by_deal is not None and not self.pnl_by_deal.empty:
+                deal_cols = [c for c in [
+                    "Dealid", "Counterparty", "Currency", "Product", "Direction",
+                    "Périmètre TOTAL", "Shock", "Month",
+                    "Nominal", "Amount", "Maturitydate", "is_floating",
+                    "Clientrate", "OISfwd", "RateRef",
+                    "GrossCarry", "FundingCost_Simple", "PnL_Simple",
+                    "FundingRate_Simple",
+                    "FundingCost_Compounded", "PnL_Compounded",
+                    "FundingRate_Compounded",
+                    "PnL",
+                ] if c in self.pnl_by_deal.columns]
+                self.pnl_by_deal[deal_cols].to_excel(
+                    writer, sheet_name="Deal PnL", index=False,
+                )
         logger.info("export_files Done -> %s", path)
 
 
