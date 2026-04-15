@@ -31,7 +31,9 @@
       "Bash(find src/cockpit/pnl_dashboard/charts -name \"*.py\" -type f -exec grep -Hn '[\"'\"'\"']\\\\s*[LDBS]\\\\s*[\"'\"'\"']' {} \\\\;)",
       "Bash(ls -la /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit/src/pnl_engine/*.py)",
       "Bash(ls:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find *)",
+      "Bash(rm *)"
     ]
   }
 }

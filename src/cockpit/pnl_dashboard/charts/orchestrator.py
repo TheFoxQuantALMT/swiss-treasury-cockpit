@@ -162,6 +162,8 @@ def build_pnl_dashboard_data(
         "snb_reserves": _build_snb_reserves(deals, limits=limits),
         # NMD Backtest (placeholder)
         "nmd_backtest": _build_nmd_backtest(deals, nmd_profiles),
+        # Raw per-deal DataFrame for Excel export
+        "pnl_by_deal_df": pnl_by_deal,
     }
 
     # Limit utilization (needs eve + nii_at_risk computed first)

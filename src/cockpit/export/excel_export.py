@@ -99,6 +99,24 @@ def export_dashboard_to_excel(
             if ftp.get("has_data") and ftp.get("by_perimeter"):
                 pd.DataFrame(ftp["by_perimeter"]).to_excel(writer, sheet_name="FTP", index=False)
 
+            # Deal-level P&L
+            deal_pnl = dashboard_data.get("pnl_by_deal_df")
+            if deal_pnl is not None and not deal_pnl.empty:
+                export_cols = [c for c in [
+                    "Dealid", "Counterparty", "Currency", "Product", "Direction",
+                    "Périmètre TOTAL", "Shock", "Month",
+                    "Nominal", "Amount", "Maturitydate", "is_floating",
+                    "Clientrate", "OISfwd", "RateRef",
+                    "GrossCarry", "FundingCost_Simple", "PnL_Simple",
+                    "FundingRate_Simple",
+                    "FundingCost_Compounded", "PnL_Compounded",
+                    "FundingRate_Compounded",
+                    "PnL",
+                ] if c in deal_pnl.columns]
+                deal_pnl[export_cols].to_excel(
+                    writer, sheet_name="Deal PnL", index=False,
+                )
+
             # Metadata
             meta = pd.DataFrame([{"date_run": date_run, "export_type": "dashboard"}])
             meta.to_excel(writer, sheet_name="Metadata", index=False)

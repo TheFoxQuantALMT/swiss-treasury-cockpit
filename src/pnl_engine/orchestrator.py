@@ -407,8 +407,23 @@ class PnlEngine:
         ]
         total_rows = monthly[monthly["PnL_Type"] == "Total"]
         if not total_rows.empty and deal_summary_cols:
+            agg_spec = {"PnL": ("PnL", "sum"), "Nominal": ("Nominal", "mean")}
+            # CoC metrics — sum (already monthly totals from _aggregate_slice)
+            for col in ["GrossCarry", "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "sum")
+            # Rates — first (one value per deal × month)
+            for col in ["OISfwd", "RateRef", "FundingRate_Simple",
+                        "FundingRate_Compounded", "Clientrate"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "first")
+            # Deal metadata — first (static per deal)
+            for col in ["Amount", "Maturitydate", "is_floating"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "first")
             deal_summary = total_rows.groupby(deal_summary_cols).agg(
-                PnL=("PnL", "sum"), Nominal=("Nominal", "mean"),
+                **agg_spec
             ).reset_index()
             deal_summary["Shock"] = Shock
             # Rename for consistency with pnlAllS

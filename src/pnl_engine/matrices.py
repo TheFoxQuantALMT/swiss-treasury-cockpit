@@ -256,7 +256,7 @@ def _build_carry_funding_matrix(
         for month in months:
             month_start = month.start_time
             month_end = month.end_time
-            day_mask = (days.to_period("M") == month).values
+            day_mask = np.asarray(days.to_period("M") == month)
             if not day_mask.any():
                 continue
 
