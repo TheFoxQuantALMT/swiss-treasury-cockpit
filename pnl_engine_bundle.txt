@@ -1,6 +1,6 @@
 ============================================================
 PNL_ENGINE BUNDLE — swiss-treasury-cockpit
-Generated: 2026-04-14
+Generated: 2026-04-15
 ============================================================
 
 STEP 1: Save this entire file as "pnl_engine_bundle.txt"
@@ -230,7 +230,7 @@ def compute_basis_risk(
     # shocked in opposite directions.  A positive spread shock widens the
     # spread (client rate moves away from OIS):
     #   Assets  (L/B): client rate rises  → shocked_rate = rate + shock
-    #   Liabilities (D/S): client rate falls → shocked_rate = rate - shock
+    #   Liabilities (D): client rate falls → shocked_rate = rate - shock
     # We store a (n_deals, 1) sign array: +1 for assets, -1 for liabilities.
     if "Direction" in deals.columns:
         from pnl_engine.config import ASSET_DIRECTIONS
@@ -416,13 +416,13 @@ VALID_PERIMETERS: set[str] = {"CC", "WM", "CIB"}
 #   L = Loan (bank lends money out) → asset (negative nominal in echeancier)
 #   B = Bond purchase → asset (negative nominal in echeancier)
 #   D = Deposit (bank receives funds) → liability (positive nominal in echeancier)
-#   S = Sell Bond → liability (positive nominal in echeancier)
+#   S = Sell Bond → asset (negative nominal in echeancier)
 
-ASSET_DIRECTIONS: set[str] = {"L", "B"}
-LIABILITY_DIRECTIONS: set[str] = {"D", "S"}
+ASSET_DIRECTIONS: set[str] = {"L", "B", "S"}
+LIABILITY_DIRECTIONS: set[str] = {"D"}
 DIRECTION_SIDE: dict[str, str] = {
-    "L": "asset", "B": "asset",
-    "D": "liability", "S": "liability",
+    "L": "asset", "B": "asset", "S": "asset",
+    "D": "liability",
 }
 
 # ---------------------------------------------------------------------------
@@ -767,7 +767,7 @@ def project_balance_sheet(
             # Build nominal schedule for new deal
             new_nominal = np.zeros(len(days))
             from pnl_engine.config import ASSET_DIRECTIONS
-            # Assets (L/B) = negative nominal, Liabilities (D/S) = positive nominal
+            # Assets (L/B/S) = negative nominal, Liabilities (D) = positive nominal
             sign = -1.0 if direction in ASSET_DIRECTIONS else 1.0
 
             for d_idx, day in enumerate(days):
@@ -1215,11 +1215,15 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     present_group = [c for c in group_cols if c in strat.columns]
 
     # Sums
-    agg = strat.groupby(present_group).agg(
-        Amount=("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
-        Nominal=("Nominal", "sum"),
-        PnL=("PnL", "sum"),
-    ).reset_index()
+    has_compounded = "PnL_Compounded" in strat.columns
+    agg_spec = {
+        "Amount": ("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
+        "Nominal": ("Nominal", "sum"),
+        "PnL": ("PnL", "sum"),
+    }
+    if has_compounded:
+        agg_spec["PnL_Compounded"] = ("PnL_Compounded", "sum")
+    agg = strat.groupby(present_group).agg(**agg_spec).reset_index()
 
     # Nominal-weighted average rates
     rate_cols = ["RateRef", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM"]
@@ -1235,7 +1239,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     # -- Step 2: Pivot by Product (§10.2) --
     idx_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "Days in Month", "PnL_Type"]
     idx_cols = [c for c in idx_cols if c in agg.columns]
-    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL"]
+    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL", "PnL_Compounded"]
     present_vals = [v for v in pivot_vals if v in agg.columns]
 
     pivoted = pd.pivot_table(
@@ -1347,6 +1351,26 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
 
     # Remove rows where condition was false (all values = 0)
     combined = combined[combined["Nominal"] != 0].copy()
+
+    # --- Proportional allocation of PnL_Compounded to legs ---
+    if has_compounded:
+        # Total compounded P&L from pivoted product-level data
+        pivoted["_PnL_Compounded_total"] = (
+            _safe(pivoted, "PnL_Compounded_IAM/LD")
+            + _safe(pivoted, "PnL_Compounded_BND")
+            + _safe(pivoted, "PnL_Compounded_HCD")
+        )
+        comp_map = pivoted[base_cols + ["_PnL_Compounded_total"]]
+        combined = combined.merge(comp_map, on=base_cols, how="left")
+
+        # Per-group total Simple for proportional weights
+        simple_total = combined.groupby(base_cols)["PnL_Simple"].transform("sum")
+        combined["PnL_Compounded"] = np.where(
+            simple_total != 0,
+            combined["PnL_Simple"] / simple_total * combined["_PnL_Compounded_total"],
+            0.0,
+        )
+        combined = combined.drop(columns=["_PnL_Compounded_total"])
 
     # Merge direction from non-HCD deals (§10.7)
     combined = pd.merge(direction_map, combined, how="right", on=["Strategy IAS"])
@@ -2678,7 +2702,7 @@ def _build_carry_funding_matrix(
         for month in months:
             month_start = month.start_time
             month_end = month.end_time
-            day_mask = (days.to_period("M") == month).values
+            day_mask = np.asarray(days.to_period("M") == month)
             if not day_mask.any():
                 continue
 
@@ -2741,7 +2765,7 @@ def build_cumulative_carry_factors(
     cum = np.ones((n_deals, n_boundaries + 1), dtype=np.float64)
 
     # Parse value dates
-    value_dates = pd.to_dateti  me(deals["Valuedate"], dayfirst=True, errors="coerce")
+    value_dates = pd.to_datetime(deals["Valuedate"], dayfirst=True, errors="coerce")
     currencies = deals["Currency"].values
 
     # Group by (currency, value_date) to minimize WASP calls
@@ -3746,6 +3770,7 @@ class PnlEngine:
         self._ois_indices: Optional[list[str]] = None
         self._float_wasp_indices: Optional[list[str]] = None
         self._accrual_days: Optional[np.ndarray] = None
+        self._alive_mask: Optional[np.ndarray] = None
 
     def _build_static_matrices(self) -> None:
         """Build deal-level matrices that don't change across shocks."""
@@ -3784,6 +3809,7 @@ class PnlEngine:
         # Build matrices (C6: alive mask caps start at first of dateRun's month)
         self._nominal_daily = expand_nominal_to_daily(self._deals_use[self._month_cols], self._days)
         alive = build_alive_mask(self._deals_use, self._days, date_run=pd.Timestamp(self.dateRun))
+        self._alive_mask = alive
         self._nominal_daily = self._nominal_daily * alive
 
         # Apply NMD behavioral decay if profiles provided
@@ -4026,8 +4052,23 @@ class PnlEngine:
         ]
         total_rows = monthly[monthly["PnL_Type"] == "Total"]
         if not total_rows.empty and deal_summary_cols:
+            agg_spec = {"PnL": ("PnL", "sum"), "Nominal": ("Nominal", "mean")}
+            # CoC metrics — sum (already monthly totals from _aggregate_slice)
+            for col in ["GrossCarry", "FundingCost_Simple", "PnL_Simple",
+                        "FundingCost_Compounded", "PnL_Compounded"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "sum")
+            # Rates — first (one value per deal × month)
+            for col in ["OISfwd", "RateRef", "FundingRate_Simple",
+                        "FundingRate_Compounded", "Clientrate"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "first")
+            # Deal metadata — first (static per deal)
+            for col in ["Amount", "Maturitydate", "is_floating"]:
+                if col in total_rows.columns:
+                    agg_spec[col] = (col, "first")
             deal_summary = total_rows.groupby(deal_summary_cols).agg(
-                PnL=("PnL", "sum"), Nominal=("Nominal", "mean"),
+                **agg_spec
             ).reset_index()
             deal_summary["Shock"] = Shock
             # Rename for consistency with pnlAllS
@@ -4190,6 +4231,8 @@ class PnlEngine:
         present_group = [c for c in group_cols if c in strategy.columns]
 
         sum_cols = {"PnL_Simple": "sum", "Nominal": "sum"}
+        if "PnL_Compounded" in strategy.columns:
+            sum_cols["PnL_Compounded"] = "sum"
         if "Amount" in strategy.columns:
             sum_cols["Amount"] = "sum"
         agg = strategy.groupby(present_group).agg(**{k: (k, v) for k, v in sum_cols.items()}).reset_index()
@@ -5761,7 +5804,7 @@ def compute_snb_reserves(
     if deals is None or deals.empty:
         return {"has_data": False}
 
-    # Sight liabilities: Direction D (deposit) or S (sell bond) = bank receives funds
+    # Sight liabilities: Direction D (deposit) = bank receives funds
     from pnl_engine.config import LIABILITY_DIRECTIONS
     sight_mask = pd.Series([False] * len(deals))
     if "Direction" in deals.columns:
@@ -6535,7 +6578,7 @@ def simulate_deal(
         client_rate: Client lending/borrowing rate (decimal).
         ois_rate: Current OIS rate for the currency (decimal).
         maturity_years: Time to maturity in years.
-        direction: "L" (loan/asset), "B" (bond/asset), "D" (deposit/liability), or "S" (sell bond/liability).
+        direction: "L" (loan/asset), "B" (bond/asset), "S" (sell bond/asset), or "D" (deposit/liability).
         mm: Day count basis (360 for CHF/EUR, 365 for GBP).
         is_floating: Whether the deal is floating-rate.
         deposit_beta: Rate passthrough for floating-rate (1.0 = full passthrough).
@@ -6544,7 +6587,7 @@ def simulate_deal(
         Dict with annual NII, total NII, EVE impact, DV01 contribution.
     """
     from pnl_engine.config import ASSET_DIRECTIONS
-    # Assets (L/B) = negative nominal, Liabilities (D/S) = positive nominal
+    # Assets (L/B/S) = negative nominal, Liabilities (D) = positive nominal
     sign = -1.0 if direction.upper() in ASSET_DIRECTIONS else 1.0
     effective_notional = sign * abs(notional)
 

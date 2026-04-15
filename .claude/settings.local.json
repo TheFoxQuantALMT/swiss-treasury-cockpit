@@ -33,7 +33,11 @@
       "Bash(ls:*)",
       "Bash(python:*)",
       "Bash(find *)",
-      "Bash(rm *)"
+      "Bash(rm *)",
+      "Bash(git -C /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit log --oneline --all -- \"*bundle.txt\")",
+      "Bash(git -C /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit log --all --pretty=format:\"%H %s\" -- \"*bundle.txt\")",
+      "Bash(git *)",
+      "Bash(sed 's/===FILE START=== //')"
     ]
   }
 }
