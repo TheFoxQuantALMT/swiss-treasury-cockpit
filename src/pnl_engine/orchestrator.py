@@ -405,7 +405,15 @@ class PnlEngine:
                         "Direction", "Périmètre TOTAL", "Month"]
             if c in monthly.columns
         ]
-        total_rows = monthly[monthly["PnL_Type"] == "Total"]
+        # Use "Total" rows for the current month (sum of Realized+Forecast),
+        # and "Realized"/"Forecast" rows for past/future months (no "Total" exists).
+        has_total = monthly.groupby("Month")["PnL_Type"].transform(
+            lambda s: (s == "Total").any()
+        )
+        total_rows = monthly[
+            ((has_total) & (monthly["PnL_Type"] == "Total"))
+            | ((~has_total) & monthly["PnL_Type"].isin(["Realized", "Forecast"]))
+        ]
         if not total_rows.empty and deal_summary_cols:
             agg_spec = {"PnL": ("PnL", "sum"), "Nominal": ("Nominal", "mean")}
             # CoC metrics — sum (already monthly totals from _aggregate_slice)
