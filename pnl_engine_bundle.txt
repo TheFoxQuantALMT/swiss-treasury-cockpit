@@ -1,6 +1,6 @@
 ============================================================
 PNL_ENGINE BUNDLE — swiss-treasury-cockpit
-Generated: 2026-04-15
+Generated: 2026-04-16
 ============================================================
 
 STEP 1: Save this entire file as "pnl_engine_bundle.txt"
@@ -45,7 +45,6 @@ def extract(bundle_path: str, output_dir: str) -> None:
             current_file = line[len("===FILE START=== "):]
             file_lines = []
         elif line.startswith("===FILE END=== ") and current_file is not None:
-            # Strip single trailing blank line added by the bundler
             if file_lines and file_lines[-1] == "":
                 file_lines.pop()
             dest = out / current_file
@@ -348,12 +347,19 @@ ECHEANCIER_INDEX_TO_WASP: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 # Floating rate short name → WASP OIS index
 # ---------------------------------------------------------------------------
+# Bare names map to overnight RFR curves (daily compounding).
+# Tenor suffixes (1M/3M/6M) map to term forward curves declared in
+# ECHEANCIER_INDEX_TO_WASP — used for term floaters that fix periodically.
 
 FLOAT_NAME_TO_WASP: dict[str, str] = {
     "SARON": "CHFSON",
     "ESTR": "EUREST",
     "SOFR": "USSOFR",
     "SONIA": "GBPOIS",
+    "SARON1M": "CHFSON1M", "SARON3M": "CHFSON3M", "SARON6M": "CHFSON6M",
+    "ESTR1M":  "EUREST1M", "ESTR3M":  "EUREST3M", "ESTR6M":  "EUREST6M",
+    "SOFR1M":  "USSOFR1M", "SOFR3M":  "USSOFR3M", "SOFR6M":  "USSOFR6M",
+    "SONIA1M": "GBPOIS1M", "SONIA3M": "GBPOIS3M", "SONIA6M": "GBPOIS6M",
 }
 
 # ---------------------------------------------------------------------------
@@ -430,7 +436,7 @@ DIRECTION_SIDE: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 SNB_SIGHT_PRODUCTS: set[str] = {"KK", "CC", "SE", "SIGHT", "SICHT"}
-VALID_FLOAT_INDICES: set[str] = {"SARON", "ESTR", "SOFR", "SONIA", ""}
+VALID_FLOAT_INDICES: set[str] = set(FLOAT_NAME_TO_WASP) | {""}
 
 ===FILE END=== src/pnl_engine/config.py
 
@@ -850,12 +856,38 @@ def project_balance_sheet(
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS, MM_BY_CURRENCY, PRODUCT_RATE_COLUMN, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
+
+_TENOR_SUFFIX_RE = re.compile(r"(\d+)([MWY])$")
+_TENOR_DAYS_PER_UNIT = {"W": 7, "M": 30, "Y": 365}
+
+
+def _infer_fixing_tenor_days(short_name: str, last_fix, next_fix) -> int:
+    """Infer fixing tenor for a floating deal.
+
+    Precedence (any one match wins):
+      1. (next_fixing_date - last_fixing_date).days when both populated
+      2. Numeric suffix on short name: 'SARON3M' -> 90, 'EURIBOR6M' -> 180
+      3. 0 (overnight / unknown)
+    """
+    if pd.notna(last_fix) and pd.notna(next_fix):
+        try:
+            delta = (pd.Timestamp(next_fix) - pd.Timestamp(last_fix)).days
+            if delta > 0:
+                return int(delta)
+        except (TypeError, ValueError):
+            pass
+    m = _TENOR_SUFFIX_RE.search(str(short_name or "").strip().upper())
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        return n * _TENOR_DAYS_PER_UNIT[unit]
+    return 0
 from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
     build_accrual_days,
@@ -1478,13 +1510,31 @@ def _resolve_rate_ref(deals: pd.DataFrame) -> pd.DataFrame:
             df[float_col].fillna("").astype(str).str.strip().map(FLOAT_NAME_TO_WASP).fillna("")
         )
 
-    # Drop RFR floating legs: ref_index maps to an OIS index -> OIS - RefRate = 0,
-    # and their Echeancier V-leg balance was already dropped. These produce zero
-    # P&L and pollute the output with zero-nominal rows.
+    # Fixing tenor in calendar days: 0 for overnight RFRs, >0 for term floaters
+    # (e.g. SARON3M, ESTR6M). Drives the held-constant branch in build_rate_matrix.
+    df["fixing_tenor_days"] = 0
+    if df["is_floating"].any():
+        last_col = "last_fixing_date" if "last_fixing_date" in df.columns else None
+        next_col = "next_fixing_date" if "next_fixing_date" in df.columns else None
+        sn_col = float_col if float_col in df.columns else None
+        for idx in df.index[df["is_floating"]]:
+            sn = df.at[idx, sn_col] if sn_col else ""
+            lf = df.at[idx, last_col] if last_col else pd.NaT
+            nf = df.at[idx, next_col] if next_col else pd.NaT
+            df.at[idx, "fixing_tenor_days"] = _infer_fixing_tenor_days(sn, lf, nf)
+
+    # Drop only true overnight RFR legs (tenor==0) whose ref_index equals the
+    # currency's OIS base — for these, OIS - RefRate ≡ 0 and the Echeancier V-leg
+    # was already dropped. Term floaters (tenor>0) must survive: their rate is
+    # held constant between fixings and produces non-zero P&L vs OIS.
     _OIS_INDICES = set(CURRENCY_TO_OIS.values())
-    is_rfr_float = df["is_floating"] & df["ref_index"].isin(_OIS_INDICES)
+    is_rfr_float = (
+        df["is_floating"]
+        & (df["fixing_tenor_days"] == 0)
+        & df["ref_index"].isin(_OIS_INDICES)
+    )
     if is_rfr_float.any():
-        logger.info("Dropping %d RFR floating legs (OIS - RefRate = 0)", is_rfr_float.sum())
+        logger.info("Dropping %d overnight RFR floating legs (OIS - RefRate = 0)", is_rfr_float.sum())
         df = df[~is_rfr_float].copy()
 
     return df
@@ -2578,8 +2628,13 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
     """Build (n_deals x n_days) reference rate matrix.
 
     Fixed-rate deals: broadcast RateRef across all days.
-    Floating-rate deals: load forward curve by ref_index, apply lookback
-    shift for SARON (2-BD) and SONIA (5-BD) per SNB/BoE conventions.
+    Floating-rate deals branch on ``fixing_tenor_days``:
+      - tenor == 0 (overnight RFR): interpolate forward curve daily and apply
+        lookback shift (SARON 2-BD, SONIA 5-BD per SNB/BoE conventions).
+      - tenor  > 0 (term floater, e.g. SARON3M): hold the rate constant over
+        each fixing period [t_k, t_k+tenor). For the period containing today,
+        use ``current_fixing_rate`` (the contractual fix recorded in MTD); for
+        future periods, sample the forward curve at t_k.
     """
     n_deals = len(deals)
     n_days = len(days)
@@ -2589,42 +2644,105 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
     if fixed_mask.any():
         rates = deals.loc[fixed_mask, "RateRef"].values
         result[fixed_mask] = rates[:, np.newaxis]
-    if is_floating.any() and ref_curves is not None:
-        day_dates = days.values.astype("datetime64[D]")
-        ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
-        for i in np.where(is_floating)[0]:
-            indice = deals.iloc[i].get("ref_index", "")
-            spread = deals.iloc[i].get("Spread", 0.0)
-            ccy = deals.iloc[i].get("Currency", "")
-            if not indice:
-                continue
-            try:
-                idx_data = ref_by_date.loc[indice]
-                curve_dates = idx_data.index.values.astype("datetime64[D]")
-                curve_vals = idx_data.values
+    if not is_floating.any() or ref_curves is None:
+        return result
 
-                # Map daily rates from curve via linear interpolation
-                curve_dates_num = curve_dates.astype("datetime64[D]").astype(np.int64)
-                day_dates_num = day_dates.astype(np.int64)
-                daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+    day_dates = days.values.astype("datetime64[D]")
+    day_dates_num = day_dates.astype(np.int64)
+    ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
 
-                # Apply SARON/SONIA lookback shift (ISDA 2021 observation shift)
-                lookback = LOOKBACK_DAYS.get(ccy, 0)
-                if lookback > 0:
-                    daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+    tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
 
-                # Warn if curve ends before the date grid (flat extrapolation)
-                if len(curve_dates) > 0 and len(day_dates) > 0:
-                    if day_dates[-1] > curve_dates[-1]:
-                        extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
-                        logger.warning(
-                            "Rate curve for %s ends before date grid; flat-extrapolating %d days",
-                            indice, extrap_days,
-                        )
+    for i in np.where(is_floating)[0]:
+        indice = deals.iloc[i].get("ref_index", "")
+        spread = float(deals.iloc[i].get("Spread", 0.0) or 0.0)
+        ccy = deals.iloc[i].get("Currency", "")
+        if not indice:
+            continue
+        try:
+            idx_data = ref_by_date.loc[indice]
+        except KeyError:
+            continue
+        curve_dates = idx_data.index.values.astype("datetime64[D]")
+        curve_vals = idx_data.values
+        curve_dates_num = curve_dates.astype(np.int64)
 
-                result[i] = daily_rates + spread
-            except KeyError:
-                pass
+        # Warn once if curve ends before the date grid (flat extrapolation)
+        if len(curve_dates) > 0 and len(day_dates) > 0 and day_dates[-1] > curve_dates[-1]:
+            extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
+            logger.warning(
+                "Rate curve for %s ends before date grid; flat-extrapolating %d days",
+                indice, extrap_days,
+            )
+
+        tenor_days = int(tenor_col[i]) if i < len(tenor_col) else 0
+
+        if tenor_days <= 0:
+            # Overnight RFR: rate floats every day, with optional lookback shift.
+            daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+            lookback = LOOKBACK_DAYS.get(ccy, 0)
+            if lookback > 0:
+                daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+            result[i] = daily_rates + spread
+            continue
+
+        # Term floater: walk the fixing schedule and hold the rate constant
+        # over each [t_k, t_k+tenor) segment.
+        last_fix = deals.iloc[i].get("last_fixing_date")
+        next_fix = deals.iloc[i].get("next_fixing_date")
+        current_fix = deals.iloc[i].get("current_fixing_rate")
+        ref_rate_static = float(deals.iloc[i].get("RateRef", 0.0) or 0.0)
+
+        # Anchor the schedule. Prefer last_fixing_date; else derive from next.
+        if pd.notna(last_fix):
+            anchor = pd.Timestamp(last_fix).to_datetime64().astype("datetime64[D]")
+        elif pd.notna(next_fix):
+            anchor = (pd.Timestamp(next_fix) - pd.Timedelta(days=tenor_days)).to_datetime64().astype("datetime64[D]")
+        else:
+            logger.warning(
+                "Term floater (deal idx %d, %s) missing fixing dates; degrading to overnight RFR",
+                i, indice,
+            )
+            daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+            result[i] = daily_rates + spread
+            continue
+
+        grid_start = day_dates[0]
+        grid_end = day_dates[-1]
+        # Roll anchor forward in tenor steps until the segment overlaps the grid
+        step = np.timedelta64(tenor_days, "D")
+        while anchor + step <= grid_start:
+            anchor = anchor + step
+
+        today = np.datetime64(pd.Timestamp.today().normalize().to_datetime64(), "D")
+        rates_path = np.zeros(n_days, dtype=np.float64)
+        seg_start = anchor
+        while seg_start <= grid_end:
+            seg_end = seg_start + step  # exclusive
+            # Determine fixing rate for this segment
+            if seg_start <= today < seg_end:
+                # Current period: use the contractual fix from MTD.
+                if pd.notna(current_fix):
+                    seg_rate = float(current_fix)
+                else:
+                    logger.warning(
+                        "Term floater (deal idx %d, %s) missing current_fixing_rate "
+                        "for active period; falling back to RateRef (may be wrong for IRS)",
+                        i, indice,
+                    )
+                    seg_rate = ref_rate_static
+            else:
+                # Past or future period: sample forward curve at fixing date.
+                fix_num = int(seg_start.astype(np.int64))
+                seg_rate = float(np.interp(fix_num, curve_dates_num, curve_vals))
+
+            # Mask grid days falling in [seg_start, seg_end)
+            mask = (day_dates >= seg_start) & (day_dates < seg_end)
+            rates_path[mask] = seg_rate
+            seg_start = seg_end
+
+        result[i] = rates_path + spread
+
     return result
 
 
@@ -4050,7 +4168,15 @@ class PnlEngine:
                         "Direction", "Périmètre TOTAL", "Month"]
             if c in monthly.columns
         ]
-        total_rows = monthly[monthly["PnL_Type"] == "Total"]
+        # Use "Total" rows for the current month (sum of Realized+Forecast),
+        # and "Realized"/"Forecast" rows for past/future months (no "Total" exists).
+        has_total = monthly.groupby("Month")["PnL_Type"].transform(
+            lambda s: (s == "Total").any()
+        )
+        total_rows = monthly[
+            ((has_total) & (monthly["PnL_Type"] == "Total"))
+            | ((~has_total) & monthly["PnL_Type"].isin(["Realized", "Forecast"]))
+        ]
         if not total_rows.empty and deal_summary_cols:
             agg_spec = {"PnL": ("PnL", "sum"), "Nominal": ("Nominal", "mean")}
             # CoC metrics — sum (already monthly totals from _aggregate_slice)
