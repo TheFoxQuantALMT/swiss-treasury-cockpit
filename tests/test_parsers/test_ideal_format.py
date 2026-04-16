@@ -28,7 +28,7 @@ class TestParseDeals:
         return parse_deals(FIXTURES / "deals.xlsx")
 
     def test_row_count(self, deals):
-        assert len(deals) == 13  # 10 BOOK1 + 3 BOOK2
+        assert len(deals) == 15  # 12 BOOK1 + 3 BOOK2
 
     def test_columns_renamed(self, deals):
         assert "Dealid" in deals.columns
@@ -69,7 +69,7 @@ class TestParseDeals:
         assert deals["Périmètre TOTAL"].isin({"CC", "WM", "CIB"}).all()
 
     def test_book1_count(self, deals):
-        assert (deals["IAS Book"] == "BOOK1").sum() == 10
+        assert (deals["IAS Book"] == "BOOK1").sum() == 12
 
     def test_book2_count(self, deals):
         assert (deals["IAS Book"] == "BOOK2").sum() == 3
@@ -110,7 +110,7 @@ class TestParseMtdAutoDetect:
 
     def test_auto_detects_ideal_format(self):
         result = parse_mtd(FIXTURES / "deals.xlsx")
-        assert len(result) == 13
+        assert len(result) == 15
         assert "Dealid" in result.columns
 
 
@@ -124,7 +124,7 @@ class TestParseSchedule:
         return parse_schedule(FIXTURES / "rate_schedule.xlsx")
 
     def test_row_count(self, schedule):
-        assert len(schedule) == 10
+        assert len(schedule) == 12
 
     def test_columns_renamed(self, schedule):
         assert "Dealid" in schedule.columns
@@ -163,7 +163,7 @@ class TestParseSchedule:
 class TestParseEcheancierAutoDetect:
     def test_auto_detects_ideal_format(self):
         result = parse_echeancier(FIXTURES / "rate_schedule.xlsx")
-        assert len(result) == 10
+        assert len(result) == 12
         assert "Dealid" in result.columns
 
 

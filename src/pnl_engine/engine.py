@@ -2,12 +2,38 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from pnl_engine.config import CURRENCY_TO_OIS, MM_BY_CURRENCY, PRODUCT_RATE_COLUMN, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
+
+_TENOR_SUFFIX_RE = re.compile(r"(\d+)([MWY])$")
+_TENOR_DAYS_PER_UNIT = {"W": 7, "M": 30, "Y": 365}
+
+
+def _infer_fixing_tenor_days(short_name: str, last_fix, next_fix) -> int:
+    """Infer fixing tenor for a floating deal.
+
+    Precedence (any one match wins):
+      1. (next_fixing_date - last_fixing_date).days when both populated
+      2. Numeric suffix on short name: 'SARON3M' -> 90, 'EURIBOR6M' -> 180
+      3. 0 (overnight / unknown)
+    """
+    if pd.notna(last_fix) and pd.notna(next_fix):
+        try:
+            delta = (pd.Timestamp(next_fix) - pd.Timestamp(last_fix)).days
+            if delta > 0:
+                return int(delta)
+        except (TypeError, ValueError):
+            pass
+    m = _TENOR_SUFFIX_RE.search(str(short_name or "").strip().upper())
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        return n * _TENOR_DAYS_PER_UNIT[unit]
+    return 0
 from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
     build_accrual_days,
@@ -630,13 +656,31 @@ def _resolve_rate_ref(deals: pd.DataFrame) -> pd.DataFrame:
             df[float_col].fillna("").astype(str).str.strip().map(FLOAT_NAME_TO_WASP).fillna("")
         )
 
-    # Drop RFR floating legs: ref_index maps to an OIS index -> OIS - RefRate = 0,
-    # and their Echeancier V-leg balance was already dropped. These produce zero
-    # P&L and pollute the output with zero-nominal rows.
+    # Fixing tenor in calendar days: 0 for overnight RFRs, >0 for term floaters
+    # (e.g. SARON3M, ESTR6M). Drives the held-constant branch in build_rate_matrix.
+    df["fixing_tenor_days"] = 0
+    if df["is_floating"].any():
+        last_col = "last_fixing_date" if "last_fixing_date" in df.columns else None
+        next_col = "next_fixing_date" if "next_fixing_date" in df.columns else None
+        sn_col = float_col if float_col in df.columns else None
+        for idx in df.index[df["is_floating"]]:
+            sn = df.at[idx, sn_col] if sn_col else ""
+            lf = df.at[idx, last_col] if last_col else pd.NaT
+            nf = df.at[idx, next_col] if next_col else pd.NaT
+            df.at[idx, "fixing_tenor_days"] = _infer_fixing_tenor_days(sn, lf, nf)
+
+    # Drop only true overnight RFR legs (tenor==0) whose ref_index equals the
+    # currency's OIS base — for these, OIS - RefRate ≡ 0 and the Echeancier V-leg
+    # was already dropped. Term floaters (tenor>0) must survive: their rate is
+    # held constant between fixings and produces non-zero P&L vs OIS.
     _OIS_INDICES = set(CURRENCY_TO_OIS.values())
-    is_rfr_float = df["is_floating"] & df["ref_index"].isin(_OIS_INDICES)
+    is_rfr_float = (
+        df["is_floating"]
+        & (df["fixing_tenor_days"] == 0)
+        & df["ref_index"].isin(_OIS_INDICES)
+    )
     if is_rfr_float.any():
-        logger.info("Dropping %d RFR floating legs (OIS - RefRate = 0)", is_rfr_float.sum())
+        logger.info("Dropping %d overnight RFR floating legs (OIS - RefRate = 0)", is_rfr_float.sum())
         df = df[~is_rfr_float].copy()
 
     return df

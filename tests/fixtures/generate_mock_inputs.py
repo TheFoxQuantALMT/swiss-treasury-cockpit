@@ -108,7 +108,29 @@ DEALS_DATA = [
         "maturity_date": "2026-10-03", "strategy_ias": None, "perimeter": "WM",
         "counterparty": "THCCBFIGE", "pay_receive": None, "notional": None, "last_fixing_date": None, "next_fixing_date": None,
     },
-    # BOOK2: IRS (pay fixed, receive SARON)
+    # BOOK1: SARON3M term-floater loan (suffix-based tenor inference)
+    {
+        "deal_id": 100008, "product": "IAM/LD", "currency": "CHF", "direction": "L",
+        "book": "BOOK1", "amount": -40_000_000, "client_rate": 0.0,
+        "eq_ois_rate": 0.0110, "ytm": 0.0, "coc_rate": 0.0080, "spread": 0.0050,
+        "floating_index": "SARON3M", "trade_date": "2026-01-15", "value_date": "2026-01-17",
+        "maturity_date": "2029-01-17", "strategy_ias": None, "perimeter": "CC",
+        "counterparty": "THCCBFIGE",
+        "last_fixing_date": "2026-04-17", "next_fixing_date": "2026-07-17",
+        "current_fixing_rate": 0.0085,
+    },
+    # BOOK1: ESTR6M term-floater deposit (6M tenor)
+    {
+        "deal_id": 100009, "product": "IAM/LD", "currency": "EUR", "direction": "D",
+        "book": "BOOK1", "amount": 20_000_000, "client_rate": 0.0,
+        "eq_ois_rate": 0.0235, "ytm": 0.0, "coc_rate": 0.0070, "spread": 0.0025,
+        "floating_index": "ESTR6M", "trade_date": "2025-10-03", "value_date": "2025-10-07",
+        "maturity_date": "2028-10-09", "strategy_ias": None, "perimeter": "CC",
+        "counterparty": "BKCCBFIGE",
+        "last_fixing_date": "2026-04-07", "next_fixing_date": "2026-10-07",
+        "current_fixing_rate": 0.0210,
+    },
+    # BOOK2: IRS (pay fixed, receive SARON) — 3M-spaced fixings → term floater (rule 2)
     {
         "deal_id": 400001, "product": "IRS", "currency": "CHF", "direction": "D",
         "book": "BOOK2", "amount": 0, "client_rate": 0.0120,
@@ -116,7 +138,9 @@ DEALS_DATA = [
         "floating_index": "SARON", "trade_date": "2025-03-15", "value_date": "2025-03-17",
         "maturity_date": "2030-03-17", "strategy_ias": "STRAT_CHF_001", "perimeter": "CC",
         "counterparty": "THCCBFIGE", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-06-15",
+        "pay_receive": "PAY", "notional": 100_000_000,
         "last_fixing_date": "2026-03-17", "next_fixing_date": "2026-06-17",
+        "current_fixing_rate": 0.0078,
     },
     # BOOK2: IRS (receive fixed, pay SARON)
     {
@@ -126,7 +150,9 @@ DEALS_DATA = [
         "floating_index": "SARON", "trade_date": "2024-11-01", "value_date": "2024-11-03",
         "maturity_date": "2029-11-03", "strategy_ias": "STRAT_CHF_002", "perimeter": "CC",
         "counterparty": "BKCCBFIGE", "hedge_type": "fair_value", "ias_standard": "IAS39", "designation_date": "2025-01-20",
+        "pay_receive": "RECEIVE", "notional": 75_000_000,
         "last_fixing_date": "2026-02-03", "next_fixing_date": "2026-05-03",
+        "current_fixing_rate": 0.0082,
     },
     # BOOK2: IRS EUR
     {
@@ -136,7 +162,9 @@ DEALS_DATA = [
         "floating_index": "ESTR", "trade_date": "2025-06-01", "value_date": "2025-06-03",
         "maturity_date": "2028-06-03", "strategy_ias": "STRAT_EUR_001", "perimeter": "CC",
         "counterparty": "CLI-MT-CIB", "hedge_type": "cash_flow", "ias_standard": "IFRS9", "designation_date": "2025-09-01",
+        "pay_receive": "PAY", "notional": 50_000_000,
         "last_fixing_date": "2026-03-03", "next_fixing_date": "2026-06-03",
+        "current_fixing_rate": 0.0220,
     },
 ]
 
@@ -172,6 +200,8 @@ SCHEDULE_DATA = [
     _schedule_row(100005, "D", "GBP", "F", 10_000_000, 9),     # GBP deposit, matures 2026/12
     _schedule_row(100006, "D", "CHF", "F", 60_000_000, 23),    # strategy deal, matures 2028/02
     _schedule_row(100007, "D", "CHF", "F", 15_000_000, 7),     # WM deal, matures 2026/10
+    _schedule_row(100008, "L", "CHF", "V", -40_000_000, 33),   # SARON3M term floater, matures 2029/01
+    _schedule_row(100009, "D", "EUR", "V", 20_000_000, 30),    # ESTR6M term floater, matures 2028/10
 ]
 
 # ---------------------------------------------------------------------------

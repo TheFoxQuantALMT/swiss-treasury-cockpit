@@ -132,8 +132,13 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
     """Build (n_deals x n_days) reference rate matrix.
 
     Fixed-rate deals: broadcast RateRef across all days.
-    Floating-rate deals: load forward curve by ref_index, apply lookback
-    shift for SARON (2-BD) and SONIA (5-BD) per SNB/BoE conventions.
+    Floating-rate deals branch on ``fixing_tenor_days``:
+      - tenor == 0 (overnight RFR): interpolate forward curve daily and apply
+        lookback shift (SARON 2-BD, SONIA 5-BD per SNB/BoE conventions).
+      - tenor  > 0 (term floater, e.g. SARON3M): hold the rate constant over
+        each fixing period [t_k, t_k+tenor). For the period containing today,
+        use ``current_fixing_rate`` (the contractual fix recorded in MTD); for
+        future periods, sample the forward curve at t_k.
     """
     n_deals = len(deals)
     n_days = len(days)
@@ -143,42 +148,105 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
     if fixed_mask.any():
         rates = deals.loc[fixed_mask, "RateRef"].values
         result[fixed_mask] = rates[:, np.newaxis]
-    if is_floating.any() and ref_curves is not None:
-        day_dates = days.values.astype("datetime64[D]")
-        ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
-        for i in np.where(is_floating)[0]:
-            indice = deals.iloc[i].get("ref_index", "")
-            spread = deals.iloc[i].get("Spread", 0.0)
-            ccy = deals.iloc[i].get("Currency", "")
-            if not indice:
-                continue
-            try:
-                idx_data = ref_by_date.loc[indice]
-                curve_dates = idx_data.index.values.astype("datetime64[D]")
-                curve_vals = idx_data.values
+    if not is_floating.any() or ref_curves is None:
+        return result
 
-                # Map daily rates from curve via linear interpolation
-                curve_dates_num = curve_dates.astype("datetime64[D]").astype(np.int64)
-                day_dates_num = day_dates.astype(np.int64)
-                daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+    day_dates = days.values.astype("datetime64[D]")
+    day_dates_num = day_dates.astype(np.int64)
+    ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
 
-                # Apply SARON/SONIA lookback shift (ISDA 2021 observation shift)
-                lookback = LOOKBACK_DAYS.get(ccy, 0)
-                if lookback > 0:
-                    daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+    tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
 
-                # Warn if curve ends before the date grid (flat extrapolation)
-                if len(curve_dates) > 0 and len(day_dates) > 0:
-                    if day_dates[-1] > curve_dates[-1]:
-                        extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
-                        logger.warning(
-                            "Rate curve for %s ends before date grid; flat-extrapolating %d days",
-                            indice, extrap_days,
-                        )
+    for i in np.where(is_floating)[0]:
+        indice = deals.iloc[i].get("ref_index", "")
+        spread = float(deals.iloc[i].get("Spread", 0.0) or 0.0)
+        ccy = deals.iloc[i].get("Currency", "")
+        if not indice:
+            continue
+        try:
+            idx_data = ref_by_date.loc[indice]
+        except KeyError:
+            continue
+        curve_dates = idx_data.index.values.astype("datetime64[D]")
+        curve_vals = idx_data.values
+        curve_dates_num = curve_dates.astype(np.int64)
 
-                result[i] = daily_rates + spread
-            except KeyError:
-                pass
+        # Warn once if curve ends before the date grid (flat extrapolation)
+        if len(curve_dates) > 0 and len(day_dates) > 0 and day_dates[-1] > curve_dates[-1]:
+            extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
+            logger.warning(
+                "Rate curve for %s ends before date grid; flat-extrapolating %d days",
+                indice, extrap_days,
+            )
+
+        tenor_days = int(tenor_col[i]) if i < len(tenor_col) else 0
+
+        if tenor_days <= 0:
+            # Overnight RFR: rate floats every day, with optional lookback shift.
+            daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+            lookback = LOOKBACK_DAYS.get(ccy, 0)
+            if lookback > 0:
+                daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+            result[i] = daily_rates + spread
+            continue
+
+        # Term floater: walk the fixing schedule and hold the rate constant
+        # over each [t_k, t_k+tenor) segment.
+        last_fix = deals.iloc[i].get("last_fixing_date")
+        next_fix = deals.iloc[i].get("next_fixing_date")
+        current_fix = deals.iloc[i].get("current_fixing_rate")
+        ref_rate_static = float(deals.iloc[i].get("RateRef", 0.0) or 0.0)
+
+        # Anchor the schedule. Prefer last_fixing_date; else derive from next.
+        if pd.notna(last_fix):
+            anchor = pd.Timestamp(last_fix).to_datetime64().astype("datetime64[D]")
+        elif pd.notna(next_fix):
+            anchor = (pd.Timestamp(next_fix) - pd.Timedelta(days=tenor_days)).to_datetime64().astype("datetime64[D]")
+        else:
+            logger.warning(
+                "Term floater (deal idx %d, %s) missing fixing dates; degrading to overnight RFR",
+                i, indice,
+            )
+            daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+            result[i] = daily_rates + spread
+            continue
+
+        grid_start = day_dates[0]
+        grid_end = day_dates[-1]
+        # Roll anchor forward in tenor steps until the segment overlaps the grid
+        step = np.timedelta64(tenor_days, "D")
+        while anchor + step <= grid_start:
+            anchor = anchor + step
+
+        today = np.datetime64(pd.Timestamp.today().normalize().to_datetime64(), "D")
+        rates_path = np.zeros(n_days, dtype=np.float64)
+        seg_start = anchor
+        while seg_start <= grid_end:
+            seg_end = seg_start + step  # exclusive
+            # Determine fixing rate for this segment
+            if seg_start <= today < seg_end:
+                # Current period: use the contractual fix from MTD.
+                if pd.notna(current_fix):
+                    seg_rate = float(current_fix)
+                else:
+                    logger.warning(
+                        "Term floater (deal idx %d, %s) missing current_fixing_rate "
+                        "for active period; falling back to RateRef (may be wrong for IRS)",
+                        i, indice,
+                    )
+                    seg_rate = ref_rate_static
+            else:
+                # Past or future period: sample forward curve at fixing date.
+                fix_num = int(seg_start.astype(np.int64))
+                seg_rate = float(np.interp(fix_num, curve_dates_num, curve_vals))
+
+            # Mask grid days falling in [seg_start, seg_end)
+            mask = (day_dates >= seg_start) & (day_dates < seg_end)
+            rates_path[mask] = seg_rate
+            seg_start = seg_end
+
+        result[i] = rates_path + spread
+
     return result
 
 

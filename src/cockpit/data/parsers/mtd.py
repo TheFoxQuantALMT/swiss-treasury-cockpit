@@ -48,6 +48,7 @@ _DEALS_RENAME = {
     "notional": "notional",
     "last_fixing_date": "last_fixing_date",
     "next_fixing_date": "next_fixing_date",
+    "current_fixing_rate": "current_fixing_rate",
     "ftp": "FTP",
     "asset_liability": "AssetLiability",
 }

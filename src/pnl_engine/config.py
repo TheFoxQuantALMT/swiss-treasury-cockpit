@@ -65,12 +65,19 @@ ECHEANCIER_INDEX_TO_WASP: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 # Floating rate short name → WASP OIS index
 # ---------------------------------------------------------------------------
+# Bare names map to overnight RFR curves (daily compounding).
+# Tenor suffixes (1M/3M/6M) map to term forward curves declared in
+# ECHEANCIER_INDEX_TO_WASP — used for term floaters that fix periodically.
 
 FLOAT_NAME_TO_WASP: dict[str, str] = {
     "SARON": "CHFSON",
     "ESTR": "EUREST",
     "SOFR": "USSOFR",
     "SONIA": "GBPOIS",
+    "SARON1M": "CHFSON1M", "SARON3M": "CHFSON3M", "SARON6M": "CHFSON6M",
+    "ESTR1M":  "EUREST1M", "ESTR3M":  "EUREST3M", "ESTR6M":  "EUREST6M",
+    "SOFR1M":  "USSOFR1M", "SOFR3M":  "USSOFR3M", "SOFR6M":  "USSOFR6M",
+    "SONIA1M": "GBPOIS1M", "SONIA3M": "GBPOIS3M", "SONIA6M": "GBPOIS6M",
 }
 
 # ---------------------------------------------------------------------------
@@ -147,4 +154,4 @@ DIRECTION_SIDE: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 SNB_SIGHT_PRODUCTS: set[str] = {"KK", "CC", "SE", "SIGHT", "SICHT"}
-VALID_FLOAT_INDICES: set[str] = {"SARON", "ESTR", "SOFR", "SONIA", ""}
+VALID_FLOAT_INDICES: set[str] = set(FLOAT_NAME_TO_WASP) | {""}

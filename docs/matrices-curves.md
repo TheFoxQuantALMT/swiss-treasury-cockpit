@@ -55,14 +55,33 @@ This is critical for correct compounding: Friday's rate must be weighted for 3 c
 
 ### `build_rate_matrix(deals, days, ref_curves=None) -> ndarray`
 
-Build `(n_deals, n_days)` reference rate matrix:
+Build `(n_deals, n_days)` reference rate matrix.
 
-- **Fixed-rate deals:** broadcast `RateRef` across all days
-- **Floating-rate deals:** load forward curve by `ref_index`, apply lookback shift:
-  - SARON (CHF): 2 business day lookback (SNB Working Group)
-  - SONIA (GBP): 5 business day lookback (BoE Working Group)
+- **Fixed-rate deals:** broadcast `RateRef` across all days.
+- **Floating-rate deals:** branch on `fixing_tenor_days` (computed upstream by `_resolve_rate_ref`):
+  - **Tenor == 0 (overnight RFR)** — interpolate the forward curve daily, then apply the lookback shift:
+    - SARON (CHF): 2 business day lookback (SNB Working Group)
+    - SONIA (GBP): 5 business day lookback (BoE Working Group)
+    - ESTR, SOFR: 0-day lookback (daily observation, no shift).
+  - **Tenor > 0 (term floater, e.g. `SARON3M`, `ESTR6M`)** — hold the rate constant over each fixing period `[t_k, t_k + tenor)`:
+    - For the segment containing today: use the contractual `current_fixing_rate` column from MTD.
+    - For past/future segments: sample the forward curve at the fixing date `t_k = last_fixing + k·tenor`.
+    - If `current_fixing_rate` is missing in the active segment, fall back to `RateRef` with a WARNING (may be wrong for IRS where `RateRef` reflects the fixed leg).
+    - If fixing dates are entirely absent, degrade to the overnight branch with a WARNING.
 
-The lookback shift means the rate on accrual day T uses the fixing from T-N calendar days. This affects which rate is used for daily accrual, not just payment timing.
+The overnight lookback shift means the rate on accrual day T uses the fixing from T-N calendar days. Term floaters do not take a lookback — the fixing at `t_k` applies for the whole `[t_k, t_k + tenor)` window.
+
+### Tenor inference precedence (`_resolve_rate_ref`)
+
+`fixing_tenor_days` is derived in this order:
+
+1. **Date diff:** `(next_fixing_date − last_fixing_date).days` when both columns are populated — this is authoritative and overrides the short-name suffix.
+2. **Suffix regex:** `r"(\d+)([MWY])$"` on `Floating Rates Short Name` (e.g. `SARON3M` → 90, `EURIBOR6M` → 180, `ESTR1W` → 7).
+3. **Default:** `0` (overnight / unknown).
+
+### RFR-drop guard
+
+Floating legs where `fixing_tenor_days == 0` AND `ref_index ∈ CURRENCY_TO_OIS.values()` are dropped: for these, `OIS − RefRate ≡ 0` and the echeancier V-leg was already removed, so they only pollute output with zero-nominal rows. Term floaters sharing the same base index (e.g. `SARON3M` → `CHFSON3M`) survive because their tenor is positive.
 
 ### `build_funding_matrix(deals, days, ois_matrix, funding_source="ois") -> ndarray`
 
