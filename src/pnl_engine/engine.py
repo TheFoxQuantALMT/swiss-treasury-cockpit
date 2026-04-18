@@ -904,7 +904,7 @@ def run_all_shocks(
             nominal_daily,
             ois_matrix,
             rate_matrix,
-            mm[:, np.newaxis] * np.ones((1, len(days))),
+            mm[:, np.newaxis],
             accrual_days=accrual_days,
         )
 

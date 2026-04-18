@@ -101,10 +101,13 @@ def compute_eve(
 
     # Include the notional principal return at maturity.
     # Only capture the terminal drop (nominal goes to zero).
-    nominal_shift = np.zeros_like(nominal_daily)
-    for j in range(1, n_days):
-        mask = (nominal_daily[:, j] == 0) & (nominal_daily[:, j - 1] != 0)
-        nominal_shift[:, j] = np.where(mask, np.abs(nominal_daily[:, j - 1]) * principal_sign, 0.0)
+    prev_nominal = np.concatenate(
+        [np.zeros((n_deals, 1)), nominal_daily[:, :-1]], axis=1,
+    )
+    drop_mask = (nominal_daily == 0) & (prev_nominal != 0)
+    nominal_shift = np.where(
+        drop_mask, np.abs(prev_nominal) * principal_sign[:, np.newaxis], 0.0,
+    )
     total_cf = daily_cf + nominal_shift
 
     # PV of all cash flows
@@ -359,45 +362,66 @@ def compute_key_rate_durations(
     currencies = deals["Currency"].unique() if "Currency" in deals.columns else []
     results = []
 
-    # Sort tenor points for boundary computation
     sorted_tenors = sorted(TENOR_YEARS.items(), key=lambda x: x[1])
     tenor_yr_list = [t[1] for t in sorted_tenors]
 
-    for idx, (tenor_label, tenor_yr) in enumerate(sorted_tenors):
-        # Piecewise-constant step bump: each day maps to exactly one tenor
-        # bucket based on midpoint boundaries between adjacent BCBS tenors.
-        if idx == 0:
-            lo = -np.inf
-        else:
-            lo = (tenor_yr_list[idx - 1] + tenor_yr) / 2.0
-        if idx == len(sorted_tenors) - 1:
-            hi = np.inf
-        else:
-            hi = (tenor_yr + tenor_yr_list[idx + 1]) / 2.0
-
+    # Pre-compute per-tenor bump arrays once (shared across currencies)
+    tenor_bumps: list[np.ndarray] = []
+    for idx, (_, tenor_yr) in enumerate(sorted_tenors):
+        lo = -np.inf if idx == 0 else (tenor_yr_list[idx - 1] + tenor_yr) / 2.0
+        hi = np.inf if idx == len(sorted_tenors) - 1 else (tenor_yr + tenor_yr_list[idx + 1]) / 2.0
         weights = ((day_years >= lo) & (day_years < hi)).astype(float)
-        bump_array = weights * (bump_bps / 10000.0)
+        tenor_bumps.append(weights * (bump_bps / 10000.0))
 
-        for ccy in currencies:
-            ois_indice = CURRENCY_TO_OIS.get(ccy)
-            if not ois_indice:
+    has_currency_col = "Currency" in deals.columns
+    deals_currency = deals["Currency"].values if has_currency_col else None
+    bump_decimal = bump_bps / 10000.0
+
+    # Outer loop: currency. Slice deals/matrices once per currency, then
+    # rebuild EVE only on that slice for each tenor bump. Reduces full-grid
+    # EVE rebuilds from ~tenors*currencies down to tenors*currencies on
+    # narrower slices (typically 4-10× fewer rows per call).
+    for ccy in currencies:
+        ois_indice = CURRENCY_TO_OIS.get(ccy)
+        if not ois_indice:
+            continue
+
+        if has_currency_col:
+            ccy_mask = deals_currency == ccy
+            if not ccy_mask.any():
                 continue
+            deals_ccy = deals.loc[ccy_mask].reset_index(drop=True)
+            nominal_ccy = nominal_daily[ccy_mask]
+            rate_ccy = rate_matrix[ccy_mask]
+            mm_ccy = mm_vector[ccy_mask] if mm_vector.ndim == 1 else mm_vector[ccy_mask]
+            client_ccy = client_rate_matrix[ccy_mask] if client_rate_matrix is not None else None
+        else:
+            deals_ccy = deals
+            nominal_ccy = nominal_daily
+            rate_ccy = rate_matrix
+            mm_ccy = mm_vector
+            client_ccy = client_rate_matrix
 
+        # Base EVE for this currency (sum of per-deal eve column)
+        if "Currency" in eve_base.columns:
+            eve_b = eve_base.loc[eve_base["Currency"] == ccy, "eve"].sum()
+        else:
+            eve_b = eve_base["eve"].sum()
+        inv_eve_b = 1.0 / abs(eve_b) if abs(eve_b) > 1e-6 else 0.0
+
+        for (tenor_label, tenor_yr), bump_array in zip(sorted_tenors, tenor_bumps):
             bumped_curves = apply_scenario_to_curves(
                 base_curves.copy(), bump_array, ois_indice,
             )
-            ois_bumped = _build_ois_matrix(deals, bumped_curves, days)
+            ois_bumped = _build_ois_matrix(deals_ccy, bumped_curves, days)
             eve_bumped = compute_eve(
-                nominal_daily, ois_bumped, rate_matrix, mm_vector,
-                days, deals, date_run, client_rate_matrix=client_rate_matrix,
+                nominal_ccy, ois_bumped, rate_ccy, mm_ccy,
+                days, deals_ccy, date_run, client_rate_matrix=client_ccy,
             )
-
-            ccy_mask = eve_base["Currency"] == ccy if "Currency" in eve_base.columns else pd.Series([True] * len(eve_base))
-            eve_b = eve_base.loc[ccy_mask, "eve"].sum()
-            eve_s = eve_bumped.loc[ccy_mask, "eve"].sum()
+            eve_s = eve_bumped["eve"].sum()
 
             # abs(eve_b) keeps KRD sign meaningful across asset/liability aggregates.
-            krd = -(eve_s - eve_b) / (bump_bps / 10000.0) / abs(eve_b) if abs(eve_b) > 1e-6 else 0.0
+            krd = -(eve_s - eve_b) / bump_decimal * inv_eve_b if inv_eve_b else 0.0
 
             results.append({
                 "currency": ccy,

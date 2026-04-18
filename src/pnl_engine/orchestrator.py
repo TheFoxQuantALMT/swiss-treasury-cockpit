@@ -339,13 +339,11 @@ class PnlEngine:
                 shock_bps=shock_bps,
             )
 
-        n_days = len(self._days)
-        mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
         daily_pnl = compute_daily_pnl(
             self._nominal_daily,
             ois_matrix,
             rate_matrix,
-            mm_broadcast,
+            self._mm[:, np.newaxis],
             accrual_days=self._accrual_days,
         )
 
@@ -792,11 +790,18 @@ class PnlEngine:
         scenario_names = sorted(scenarios["scenario"].unique())
         all_results = []
 
+        # Hoist invariants out of the scenario loop: rate_matrix and mm
+        # broadcast don't depend on the OIS shift.
+        ref_curves = self._load_ref_curves(shock="0")
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
+        mm_broadcast = self._mm[:, np.newaxis]
+        currencies_present = set(self._deals_use["Currency"].unique())
+
         for sc_name in scenario_names:
             # Build shifted curves for each currency's OIS indice
             shifted_curves = self.fwdOIS0.copy()
             for ccy, ois_indice in CURRENCY_TO_OIS.items():
-                if ccy not in self._deals_use["Currency"].unique():
+                if ccy not in currencies_present:
                     continue
                 shift_array = interpolate_scenario_shifts(
                     scenarios, sc_name, ccy, self._days, self.dateRun,
@@ -807,11 +812,7 @@ class PnlEngine:
 
             # Build OIS matrix from shifted curves
             ois_matrix = _build_ois_matrix(self._deals_use, shifted_curves, self._days)
-            ref_curves = self._load_ref_curves(shock="0")
-            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
-            n_days = len(self._days)
-            mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
             daily_pnl = compute_daily_pnl(
                 self._nominal_daily, ois_matrix, rate_matrix, mm_broadcast,
                 accrual_days=self._accrual_days,

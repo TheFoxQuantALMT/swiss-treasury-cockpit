@@ -114,17 +114,15 @@ def build_accrual_days(days: pd.DatetimeIndex) -> np.ndarray:
     n = len(days)
     if n == 0:
         return np.array([], dtype=np.float64)
-    d_i = np.ones(n, dtype=np.float64)
-    # For each day, d_i = calendar days until the next fixing
     day_arr = days.values.astype("datetime64[D]")
-    for j in range(n - 1):
-        d_i[j] = float((day_arr[j + 1] - day_arr[j]) / np.timedelta64(1, "D"))
-    # Last day: compute gap to next business day using Swiss calendar
-    if n > 0:
-        last_date = days[-1].date()
-        from datetime import timedelta
-        next_bd = next_business_day(last_date + timedelta(days=1))
-        d_i[-1] = float((next_bd - last_date).days)
+    d_i = np.ones(n, dtype=np.float64)
+    if n > 1:
+        d_i[:-1] = np.diff(day_arr).astype("timedelta64[D]").astype(np.float64)
+    # Last day: gap to next business day via Swiss calendar
+    last_date = days[-1].date()
+    from datetime import timedelta
+    next_bd = next_business_day(last_date + timedelta(days=1))
+    d_i[-1] = float((next_bd - last_date).days)
     return d_i
 
 
@@ -159,28 +157,14 @@ def build_rate_matrix(
 
     day_dates = days.values.astype("datetime64[D]")
     day_dates_num = day_dates.astype(np.int64)
-    ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
 
-    tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
-
-    _ref_ts = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.today()
-    ref_day = np.datetime64(_ref_ts.normalize().to_datetime64(), "D")
-
-    for i in np.where(is_floating)[0]:
-        indice = deals.iloc[i].get("ref_index", "")
-        spread = float(deals.iloc[i].get("Spread", 0.0) or 0.0)
-        ccy = deals.iloc[i].get("Currency", "")
-        if not indice:
-            continue
-        try:
-            idx_data = ref_by_date.loc[indice]
-        except KeyError:
-            continue
-        curve_dates = idx_data.index.values.astype("datetime64[D]")
-        curve_vals = idx_data.values
-        curve_dates_num = curve_dates.astype(np.int64)
-
-        # Warn once if curve ends before the date grid (flat extrapolation)
+    # Pre-group ref_curves by Indice once instead of per-deal .loc
+    curve_by_indice: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    grouped = ref_curves.sort_values("Date").groupby("Indice", sort=False)
+    for indice, sub in grouped:
+        curve_dates = sub["Date"].values.astype("datetime64[D]")
+        curve_vals = sub["value"].values.astype(np.float64)
+        curve_by_indice[indice] = (curve_dates.astype(np.int64), curve_vals)
         if len(curve_dates) > 0 and len(day_dates) > 0 and day_dates[-1] > curve_dates[-1]:
             extrap_days = int((day_dates[-1] - curve_dates[-1]) / np.timedelta64(1, "D"))
             logger.warning(
@@ -188,12 +172,38 @@ def build_rate_matrix(
                 indice, extrap_days,
             )
 
+    # Pre-extract per-deal columns into numpy arrays (avoid 7 .iloc calls per row)
+    ref_index_arr = deals["ref_index"].values if "ref_index" in deals.columns else np.array([""] * n_deals)
+    spread_arr = pd.to_numeric(deals["Spread"], errors="coerce").fillna(0.0).values if "Spread" in deals.columns else np.zeros(n_deals)
+    currency_arr = deals["Currency"].values if "Currency" in deals.columns else np.array([""] * n_deals)
+    rate_ref_arr = pd.to_numeric(deals["RateRef"], errors="coerce").fillna(0.0).values if "RateRef" in deals.columns else np.zeros(n_deals)
+    last_fix_arr = pd.to_datetime(deals["last_fixing_date"], errors="coerce") if "last_fixing_date" in deals.columns else pd.Series([pd.NaT] * n_deals)
+    next_fix_arr = pd.to_datetime(deals["next_fixing_date"], errors="coerce") if "next_fixing_date" in deals.columns else pd.Series([pd.NaT] * n_deals)
+    current_fix_arr = pd.to_numeric(deals["current_fixing_rate"], errors="coerce") if "current_fixing_rate" in deals.columns else pd.Series([np.nan] * n_deals)
+    tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
+
+    _ref_ts = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.today()
+    ref_day = np.datetime64(_ref_ts.normalize().to_datetime64(), "D")
+    grid_start = day_dates[0]
+    grid_end = day_dates[-1]
+    one_day = np.timedelta64(1, "D")
+
+    for i in np.where(is_floating)[0]:
+        indice = ref_index_arr[i]
+        if not indice:
+            continue
+        curve = curve_by_indice.get(indice)
+        if curve is None:
+            continue
+        curve_dates_num, curve_vals = curve
+
+        spread = float(spread_arr[i])
         tenor_days = int(tenor_col[i]) if i < len(tenor_col) else 0
 
         if tenor_days <= 0:
             # Overnight RFR: rate floats every day, with optional lookback shift.
             daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
-            lookback = LOOKBACK_DAYS.get(ccy, 0)
+            lookback = LOOKBACK_DAYS.get(currency_arr[i], 0)
             if lookback > 0:
                 daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
             result[i] = daily_rates + spread
@@ -201,12 +211,10 @@ def build_rate_matrix(
 
         # Term floater: walk the fixing schedule and hold the rate constant
         # over each [t_k, t_k+tenor) segment.
-        last_fix = deals.iloc[i].get("last_fixing_date")
-        next_fix = deals.iloc[i].get("next_fixing_date")
-        current_fix = deals.iloc[i].get("current_fixing_rate")
-        ref_rate_static = float(deals.iloc[i].get("RateRef", 0.0) or 0.0)
+        last_fix = last_fix_arr.iloc[i]
+        next_fix = next_fix_arr.iloc[i]
+        current_fix = current_fix_arr.iloc[i]
 
-        # Anchor the schedule. Prefer last_fixing_date; else derive from next.
         if pd.notna(last_fix):
             anchor = pd.Timestamp(last_fix).to_datetime64().astype("datetime64[D]")
         elif pd.notna(next_fix):
@@ -220,20 +228,21 @@ def build_rate_matrix(
             result[i] = daily_rates + spread
             continue
 
-        grid_start = day_dates[0]
-        grid_end = day_dates[-1]
-        # Roll anchor forward in tenor steps until the segment overlaps the grid
+        # Roll anchor forward in tenor steps until the segment overlaps the grid.
+        # Arithmetic skip avoids a while-loop for deals last fixed long ago.
         step = np.timedelta64(tenor_days, "D")
-        while anchor + step <= grid_start:
-            anchor = anchor + step
+        if anchor + step <= grid_start:
+            gap_days = int((grid_start - anchor) / one_day)
+            n_skip = gap_days // tenor_days
+            anchor = anchor + np.timedelta64(n_skip * tenor_days, "D")
+            while anchor + step <= grid_start:
+                anchor = anchor + step
 
         rates_path = np.zeros(n_days, dtype=np.float64)
         seg_start = anchor
         while seg_start <= grid_end:
             seg_end = seg_start + step  # exclusive
-            # Determine fixing rate for this segment
             if seg_start <= ref_day < seg_end:
-                # Current period: use the contractual fix from MTD.
                 if pd.notna(current_fix):
                     seg_rate = float(current_fix)
                 else:
@@ -242,13 +251,11 @@ def build_rate_matrix(
                         "for active period; falling back to RateRef (may be wrong for IRS)",
                         i, indice,
                     )
-                    seg_rate = ref_rate_static
+                    seg_rate = float(rate_ref_arr[i])
             else:
-                # Past or future period: sample forward curve at fixing date.
                 fix_num = int(seg_start.astype(np.int64))
                 seg_rate = float(np.interp(fix_num, curve_dates_num, curve_vals))
 
-            # Mask grid days falling in [seg_start, seg_end)
             mask = (day_dates >= seg_start) & (day_dates < seg_end)
             rates_path[mask] = seg_rate
             seg_start = seg_end
@@ -458,12 +465,9 @@ def build_cumulative_rate_factors(
     n_boundaries = len(boundary_dates)
 
     # Daily factors: where alive, (1 + rate * d / MM); where not alive, 1.0
-    daily_factors = np.ones((n_deals, n_days), dtype=np.float64)
-    for d in range(n_days):
-        alive_d = alive_mask[:, d]
-        daily_factors[alive_d, d] = (
-            1.0 + rate_daily[alive_d, d] * accrual_days[d] / mm_daily[alive_d, d]
-        )
+    accrual_row = accrual_days[np.newaxis, :]
+    factors_alive = 1.0 + rate_daily * accrual_row / mm_daily
+    daily_factors = np.where(alive_mask, factors_alive, 1.0)
 
     # Cumulative product along day axis
     cum_prod = np.cumprod(daily_factors, axis=1)

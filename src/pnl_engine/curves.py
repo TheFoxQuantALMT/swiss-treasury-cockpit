@@ -167,12 +167,18 @@ def load_carry_compounded_series(
 
 
 class CurveCache:
+    """Stores forward-curve frames by key.
+
+    Returns the stored frame by reference — callers must not mutate in place.
+    All in-tree consumers either filter (which yields a new frame) or call
+    `.copy()` explicitly before shifting values.
+    """
+
     def __init__(self) -> None:
         self._store: dict[tuple, pd.DataFrame] = {}
 
     def get(self, key: tuple) -> Optional[pd.DataFrame]:
-        df = self._store.get(key)
-        return df.copy() if df is not None else None
+        return self._store.get(key)
 
     def put(self, key: tuple, df: pd.DataFrame) -> None:
-        self._store[key] = df.copy()
+        self._store[key] = df
