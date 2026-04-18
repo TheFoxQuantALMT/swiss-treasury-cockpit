@@ -125,16 +125,14 @@ class TestReverseStressNii:
 class TestReverseStressEve:
     def test_dv01_based(self):
         result = reverse_stress_eve(
-            base_eve=10_000_000,
             tier1_capital=5_000_000,
             dv01=3000,  # 3K per bp
         )
-        assert result["converged"]
         # Limit: 15% of 5M = 750K, DV01=3K → breach at ~250bp
         assert abs(result["breach_shock_bp"] - 250.0) < 2.0
 
     def test_no_tier1(self):
-        result = reverse_stress_eve(base_eve=10_000_000, tier1_capital=0, dv01=3000)
+        result = reverse_stress_eve(tier1_capital=0, dv01=3000)
         assert result["breach_shock_bp"] is None
 
 

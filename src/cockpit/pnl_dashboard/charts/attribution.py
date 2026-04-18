@@ -42,9 +42,17 @@ def _build_ftp(
     if deals is None or deals.empty or "FTP" not in deals.columns:
         return {"has_data": False, "perimeters": {}, "by_currency": {}, "top_deals": []}
 
-    ftp_deals = deals[deals["FTP"].notna() & (deals["FTP"] != 0)].copy()
+    # Keep FTP=0 deals — legitimate unfunded positions are distinct from missing FTP.
+    total_deals = len(deals)
+    ftp_deals = deals[deals["FTP"].notna()].copy()
+    n_missing_ftp = total_deals - len(ftp_deals)
+    coverage_pct = round(100.0 * len(ftp_deals) / total_deals, 1) if total_deals else 0.0
     if ftp_deals.empty:
-        return {"has_data": False, "perimeters": {}, "by_currency": {}, "top_deals": []}
+        return {
+            "has_data": False,
+            "perimeters": {}, "by_currency": {}, "top_deals": [],
+            "coverage": {"with_ftp": 0, "without_ftp": n_missing_ftp, "coverage_pct": 0.0},
+        }
 
     # Use pnl_by_deal for deal-level P&L if available
     source = None
@@ -194,6 +202,11 @@ def _build_ftp(
         "perimeters": perimeters,
         "by_currency": by_currency,
         "top_deals": top_deals,
+        "coverage": {
+            "with_ftp": len(ftp_deals),
+            "without_ftp": n_missing_ftp,
+            "coverage_pct": coverage_pct,
+        },
     }
     if ftp_decomposition:
         result["ftp_decomposition"] = ftp_decomposition
@@ -207,11 +220,15 @@ def _build_ftp(
 def _build_liquidity(
     liquidity_schedule: Optional[pd.DataFrame] = None,
     deals: Optional[pd.DataFrame] = None,
+    date_run: Optional[datetime] = None,
 ) -> dict:
     """Liquidity forecast from daily/monthly cash flow schedule.
 
     Input: wide DataFrame with Dealid, Direction, Currency, and date columns
     (YYYY/MM or YYYY/MM/DD) containing cash flow amounts.
+
+    ``date_run`` anchors the 7/30/90-day windows and survival calculation so
+    backfills are deterministic; if omitted, falls back to wall-clock today.
     """
     if liquidity_schedule is None or liquidity_schedule.empty:
         return {"has_data": False, "by_currency": {}, "summary": {}, "top_maturities": []}
@@ -292,8 +309,8 @@ def _build_liquidity(
         cum += n
         all_cumulative.append(cum)
 
-    # Net outflows for 7d, 30d, 90d windows
-    now = pd.Timestamp.now()
+    # Net outflows for 7d, 30d, 90d windows (anchored on date_run for backfill determinism)
+    now = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.now()
     net_7d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=7))
     net_30d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=30))
     net_90d = sum(n for dt, n in zip(all_labels, all_net) if dt <= now + pd.Timedelta(days=90))
@@ -899,8 +916,9 @@ def _build_attribution(
             return rows.groupby("Deal currency")["Value"].sum()
         return pd.Series(dtype=float)
 
-    curr_pnl = _extract(df, "PnL")
-    prev_pnl = _extract(prev, "PnL")
+    # Stacked engine frame uses Indice="PnL_Simple" (see orchestrator's melt).
+    curr_pnl = _extract(df, "PnL_Simple")
+    prev_pnl = _extract(prev, "PnL_Simple")
     curr_nom = _extract(df, "Nominal")
     prev_nom = _extract(prev, "Nominal")
     curr_ois = _extract(df, "OISfwd")

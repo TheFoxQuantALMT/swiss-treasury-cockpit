@@ -128,7 +128,12 @@ def build_accrual_days(days: pd.DatetimeIndex) -> np.ndarray:
     return d_i
 
 
-def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: pd.DataFrame | None = None) -> np.ndarray:
+def build_rate_matrix(
+    deals: pd.DataFrame,
+    days: pd.DatetimeIndex,
+    ref_curves: pd.DataFrame | None = None,
+    date_run: "pd.Timestamp | None" = None,
+) -> np.ndarray:
     """Build (n_deals x n_days) reference rate matrix.
 
     Fixed-rate deals: broadcast RateRef across all days.
@@ -136,9 +141,10 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
       - tenor == 0 (overnight RFR): interpolate forward curve daily and apply
         lookback shift (SARON 2-BD, SONIA 5-BD per SNB/BoE conventions).
       - tenor  > 0 (term floater, e.g. SARON3M): hold the rate constant over
-        each fixing period [t_k, t_k+tenor). For the period containing today,
-        use ``current_fixing_rate`` (the contractual fix recorded in MTD); for
-        future periods, sample the forward curve at t_k.
+        each fixing period [t_k, t_k+tenor). For the period containing
+        ``date_run`` (the business run date, NOT wall-clock today — backfills
+        need determinism) use ``current_fixing_rate`` (the contractual fix
+        recorded in MTD); for other periods, sample the forward curve at t_k.
     """
     n_deals = len(deals)
     n_days = len(days)
@@ -156,6 +162,9 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
     ref_by_date = ref_curves.set_index(["Indice", "Date"])["value"]
 
     tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
+
+    _ref_ts = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.today()
+    ref_day = np.datetime64(_ref_ts.normalize().to_datetime64(), "D")
 
     for i in np.where(is_floating)[0]:
         indice = deals.iloc[i].get("ref_index", "")
@@ -218,13 +227,12 @@ def build_rate_matrix(deals: pd.DataFrame, days: pd.DatetimeIndex, ref_curves: p
         while anchor + step <= grid_start:
             anchor = anchor + step
 
-        today = np.datetime64(pd.Timestamp.today().normalize().to_datetime64(), "D")
         rates_path = np.zeros(n_days, dtype=np.float64)
         seg_start = anchor
         while seg_start <= grid_end:
             seg_end = seg_start + step  # exclusive
             # Determine fixing rate for this segment
-            if seg_start <= today < seg_end:
+            if seg_start <= ref_day < seg_end:
                 # Current period: use the contractual fix from MTD.
                 if pd.notna(current_fix):
                     seg_rate = float(current_fix)

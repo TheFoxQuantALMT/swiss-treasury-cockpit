@@ -4,12 +4,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-import pandas as pd
 from jinja2 import Environment, FileSystemLoader
-
-from cockpit.pnl_dashboard.charts import build_pnl_dashboard_data
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -21,97 +17,22 @@ def _json_filter(value: object) -> str:
 
 def render_pnl_dashboard(
     *,
-    pnl_all: pd.DataFrame,
-    pnl_all_s: pd.DataFrame,
-    ois_curves: Optional[pd.DataFrame] = None,
-    wirp_curves: Optional[pd.DataFrame] = None,
-    irs_stock: Optional[pd.DataFrame] = None,
+    data: dict,
     date_run: datetime,
     date_rates: datetime,
     output_path: Path,
-    # ALM enhancement inputs (all optional)
-    deals: Optional[pd.DataFrame] = None,
-    pnl_by_deal: Optional[pd.DataFrame] = None,
-    budget: Optional[pd.DataFrame] = None,
-    hedge_pairs: Optional[pd.DataFrame] = None,
-    prev_pnl_all_s: Optional[pd.DataFrame] = None,
-    forecast_history: Optional[pd.DataFrame] = None,
-    scenarios_data: Optional[pd.DataFrame] = None,
-    alert_thresholds: Optional[dict] = None,
-    # EVE data
-    eve_results: Optional[pd.DataFrame] = None,
-    eve_scenarios: Optional[pd.DataFrame] = None,
-    eve_krd: Optional[pd.DataFrame] = None,
-    limits: Optional[pd.DataFrame] = None,
-    pnl_explain: Optional[dict] = None,
-    prev_pnl_by_deal: Optional[pd.DataFrame] = None,
-    prev_date_run: Optional[datetime] = None,
-    liquidity_schedule: Optional[pd.DataFrame] = None,
-    nmd_profiles: Optional[pd.DataFrame] = None,
-    kpi_history: Optional[pd.DataFrame] = None,
-    echeancier: Optional[pd.DataFrame] = None,
-    locked_in_nii_data: Optional[dict] = None,
-    beta_sensitivity_data: Optional[dict] = None,
 ) -> Path:
-    """Render the P&L dashboard HTML from engine output.
+    """Render the P&L dashboard HTML from pre-built chart data.
 
-    Args:
-        pnl_all: Wide format DataFrame (ForecastRatePnL.pnlAll).
-        pnl_all_s: Stacked long format (ForecastRatePnL.pnlAllS).
-        ois_curves: OIS forward curves (fwdOIS0).
-        wirp_curves: WIRP-overlaid curves (fwdWIRP).
-        irs_stock: IRS stock for BOOK2 detail.
-        date_run: Stock/run reference date.
-        date_rates: Market date (realized/forecast boundary).
-        output_path: Where to write the HTML file.
-        deals: Parsed deals DataFrame (for repricing gap).
-        pnl_by_deal: Deal-level P&L summary (for counterparty/hedge).
-        budget: Parsed budget DataFrame (for budget comparison).
-        hedge_pairs: Parsed hedge pairs DataFrame.
-        prev_pnl_all_s: Previous day's pnlAllS (for attribution).
-        forecast_history: Historical NII forecast DataFrame.
-        scenarios_data: BCBS 368 scenario results.
-
-    Returns:
-        The output path.
+    `data` must be the result of `build_pnl_dashboard_data(...)`. Callers are
+    expected to build it once and reuse across HTML/Excel/PDF exports plus KPI
+    snapshotting — see `cmd_render_pnl`.
     """
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=False,
     )
     env.filters["tojson_safe"] = _json_filter
-
-    # Build chart data
-    data = build_pnl_dashboard_data(
-        pnl_all=pnl_all,
-        pnl_all_s=pnl_all_s,
-        ois_curves=ois_curves,
-        wirp_curves=wirp_curves,
-        irs_stock=irs_stock,
-        date_run=date_run,
-        date_rates=date_rates,
-        deals=deals,
-        pnl_by_deal=pnl_by_deal,
-        budget=budget,
-        hedge_pairs=hedge_pairs,
-        prev_pnl_all_s=prev_pnl_all_s,
-        forecast_history=forecast_history,
-        scenarios_data=scenarios_data,
-        alert_thresholds=alert_thresholds,
-        eve_results=eve_results,
-        eve_scenarios=eve_scenarios,
-        eve_krd=eve_krd,
-        limits=limits,
-        pnl_explain=pnl_explain,
-        prev_pnl_by_deal=prev_pnl_by_deal,
-        prev_date_run=prev_date_run,
-        liquidity_schedule=liquidity_schedule,
-        nmd_profiles=nmd_profiles,
-        kpi_history=kpi_history,
-        echeancier=echeancier,
-        locked_in_nii_data=locked_in_nii_data,
-        beta_sensitivity_data=beta_sensitivity_data,
-    )
 
     context = {
         "date_run": date_run.strftime("%Y-%m-%d"),

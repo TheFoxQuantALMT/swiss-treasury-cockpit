@@ -1,10 +1,9 @@
-"""Parsers for deal data — ideal format (parse_deals) and legacy MTD format (parse_mtd)."""
+"""Parser for ideal-format deals.xlsx → unified BOOK1 + BOOK2 DataFrame."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from cockpit.config import SUPPORTED_CURRENCIES
@@ -17,10 +16,6 @@ from pnl_engine.config import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Ideal format: deals.xlsx — clean schema, rates in decimal, perimeter explicit
-# ---------------------------------------------------------------------------
 
 _DEALS_RENAME = {
     "deal_id": "Dealid",
@@ -68,11 +63,9 @@ def parse_deals(path: Path) -> pd.DataFrame:
     """
     df = pd.read_excel(path, sheet_name="Deals", engine="openpyxl")
 
-    # Rename to internal column names
     rename = {k: v for k, v in _DEALS_RENAME.items() if k in df.columns}
     df = df.rename(columns=rename)
 
-    # --- Validation ---
     if "Dealid" not in df.columns:
         raise ValueError("deals.xlsx: missing required column 'deal_id'")
 
@@ -127,153 +120,35 @@ def parse_deals(path: Path) -> pd.DataFrame:
             logger.warning("deals.xlsx: %d rows with invalid perimeter, defaulting to CC", bad_peri.sum())
             df.loc[bad_peri, "Périmètre TOTAL"] = "CC"
 
-    # Validate rate ranges (warn, don't drop)
-    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread", "FTP"]:
+    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
             extreme = df[col].abs() > 0.50
             if extreme.any():
                 logger.warning("deals.xlsx: %d rows with |%s| > 50%% — are rates in decimal?", extreme.sum(), col)
 
-    # Parse dates
+    # FTP: keep NaN to distinguish "missing FTP" from "explicit 0.0 FTP".
+    # Downstream charts filter on .notna() and surface coverage separately.
+    if "FTP" in df.columns:
+        df["FTP"] = pd.to_numeric(df["FTP"], errors="coerce")
+        n_ftp_missing = int(df["FTP"].isna().sum())
+        if n_ftp_missing > 0:
+            logger.info("deals.xlsx: %d rows with missing FTP (kept as NaN)", n_ftp_missing)
+        extreme_ftp = df["FTP"].abs() > 0.50
+        if extreme_ftp.any():
+            logger.warning("deals.xlsx: %d rows with |FTP| > 50%% — are rates in decimal?", int(extreme_ftp.sum()))
+
     for col in ["Maturitydate", "Valuedate", "Tradedate"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
 
-    # Maturity is required
     if "Maturitydate" in df.columns:
         bad_mat = df["Maturitydate"].isna()
         if bad_mat.any():
             logger.warning("deals.xlsx: %d rows with invalid maturity_date (dropped)", bad_mat.sum())
             df = df[bad_mat == False].copy()  # noqa: E712
 
-    # Fill blanks
     if "Floating Rates Short Name" in df.columns:
         df["Floating Rates Short Name"] = df["Floating Rates Short Name"].fillna("")
-
-    return df.reset_index(drop=True)
-
-
-# ---------------------------------------------------------------------------
-# Legacy format: MTD PnL Report — rates in percent, composite column names
-# ---------------------------------------------------------------------------
-
-_MTD_RENAME = {
-    "Deal ID": "Dealid",
-    "Product": "Product",
-    "Deal Currency": "Currency",
-    "ALMT Direction": "Direction",
-    "Outstanding": "Amount",
-    "Rate Reference": "Floating Rates Short Name",
-    "Nominal Interest Rate": "Clientrate",
-    # Note: some Excel versions use em-dash (–), others use regular hyphen (-)
-    "BD \u2013 1 \u2013 Rate": "EqOisRate",
-    "BD - 1 - Rate": "EqOisRate",
-    "Yield To Maturity": "YTM",
-    "CoC Rate": "CocRate",
-    "Trade Date": "Tradedate",
-    "Value Date": "Valuedate",
-    "Maturity Date": "Maturitydate",
-    "Strategy IAS": "Strategy IAS",
-    "Credit Spread FIFO": "CreditSpread_FIFO",
-    # The Excel file sometimes has a typo: "Counterpaty" (missing 'r')
-    "Counterpaty": "Counterparty",
-    "Counterparty": "Counterparty",
-    "IAS Book": "IAS Book",
-    "Spread": "Spread",
-    "Post-counted interest flag": "Post-counted interest flag",
-    "Assets/Liabilities": "AssetLiability",
-}
-
-_RATE_COLS = ["Clientrate", "EqOisRate", "YTM", "CocRate"]
-
-
-def parse_mtd(path: Path) -> pd.DataFrame:
-    """Parse legacy MTD PnL Report → BOOK1 deals with rates in decimal.
-
-    This is the legacy adapter. For the ideal format, use parse_deals().
-    """
-    # Try ideal format first
-    try:
-        xl = pd.ExcelFile(path, engine="openpyxl")
-        if "Deals" in xl.sheet_names:
-            logger.info("Detected ideal-format deals file: %s", path)
-            return parse_deals(path)
-    except (ValueError, KeyError):
-        pass
-
-    # Legacy MTD format
-    from cockpit.config import _WM_COUNTERPARTIES, _CIB_COUNTERPARTIES
-
-    raw = pd.read_excel(path, sheet_name="Conso Deal Level", skiprows=1, engine="openpyxl")
-
-    rename = {k: v for k, v in _MTD_RENAME.items() if k in raw.columns}
-    df = raw.rename(columns=rename)
-
-    # Direction: take first char, coerce non-string / NaN safely
-    if "Direction" in df.columns:
-        df["Direction"] = df["Direction"].astype(str).str[0]
-        bad_dir = ~df["Direction"].isin({"B", "D", "L", "S"})
-        if bad_dir.any():
-            logger.warning("parse_mtd: %d rows with invalid Direction (dropped)", bad_dir.sum())
-            df = df[~bad_dir].copy()
-
-    # Cross-validate Direction against Assets/Liabilities column if present
-    # L=Loan, B=Bond, S=Sell Bond → Asset; D=Deposit → Liability
-    if "AssetLiability" in df.columns and "Direction" in df.columns:
-        _al = df["AssetLiability"].astype(str).str.strip().str.lower()
-        _expected_side = df["Direction"].map({"L": "asset", "B": "asset", "S": "asset", "D": "liability"})
-        _mismatch = (_al.isin(["asset", "liability"])) & (_al != _expected_side)
-        n_mismatch = int(_mismatch.sum())
-        if n_mismatch > 0:
-            logger.warning(
-                "parse_mtd: %d rows where Direction disagrees with Assets/Liabilities column",
-                n_mismatch,
-            )
-
-    # Perimeter from counterparty
-    if "Counterparty" in df.columns:
-        cpty_col = "Counterparty"
-    else:
-        logger.warning("parse_mtd: no Counterparty column found, defaulting perimeter to CC")
-        cpty_col = None
-    if cpty_col is not None:
-        df["Périmètre TOTAL"] = np.where(
-            df[cpty_col].isin(_WM_COUNTERPARTIES), "WM",
-            np.where(df[cpty_col].isin(_CIB_COUNTERPARTIES), "CIB", "CC"),
-        )
-    else:
-        df["Périmètre TOTAL"] = "CC"
-
-    # BOOK1 only
-    if "IAS Book" in df.columns:
-        df = df[df["IAS Book"] == "BOOK1"].copy()
-    else:
-        logger.warning("parse_mtd: no 'IAS Book' column, keeping all rows")
-
-    # Credit spread subtraction for BND
-    if "CreditSpread_FIFO" in df.columns:
-        df["YTM"] = df["YTM"].fillna(0) - df["CreditSpread_FIFO"].fillna(0) / 100
-        df = df.drop(columns=["CreditSpread_FIFO"])
-
-    # Rates: percent → decimal
-    for col in _RATE_COLS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0) / 100.0
-
-    # Spread: bps → decimal
-    if "Spread" in df.columns:
-        df["Spread"] = pd.to_numeric(df["Spread"], errors="coerce").fillna(0.0) / 10_000.0
-
-    # Filter: supported currencies, valid maturity
-    if "Currency" in df.columns:
-        df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
-    else:
-        logger.warning("parse_mtd: no 'Currency' column after rename")
-    if "Maturitydate" not in df.columns:
-        logger.warning("parse_mtd: no 'Maturitydate' column after rename")
-        return df.reset_index(drop=True)
-    mat = pd.to_datetime(df["Maturitydate"], errors="coerce", dayfirst=True)
-    df = df[mat.notna()].copy()
 
     return df.reset_index(drop=True)

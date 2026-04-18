@@ -155,3 +155,52 @@ DIRECTION_SIDE: dict[str, str] = {
 
 SNB_SIGHT_PRODUCTS: set[str] = {"KK", "CC", "SE", "SIGHT", "SICHT"}
 VALID_FLOAT_INDICES: set[str] = set(FLOAT_NAME_TO_WASP) | {""}
+
+# IAS hedge strategy leg identifiers (§10.8 direction filtering).
+STRATEGY_LEG_BND: set[str] = {"BND-HCD", "BND-NHCD"}
+STRATEGY_LEG_IAM: set[str] = {"IAM/LD-HCD", "IAM/LD-NHCD"}
+
+# ---------------------------------------------------------------------------
+# Bank-native @Category2 taxonomy (authoritative)
+# ---------------------------------------------------------------------------
+# Classifies each deal into one balance-sheet / accounting bucket. The
+# Synthesis export aggregates along this axis; Phase 5 reconciliation uses it
+# to localise drift.
+#
+#   Book1 (Accrual / IAS) — 6 buckets:
+#     OPP_Bond_ASW    asset-swapped bonds, accrual leg
+#     OPP_Bond_nASW   plain bonds (govt / corp), no asset-swap
+#     OPP_CASH        deposits, loans, money market
+#     OPR_FVH         fair-value-hedge designated hedged item
+#     OPR_nFVH        open-risk position (no hedge designation)
+#     Other           catch-all
+#
+#   Book2 (Mark-to-Market) — 4 buckets:
+#     OPP_Bond_ASW    MtM leg of asset-swap
+#     OPR_FVH         MtM leg of fair-value-hedge relationship
+#     IRS_FVH         IRS designated as fair-value hedging instrument
+#     IRS_FVO         IRS under fair-value option (no hedge designation)
+#
+# The Synthesis sheet "FVH All" line is the union of the three FVH-flavoured
+# buckets (OPP_Bond_ASW ∪ OPR_FVH ∪ IRS_FVH), computed on the fly.
+
+VALID_CATEGORY2_BOOK1: set[str] = {
+    "OPP_Bond_ASW", "OPP_Bond_nASW", "OPP_CASH",
+    "OPR_FVH", "OPR_nFVH", "Other",
+}
+
+VALID_CATEGORY2_BOOK2: set[str] = {
+    "OPP_Bond_ASW", "OPR_FVH", "IRS_FVH", "IRS_FVO",
+}
+
+VALID_CATEGORY2: set[str] = VALID_CATEGORY2_BOOK1 | VALID_CATEGORY2_BOOK2
+
+CATEGORY2_FVH_ALL: set[str] = {"OPP_Bond_ASW", "OPR_FVH", "IRS_FVH"}
+
+# Bank-native workbook sheet → canonical Book value (the Phase-2 parser uses
+# this to tag rows on load; the rest of the pipeline keeps the existing
+# "BOOK1" / "BOOK2" string convention).
+SHEET_TO_BOOK: dict[str, str] = {
+    "Book1_Daily_PnL": "BOOK1",
+    "Book2_Daily_PnL": "BOOK2",
+}

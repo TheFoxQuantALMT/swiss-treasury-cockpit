@@ -105,6 +105,8 @@ def build_pnl_dashboard_data(
     # Pre-computed enrichment data (from engine, needs matrices not available here)
     locked_in_nii_data: Optional[dict] = None,
     beta_sensitivity_data: Optional[dict] = None,
+    # Optional-enrichment parse failures captured by the CLI render command
+    enrichment_issues: Optional[list[dict]] = None,
 ) -> dict:
     """Build all chart data for the P&L dashboard."""
     df = _safe_stacked(pnl_all_s)
@@ -141,7 +143,7 @@ def build_pnl_dashboard_data(
         "eve": _build_eve(eve_results, eve_scenarios, eve_krd, limits),
         # FTP & Liquidity
         "ftp": _build_ftp(df, deals, pnl_by_deal, date_run=date_run),
-        "liquidity": _build_liquidity(liquidity_schedule, deals),
+        "liquidity": _build_liquidity(liquidity_schedule, deals, date_run=date_run),
         # NMD audit trail
         "nmd_audit": _build_nmd_audit(deals, nmd_profiles),
         # Phase 1: Deal Explorer, Fixed/Float, NIM
@@ -155,7 +157,10 @@ def build_pnl_dashboard_data(
         "risk_cube": _build_risk_cube(df, pnl_by_deal),
         "deposit_behavior": _build_deposit_behavior(deals, nmd_profiles, df),
         # Data Quality (Phase 2)
-        "data_quality": _build_data_quality(date_run, deals, echeancier, ois_curves),
+        "data_quality": _build_data_quality(
+            date_run, deals, echeancier, ois_curves,
+            enrichment_issues=enrichment_issues,
+        ),
         # Phase 3: Basis Risk
         "basis_risk": _build_basis_risk(deals, pnl_by_deal),
         # Phase 4: SNB Reserves
@@ -243,6 +248,7 @@ def build_pnl_dashboard_data(
         df, deals, hedge_pairs, pnl_by_deal,
         sensitivity=result["sensitivity"],
         nii_at_risk=result["nii_at_risk"],
+        date_run=date_run,
     )
 
     # ALCO risk summary (reads from all other computed results)

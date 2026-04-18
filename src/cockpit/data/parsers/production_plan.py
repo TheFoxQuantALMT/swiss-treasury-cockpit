@@ -6,12 +6,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from pnl_engine.config import SUPPORTED_CURRENCIES
 from pnl_engine.dynamic_balance_sheet import ProductionPlan
 
 logger = logging.getLogger(__name__)
-
-
-SUPPORTED_CURRENCIES = {"CHF", "EUR", "USD", "GBP"}
 
 
 def parse_production_plan(path: Path | str) -> list[ProductionPlan]:

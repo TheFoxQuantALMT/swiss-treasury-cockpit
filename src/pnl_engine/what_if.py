@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from pnl_engine.config import MM_BY_CURRENCY
+
 
 def simulate_deal(
     notional: float,
@@ -111,6 +113,7 @@ def simulate_batch(deals: list[dict], ois_rates: dict[str, float]) -> dict:
             ois_rate=ois,
             maturity_years=deal["maturity_years"],
             direction=deal.get("direction", "B"),
+            mm=MM_BY_CURRENCY.get(ccy, 360),
             is_floating=deal.get("is_floating", False),
             deposit_beta=deal.get("deposit_beta", 1.0),
         )

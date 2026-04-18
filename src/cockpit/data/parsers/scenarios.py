@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from pnl_engine.config import SUPPORTED_CURRENCIES
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,8 +16,6 @@ BCBS_SCENARIOS = [
     "short_up", "short_down",
     "steepener", "flattener",
 ]
-
-SUPPORTED_CURRENCIES = {"CHF", "EUR", "USD", "GBP"}
 
 
 def parse_scenarios(path: Path | str) -> pd.DataFrame:

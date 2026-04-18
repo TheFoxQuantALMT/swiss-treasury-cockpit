@@ -35,6 +35,7 @@ from pnl_engine.engine import (
     compute_book2_mtm,
     compute_daily_pnl,
     compute_strategy_pnl,
+    filter_strategy_legs,
     weighted_average,
 )
 from pnl_engine.matrices import (
@@ -97,6 +98,8 @@ class PnlEngine:
         self.irs_stock = irs_stock
         self.dateRun = date_run
         self.dateRates = date_rates if date_rates is not None else date_run
+        self._dateRun_ts = pd.Timestamp(date_run)
+        self._dateRates_ts = pd.Timestamp(self.dateRates)
 
         self._funding_source = funding_source
         self._nmd_profiles = nmd_profiles
@@ -163,7 +166,7 @@ class PnlEngine:
 
         # Build matrices (C6: alive mask caps start at first of dateRun's month)
         self._nominal_daily = expand_nominal_to_daily(self._deals_use[self._month_cols], self._days)
-        alive = build_alive_mask(self._deals_use, self._days, date_run=pd.Timestamp(self.dateRun))
+        alive = build_alive_mask(self._deals_use, self._days, date_run=self._dateRun_ts)
         self._alive_mask = alive
         self._nominal_daily = self._nominal_daily * alive
 
@@ -307,9 +310,11 @@ class PnlEngine:
 
         if dateRates is not None and dateRates != self.dateRates:
             self.dateRates = dateRates
+            self._dateRates_ts = pd.Timestamp(dateRates)
             self.clear_fwd_cache()
         elif dateRates is not None:
             self.dateRates = dateRates
+            self._dateRates_ts = pd.Timestamp(dateRates)
 
         # --- Curves & matrices for this shock ---
         if Shock == "wirp":
@@ -319,7 +324,7 @@ class PnlEngine:
 
         ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
         ref_curves = self._load_ref_curves(shock=Shock)
-        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
         # Apply NMD deposit beta if profiles provided
         if self._nmd_profiles is not None and not self._nmd_profiles.empty:
@@ -359,12 +364,12 @@ class PnlEngine:
         try:
             cum_carry, _carry_boundaries = build_cumulative_carry_factors(
                 self._deals_use, self._days,
-                date_rates=pd.Timestamp(self.dateRates),
+                date_rates=self._dateRates_ts,
             )
             cum_rate = build_cumulative_rate_factors(
                 rate_matrix, self._accrual_days, mm_broadcast,
                 self._alive_mask, self._days,
-                date_rates=pd.Timestamp(self.dateRates),
+                date_rates=self._dateRates_ts,
             )
         except Exception:
             logger.warning("Cumulative factor build failed — falling back to per-month compounding", exc_info=True)
@@ -377,7 +382,7 @@ class PnlEngine:
             funding_daily=funding_matrix,
             accrual_days=self._accrual_days,
             mm_daily=mm_broadcast,
-            date_rates=pd.Timestamp(self.dateRates),
+            date_rates=self._dateRates_ts,
             carry_funding_daily=carry_funding_matrix,
             cum_carry_factors=cum_carry,
             cum_rate_factors=cum_rate,
@@ -472,16 +477,8 @@ class PnlEngine:
             parts.append(pnl_no_strat)
 
         if not pnl_strat.empty:
-            # Direction filtering (§10.8)
-            pnl_strat = pnl_strat[
-                ~(pnl_strat["Product2BuyBack"].isin(["BND-HCD", "BND-NHCD"])
-                  & pnl_strat["Direction"].isin(["L", "D"]))
-            ]
-            pnl_strat = pnl_strat[
-                ~(pnl_strat["Product2BuyBack"].isin(["IAM/LD-HCD", "IAM/LD-NHCD"])
-                  & pnl_strat["Direction"].isin(["B", "S"]))
-            ]
-            parts.append(pnl_strat)
+            # Direction filtering (§10.8) — shared with engine.merge_results
+            parts.append(filter_strategy_legs(pnl_strat))
 
         if not pnl_irs_mtm.empty:
             parts.append(pnl_irs_mtm)
@@ -649,7 +646,7 @@ class PnlEngine:
         mat_col = "Maturity Date" if "Maturity Date" in irs.columns else "Maturitydate" if "Maturitydate" in irs.columns else None
         if mat_col is not None:
             mat = pd.to_datetime(irs[mat_col], errors="coerce", dayfirst=True)
-            irs = irs[mat > pd.Timestamp(self.dateRun)].copy()
+            irs = irs[mat > self._dateRun_ts].copy()
         # Skip strategy filter when IRS-MTM already identified by Product (K+EUR format)
         is_explicit_mtm = "Product" in irs.columns and (irs["Product"] == "IRS-MTM").all()
         if not is_explicit_mtm:
@@ -710,7 +707,7 @@ class PnlEngine:
 
         ois_matrix = _build_ois_matrix(self._deals_use, self.fwdOIS0, self._days)
         ref_curves = self._load_ref_curves(shock="0")
-        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
         # Build client rate matrix for EVE cashflow generation
         client_rate_matrix = build_client_rate_matrix(self._deals_use, len(self._days))
@@ -811,7 +808,7 @@ class PnlEngine:
             # Build OIS matrix from shifted curves
             ois_matrix = _build_ois_matrix(self._deals_use, shifted_curves, self._days)
             ref_curves = self._load_ref_curves(shock="0")
-            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
             n_days = len(self._days)
             mm_broadcast = self._mm[:, np.newaxis] * np.ones((1, n_days))
@@ -822,7 +819,7 @@ class PnlEngine:
 
             monthly = aggregate_to_monthly(
                 daily_pnl, self._nominal_daily, ois_matrix, rate_matrix, self._days,
-                date_rates=pd.Timestamp(self.dateRates),
+                date_rates=self._dateRates_ts,
             )
 
             # Enrich with metadata
@@ -902,7 +899,7 @@ class PnlEngine:
             ois_curves = self._load_ois_curves(shock="0")
             ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
             ref_curves = self._load_ref_curves(shock="0")
-            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves)
+            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
             if self._nmd_profiles is not None and not self._nmd_profiles.empty:
                 from pnl_engine.nmd import apply_deposit_beta

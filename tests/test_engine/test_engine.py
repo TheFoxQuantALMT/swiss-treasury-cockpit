@@ -111,35 +111,6 @@ def test_strategy_hcd_no_ois_subtraction():
     assert abs(hcd.iloc[0]["PnL_Simple"] - (-3000.0)) < 1.0
 
 
-def test_run_all_shocks_smoke(mtd_path, echeancier_path, wirp_path, irs_path):
-    pytest.importorskip("openpyxl")
-    if not mtd_path.exists():
-        pytest.skip("Sample data not available")
-
-    from cockpit.engine.pnl.engine import run_all_shocks
-    from cockpit.engine.pnl.curves import CurveCache
-    from cockpit.data.parsers import parse_mtd, parse_echeancier, parse_wirp, parse_irs_stock
-
-    deals = parse_mtd(mtd_path)
-    echeancier = parse_echeancier(echeancier_path)
-    wirp = parse_wirp(wirp_path)
-    irs_stock = parse_irs_stock(irs_path)
-    cache = CurveCache()
-
-    result = run_all_shocks(
-        deals=deals,
-        echeancier=echeancier,
-        wirp=wirp,
-        irs_stock=irs_stock,
-        cache=cache,
-        date_rates=None,
-        shocks=["0"],
-    )
-    assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
-    assert "Shock" in result.columns
-
-
 # --- Issue #12: Floating rate matrix test ---
 
 def test_build_rate_matrix_floating():
@@ -298,35 +269,6 @@ def test_mock_curves_shock_applied():
 
 
 # --- T7: compare_pnl output format ---
-
-def test_compare_pnl_format(mtd_path, echeancier_path, wirp_path, irs_path):
-    """compare_pnl should produce wide format with Level/Level_date columns."""
-    pytest.importorskip("openpyxl")
-    if not mtd_path.exists():
-        pytest.skip("Sample data not available")
-
-    from cockpit.engine.pnl.forecast import ForecastRatePnL, compare_pnl
-    from datetime import datetime
-
-    pnl1 = ForecastRatePnL(
-        dateRun=datetime(2026, 3, 26), export=False,
-        input_dir=mtd_path.parent, output_dir=mtd_path.parent.parent / "output",
-    )
-    pnl2 = ForecastRatePnL(
-        dateRun=datetime(2026, 3, 26), export=False,
-        input_dir=mtd_path.parent, output_dir=mtd_path.parent.parent / "output",
-    )
-    comp = compare_pnl(pnl1, pnl2, output_path=mtd_path.parent.parent / "output" / "test_comp.xlsx")
-
-    assert "Level" in comp.columns
-    assert "Level_date" in comp.columns
-    assert set(comp["Level"].unique()) == {"Value_new", "Value_prev", "Delta"}
-    # Delta should be 0 (same data)
-    month_cols = [c for c in comp.columns if c not in ["Périmètre TOTAL", "Deal currency", "Product2BuyBack", "Direction", "Shock", "Indice", "Level", "Level_date"]]
-    delta_rows = comp[comp["Level"] == "Delta"]
-    if month_cols and len(delta_rows) > 0:
-        assert delta_rows[month_cols].abs().sum().sum() < 0.01
-
 
 # --- Realized / Forecast P&L split ---
 

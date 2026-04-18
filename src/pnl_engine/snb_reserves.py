@@ -8,20 +8,21 @@ from __future__ import annotations
 
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 
-
-# Default SNB reserve parameters
-DEFAULT_RESERVE_RATIO = 0.025       # 2.5% of sight liabilities
-DEFAULT_HQLA_DEDUCTION = 0.20       # 20% of HQLA can offset reserve requirement
+from pnl_engine.config import (
+    HQLA_DEDUCTION,
+    LIABILITY_DIRECTIONS,
+    SNB_RESERVE_RATIO,
+    SNB_SIGHT_PRODUCTS,
+)
 
 
 def compute_snb_reserves(
     deals: Optional[pd.DataFrame],
     ois_rate: float = 0.0,
-    reserve_ratio: float = DEFAULT_RESERVE_RATIO,
-    hqla_deduction: float = DEFAULT_HQLA_DEDUCTION,
+    reserve_ratio: float = SNB_RESERVE_RATIO,
+    hqla_deduction: float = HQLA_DEDUCTION,
     hqla_amount: float = 0.0,
     tier1_capital: float = 0.0,
     actual_reserves: float | None = None,
@@ -43,17 +44,14 @@ def compute_snb_reserves(
         return {"has_data": False}
 
     # Sight liabilities: Direction D (deposit) = bank receives funds
-    from pnl_engine.config import LIABILITY_DIRECTIONS
     sight_mask = pd.Series([False] * len(deals))
     if "Direction" in deals.columns:
         sight_mask = deals["Direction"].str.strip().str.upper().isin(LIABILITY_DIRECTIONS)
     if "Currency" in deals.columns:
         sight_mask &= deals["Currency"].str.strip().str.upper() == "CHF"
 
-    from pnl_engine.config import SNB_SIGHT_PRODUCTS
-    sight_products = SNB_SIGHT_PRODUCTS
     if "Product" in deals.columns:
-        product_mask = deals["Product"].str.strip().str.upper().isin(sight_products)
+        product_mask = deals["Product"].str.strip().str.upper().isin(SNB_SIGHT_PRODUCTS)
         sight_mask &= product_mask
 
     if "Amount" in deals.columns:
@@ -67,8 +65,11 @@ def compute_snb_reserves(
     net_requirement = max(0, gross_requirement - hqla_offset)
 
     # Opportunity cost: reserves earn 0 (or SNB sight deposit rate)
-    # Cost = reserve_amount × OIS_rate (what we could earn if invested)
-    opportunity_cost = net_requirement * abs(ois_rate)
+    # Cost = reserve_amount × max(0, OIS_rate). Using max(0, …) keeps the cost
+    # non-negative under negative-rate regimes (2015–2022 CHF), where deploying
+    # funds at a negative OIS would destroy value — reserves have zero or
+    # beneficial opportunity cost in that case.
+    opportunity_cost = net_requirement * max(0.0, ois_rate)
 
     # Coverage ratio
     coverage_pct = (hqla_offset / gross_requirement * 100) if gross_requirement > 0 else 100.0

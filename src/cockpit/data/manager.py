@@ -183,9 +183,29 @@ class DataManager:
             shutil.copy2(json_file, archive_subdir / json_file.name)
         logger.info(f"Archived current data to {archive_subdir}")
 
+    # Mapping from source name to the top-level keys it produces in the
+    # unified snapshot. Used to lift stale fields back into `results` when
+    # a live fetch fails. Keep in sync with the _fetch_* methods above.
+    _SOURCE_KEYS: dict[str, tuple[str, ...]] = {
+        "fred": ("fed_rates", "daily_indicators", "macro_indicators", "daily_history"),
+        "ecb": ("ecb_rates", "eur_chf_history", "eur_chf_latest"),
+        "snb": ("sight_deposits", "snb_rate", "saron"),
+        "yfinance": (
+            "usd_chf_history",
+            "brent_history",
+            "eu_gas_history",
+            "vix_history",
+            "gbp_chf_history",
+        ),
+    }
+
     def _load_stale_fallback(self, results: dict[str, Any]) -> None:
-        """Load yesterday's data for any failed sources."""
-        # Find most recent archive
+        """Load yesterday's data for any failed sources.
+
+        Reads the archived unified snapshot (`latest_snapshot.json`) and lifts
+        the keys belonging to each failed source back into `results`, plus a
+        `<source>_stale_data` marker for downstream consumers.
+        """
         if not ARCHIVE_DIR.exists():
             return
 
@@ -198,28 +218,41 @@ class DataManager:
             return
 
         latest_archive = archives[0]
+        snapshot_file = latest_archive / "latest_snapshot.json"
+        if not snapshot_file.exists():
+            logger.warning(
+                f"No archived snapshot at {snapshot_file}; "
+                f"cannot restore stale sources: {results['stale']}"
+            )
+            return
+
+        try:
+            with open(snapshot_file) as f:
+                stale_snapshot = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to read stale snapshot {snapshot_file}: {e}")
+            return
+
         logger.warning(
             f"Loading stale data from {latest_archive.name} "
             f"for sources: {results['stale']}"
         )
 
-        # Load archived JSON files that correspond to failed sources
-        source_file_map = {
-            "fred": "rates.json",
-            "ecb": "fx.json",
-            "snb": "sight_deposits.json",
-            "yfinance": "energy.json",
-        }
-
         for source in results["stale"]:
-            filename = source_file_map.get(source)
-            if filename:
-                archive_file = latest_archive / filename
-                if archive_file.exists():
-                    with open(archive_file) as f:
-                        stale_data = json.load(f)
-                    results[f"{source}_stale_data"] = stale_data
-                    logger.info(f"Loaded stale {filename} from {latest_archive.name}")
+            keys = self._SOURCE_KEYS.get(source)
+            if not keys:
+                continue
+            loaded: dict[str, Any] = {}
+            for key in keys:
+                if key in stale_snapshot:
+                    results[key] = stale_snapshot[key]
+                    loaded[key] = stale_snapshot[key]
+            if loaded:
+                results[f"{source}_stale_data"] = loaded
+                logger.info(
+                    f"Restored {len(loaded)} stale field(s) for {source} "
+                    f"from {latest_archive.name}"
+                )
 
     def save_results(self, results: dict[str, Any]) -> None:
         """Persist fetched data to JSON files in data/ directory."""

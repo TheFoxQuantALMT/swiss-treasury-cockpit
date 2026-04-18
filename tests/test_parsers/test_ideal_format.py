@@ -6,11 +6,8 @@ import pytest
 
 from cockpit.data.parsers import (
     parse_deals,
-    parse_echeancier,
-    parse_mtd,
     parse_reference_table,
     parse_schedule,
-    parse_wirp,
     parse_wirp_ideal,
     _month_columns,
 )
@@ -105,15 +102,6 @@ class TestParseDeals:
         assert sold.iloc[0]["Currency"] == "EUR"
 
 
-class TestParseMtdAutoDetect:
-    """parse_mtd() should auto-detect deals.xlsx ideal format."""
-
-    def test_auto_detects_ideal_format(self):
-        result = parse_mtd(FIXTURES / "deals.xlsx")
-        assert len(result) == 15
-        assert "Dealid" in result.columns
-
-
 # ---------------------------------------------------------------------------
 # rate_schedule.xlsx
 # ---------------------------------------------------------------------------
@@ -160,13 +148,6 @@ class TestParseSchedule:
                 assert nonzero[0] < 0, f"Loan deal {row['Dealid']} has positive nominal"
 
 
-class TestParseEcheancierAutoDetect:
-    def test_auto_detects_ideal_format(self):
-        result = parse_echeancier(FIXTURES / "rate_schedule.xlsx")
-        assert len(result) == 12
-        assert "Dealid" in result.columns
-
-
 # ---------------------------------------------------------------------------
 # wirp.xlsx
 # ---------------------------------------------------------------------------
@@ -202,13 +183,6 @@ class TestParseWirpIdeal:
 
     def test_four_indices(self, wirp):
         assert wirp["Indice"].nunique() == 4
-
-
-class TestParseWirpAutoDetect:
-    def test_auto_detects_ideal_format(self):
-        result = parse_wirp(FIXTURES / "wirp.xlsx")
-        assert len(result) == 19
-        assert "Indice" in result.columns
 
 
 # ---------------------------------------------------------------------------

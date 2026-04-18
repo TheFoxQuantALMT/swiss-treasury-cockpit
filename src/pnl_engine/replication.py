@@ -18,13 +18,15 @@ REPLICATION_TENORS: list[float] = [1.0, 2.0, 3.0, 5.0, 7.0]
 
 
 def _constrained_nnls(A: np.ndarray, b: np.ndarray, max_iter: int = 100, tol: float = 1e-8) -> np.ndarray:
-    """Non-negative least squares via iterative clip-normalize-resolve.
+    """Non-negative least squares via iterative active-set refinement.
 
-    Starts from unconstrained solution, then iterates: clip negatives,
-    resolve LS on the active (positive) set, normalize. Converges to a
-    good non-negative approximation without scipy.
+    Starts from unconstrained LS, then iterates: clip negatives, resolve LS on
+    the active (positive) set, until convergence. Returns the true NNLS
+    minimiser of ‖Aw − b‖² subject to w ≥ 0.
 
-    Falls back to single-step clip-normalize if iteration does not converge.
+    Callers that need a budget constraint (e.g. sum-to-1) should normalise
+    the returned weights themselves — the NNLS problem itself has no such
+    constraint, and folding it in here rotates weights off the LS optimum.
     """
     n = A.shape[1]
 
@@ -60,13 +62,7 @@ def _constrained_nnls(A: np.ndarray, b: np.ndarray, max_iter: int = 100, tol: fl
         if np.max(np.abs(weights - prev)) < tol:
             break
 
-    # Final clip and normalize
-    weights = np.maximum(weights, 0.0)
-    s = weights.sum()
-    if s > 0:
-        weights = weights / s
-
-    return weights
+    return np.maximum(weights, 0.0)
 
 
 def build_replication_portfolio(
@@ -98,31 +94,27 @@ def build_replication_portfolio(
     if cf[0] != 0:
         cf = cf / cf[0]
 
-    # Build basis functions: each tenor represents an exponential decay profile
-    # matching the runoff of a hypothetical bullet bond at that tenor.
-    # NNLS finds the optimal weighting of these decay profiles to replicate
-    # the NMD behavioral cashflow curve.
+    # Exponential decay basis — each tenor contributes an amortising profile.
+    # Flat step functions would bias the fit toward the shortest tenor.
     A = np.zeros((n, len(tenors)))
     for j, tenor in enumerate(tenors):
-        # Exponential decay: captures the amortizing nature of NMD cashflows
-        # rather than flat step functions (which would bias toward shortest tenor)
         A[:, j] = np.exp(-day_years / max(tenor, 0.01))
 
-    # Non-negative least squares via projected gradient descent (numpy only)
-    weights = _constrained_nnls(A, cf)
-    w_sum = weights.sum()
+    # ls_weights: raw NNLS minimiser of ‖Aw − cf‖² — used for R² so the fit
+    # quality reflects the LS optimum, not the budget-normalised weights below.
+    ls_weights = _constrained_nnls(A, cf)
+    w_sum = ls_weights.sum()
     if w_sum <= 0:
-        # Equal allocation fallback
-        weights = np.ones(len(tenors)) / len(tenors)
+        ls_weights = np.ones(len(tenors)) / len(tenors)
+        w_sum = float(ls_weights.sum())
 
-    # Compute fit quality
-    fitted = A @ weights  # weights already sum to 1.0 after normalization
+    fitted = A @ ls_weights
     residuals = cf - fitted
     ss_res = float(np.sum(residuals**2))
     ss_tot = float(np.sum((cf - cf.mean())**2))
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
-    # Weighted average maturity of replication portfolio
+    weights = ls_weights / w_sum
     wam = float(np.sum(weights * np.array(tenors)))
 
     portfolio = []

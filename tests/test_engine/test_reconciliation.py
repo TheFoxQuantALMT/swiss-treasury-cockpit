@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 
 from cockpit.config import CURRENCY_TO_OIS, FLOAT_NAME_TO_WASP
-from cockpit.data.parsers import parse_wirp
+from cockpit.data.parsers import parse_wirp_ideal
 from cockpit.engine.pnl.engine import _mock_curves_from_wirp
 from cockpit.engine.pnl.matrices import build_date_grid
 
@@ -50,7 +50,7 @@ class TestMockCurvesFromWirp:
 
     @pytest.fixture()
     def wirp(self):
-        return parse_wirp(FIXTURES / "wirp.xlsx")
+        return parse_wirp_ideal(FIXTURES / "wirp.xlsx")
 
     @pytest.fixture()
     def days(self):
@@ -152,7 +152,7 @@ class TestWaspCurves:
         from cockpit.engine.pnl.curves import load_daily_curves
         from datetime import datetime
 
-        wirp = parse_wirp(FIXTURES / "wirp.xlsx")
+        wirp = parse_wirp_ideal(FIXTURES / "wirp.xlsx")
         days = build_date_grid(pd.Timestamp("2026-04-01"), months=24)
 
         wasp_curves = load_daily_curves(

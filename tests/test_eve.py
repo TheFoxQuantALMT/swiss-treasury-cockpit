@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cockpit.data.parsers import parse_deals, parse_wirp
+from cockpit.data.parsers import parse_deals
 from cockpit.engine.pnl.forecast import ForecastRatePnL
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ideal_input"

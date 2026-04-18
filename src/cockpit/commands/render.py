@@ -125,6 +125,14 @@ def cmd_render_pnl(
 
     _optional_loaded = 0
     _optional_warnings = 0
+    enrichment_issues: list[dict] = []
+
+    def _record_issue(source: str, path, err: Exception) -> None:
+        enrichment_issues.append({
+            "source": source,
+            "file": getattr(path, "name", str(path)) if path is not None else "",
+            "error": str(err),
+        })
 
     if input_dir:
         input_path = Path(input_dir)
@@ -143,6 +151,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse budget: {e}")
                 _optional_warnings += 1
+                _record_issue("budget", budget_path, e)
 
         # Auto-discover scenarios file
         import pandas as pd
@@ -157,6 +166,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse scenarios: {e}")
                 _optional_warnings += 1
+                _record_issue("scenarios", sc_candidates[0], e)
 
         # Fall back to currency-specific BCBS magnitudes (Table 2)
         if scenarios_def is None:
@@ -199,6 +209,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse custom scenarios: {e}")
                 _optional_warnings += 1
+                _record_issue("custom_scenarios", custom_sc_path, e)
 
         # Run all scenarios (BCBS + FINMA + custom)
         print("[render-pnl] Step 2/4: Running scenarios & EVE...")
@@ -224,6 +235,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse NMD profiles: {e}")
                 _optional_warnings += 1
+                _record_issue("nmd_profiles", nmd_candidates[0], e)
 
         # Run EVE computation (uses scenarios if available)
         if pnl._engine:
@@ -248,6 +260,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse limits: {e}")
                 _optional_warnings += 1
+                _record_issue("limits", limits_candidates[0], e)
 
         # Auto-discover alert thresholds
         threshold_candidates = list(input_path.glob("*threshold*")) + list(input_path.glob("*alert_config*"))
@@ -260,6 +273,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse alert thresholds: {e}")
                 _optional_warnings += 1
+                _record_issue("alert_thresholds", threshold_candidates[0], e)
 
         # Auto-discover liquidity schedule
         liq_candidates = list(input_path.glob("*liquidity*"))
@@ -272,6 +286,7 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse liquidity schedule: {e}")
                 _optional_warnings += 1
+                _record_issue("liquidity_schedule", liq_candidates[0], e)
 
         # Auto-discover production plan for dynamic balance sheet
         prod_candidates = list(input_path.glob("*production_plan*")) + list(input_path.glob("*production*plan*"))
@@ -287,8 +302,13 @@ def cmd_render_pnl(
             except Exception as e:
                 print(f"[render-pnl] Warning: could not parse production plan: {e}")
                 _optional_warnings += 1
+                _record_issue("production_plan", prod_candidates[0], e)
 
         print(f"[render-pnl] Loaded {_optional_loaded} optional inputs, {_optional_warnings} warnings")
+        if enrichment_issues:
+            print(
+                f"[render-pnl] {len(enrichment_issues)} enrichment issue(s) surfaced in Data Quality tab"
+            )
 
     # Load previous day's P&L for attribution / explain
     pnl_explain = None
@@ -392,22 +412,27 @@ def cmd_render_pnl(
         kpi_history=kpi_history,
         locked_in_nii_data=locked_in_nii_data,
         beta_sensitivity_data=beta_sensitivity_data,
+        enrichment_issues=enrichment_issues,
     )
 
     print("[render-pnl] Step 4/4: Rendering P&L dashboard...")
-    render_pnl_dashboard(
-        **dashboard_kwargs,
-        output_path=output_path,
-    )
-    print(f"[render-pnl] Output: {output_path}")
-
-    # Build dashboard data once for KPI saving + export
     dashboard_data = None
     try:
         from cockpit.pnl_dashboard.charts import build_pnl_dashboard_data
         dashboard_data = build_pnl_dashboard_data(**dashboard_kwargs)
     except Exception as e:
-        print(f"[render-pnl] Warning: could not build dashboard data for KPI/export: {e}")
+        print(f"[render-pnl] Warning: could not build dashboard data: {e}")
+
+    if dashboard_data is not None:
+        render_pnl_dashboard(
+            data=dashboard_data,
+            date_run=date_dt,
+            date_rates=date_dt,
+            output_path=output_path,
+        )
+        print(f"[render-pnl] Output: {output_path}")
+    else:
+        print("[render-pnl] Skipping HTML render: dashboard data unavailable")
 
     # Save daily KPI snapshot for Trends tab
     if dashboard_data:

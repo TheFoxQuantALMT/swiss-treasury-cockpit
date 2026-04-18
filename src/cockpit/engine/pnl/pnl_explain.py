@@ -1,25 +1,26 @@
-"""P&L Explain — waterfall decomposition of NII changes between two dates.
+"""P&L Explain — waterfall decomposition of NII changes between two runs.
 
-Decomposes ΔP&L into actionable drivers:
-  1. Time/Roll-down effect — P&L from passage of time at unchanged rates
-  2. New deals — NII contribution from deals entered since prev date
-  3. Maturing deals — NII lost from deals that matured
-  4. Rate effect — impact of OIS curve movement on existing portfolio
-  5. Spread effect — change in client rate vs OIS spread
-  6. Residual — unexplained (mix, rounding, model)
+Decomposes Δ(Forecast NII) between two engine runs into:
+  • New deals     — Σ curr_pnl for deals present only in curr
+  • Matured       — −Σ prev_pnl for deals present only in prev
+  • Rate effect   — ΔOIS impact on existing deals (held at prev rates)
+  • Spread effect — ΔClientRate (RateRef) impact on existing deals
+  • Residual      — amortization, mix, forecast-window shrinkage, cross-terms
 
-The waterfall reads:
-  Prev NII → +Time → +New Deals → -Matured → +Rate → +Spread → +Residual → Current NII
+The decomposition is internally consistent and reconciles by construction:
+  total_delta = new + matured + existing_delta
+  existing_delta = rate_effect + spread_effect + residual
 
-Requires two engine runs (current and previous) to compare.
+The rate/spread factors are self-calibrated from the prev run's P&L identity
+  prev_pnl_ccy = T_p × spread_p_avg    (where T_p = Σ Nom·days/MM)
+so effects are on the same scale as the forecast totals, regardless of how
+many days elapsed between runs.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -39,145 +40,127 @@ def compute_pnl_explain(
     Args:
         curr_pnl_by_deal: Current deal-level P&L (Shock=0).
         prev_pnl_by_deal: Previous deal-level P&L (Shock=0).
-        curr_pnl_all_s: Current stacked P&L (for rate/nominal aggregates).
+        curr_pnl_all_s: Current stacked P&L (for rate aggregates per currency).
         prev_pnl_all_s: Previous stacked P&L.
-        deals: Current deal metadata (with Valuedate, Maturitydate).
-        date_run: Current run date.
-        prev_date_run: Previous run date.
+        deals: Unused; retained for call-site compatibility. Classification is
+            now set-based (membership in each run), not date-based.
+        date_run: Current run date (label only).
+        prev_date_run: Previous run date (label only).
 
     Returns:
         Dict with waterfall data, by-currency breakdown, and deal-level details.
     """
+    _ = deals  # unused; retained for call-site compatibility
     if curr_pnl_by_deal is None or curr_pnl_by_deal.empty:
         return {"has_data": False}
     if prev_pnl_by_deal is None or prev_pnl_by_deal.empty:
         return {"has_data": False}
 
-    # Filter to Shock=0
-    curr = curr_pnl_by_deal[curr_pnl_by_deal["Shock"] == "0"].copy() if "Shock" in curr_pnl_by_deal.columns else curr_pnl_by_deal.copy()
-    prev = prev_pnl_by_deal[prev_pnl_by_deal["Shock"] == "0"].copy() if "Shock" in prev_pnl_by_deal.columns else prev_pnl_by_deal.copy()
+    # Filter to Shock=0 (read-only downstream; no .copy needed)
+    curr = curr_pnl_by_deal[curr_pnl_by_deal["Shock"] == "0"] if "Shock" in curr_pnl_by_deal.columns else curr_pnl_by_deal
+    prev = prev_pnl_by_deal[prev_pnl_by_deal["Shock"] == "0"] if "Shock" in prev_pnl_by_deal.columns else prev_pnl_by_deal
 
-    # Ensure string Dealid for matching
-    for df in [curr, prev]:
-        if "Dealid" in df.columns:
-            df["Dealid"] = df["Dealid"].astype(str)
-
-    # Aggregate to deal-level totals (across months)
+    # Aggregate to deal-level totals (across months) with string Dealid for matching
     curr_by_deal = _aggregate_deal_pnl(curr)
     prev_by_deal = _aggregate_deal_pnl(prev)
+    if "Dealid" in curr_by_deal.columns:
+        curr_by_deal = curr_by_deal.assign(Dealid=curr_by_deal["Dealid"].astype(str))
+    if "Dealid" in prev_by_deal.columns:
+        prev_by_deal = prev_by_deal.assign(Dealid=prev_by_deal["Dealid"].astype(str))
 
-    # Classify deals
+    # Set-based classification: membership in each run is the clean criterion.
+    # Date-based reclassification was removed — a deal in both runs IS existing;
+    # its ΔP&L belongs in existing_delta (which splits into rate + spread + residual).
     curr_ids = set(curr_by_deal["Dealid"])
     prev_ids = set(prev_by_deal["Dealid"])
-
     new_ids = curr_ids - prev_ids
     matured_ids = prev_ids - curr_ids
     existing_ids = curr_ids & prev_ids
 
-    # Also classify by date if deal metadata available
-    if deals is not None and not deals.empty:
-        deals_meta = deals.copy()
-        if "Dealid" in deals_meta.columns:
-            deals_meta["Dealid"] = deals_meta["Dealid"].astype(str)
-            mat_dates = pd.to_datetime(deals_meta.set_index("Dealid")["Maturitydate"], errors="coerce")
-            val_dates = pd.to_datetime(deals_meta.set_index("Dealid")["Valuedate"], errors="coerce")
-            prev_ts = pd.Timestamp(prev_date_run)
-            curr_ts = pd.Timestamp(date_run)
+    # Bucket P&L: new, matured, existing
+    new_deal_pnl = float(curr_by_deal[curr_by_deal["Dealid"].isin(new_ids)]["PnL"].sum()) if new_ids else 0.0
+    matured_deal_pnl = float(-prev_by_deal[prev_by_deal["Dealid"].isin(matured_ids)]["PnL"].sum()) if matured_ids else 0.0
 
-            # Deals that started after prev_date (new production)
-            for did in existing_ids.copy():
-                vd = val_dates.get(did)
-                if vd is not None and pd.notna(vd) and vd > prev_ts:
-                    new_ids.add(did)
-                    existing_ids.discard(did)
+    existing_prev_pnl = prev_by_deal[prev_by_deal["Dealid"].isin(existing_ids)]
+    existing_curr_pnl = curr_by_deal[curr_by_deal["Dealid"].isin(existing_ids)]
+    existing_prev_by_ccy = existing_prev_pnl.groupby("Currency")["PnL"].sum().to_dict() if "Currency" in existing_prev_pnl.columns else {}
+    existing_curr_by_ccy = existing_curr_pnl.groupby("Currency")["PnL"].sum().to_dict() if "Currency" in existing_curr_pnl.columns else {}
 
-            # Deals that matured between prev and current
-            for did in existing_ids.copy():
-                md = mat_dates.get(did)
-                if md is not None and pd.notna(md) and md <= curr_ts and md > prev_ts:
-                    matured_ids.add(did)
-                    existing_ids.discard(did)
-
-    # --- Compute effects ---
-    # 1. New deals: sum current P&L for new deals
-    new_deal_pnl = curr_by_deal[curr_by_deal["Dealid"].isin(new_ids)]["PnL"].sum() if new_ids else 0.0
-
-    # 2. Maturing deals: negative of prev P&L for matured deals
-    matured_deal_pnl = -(prev_by_deal[prev_by_deal["Dealid"].isin(matured_ids)]["PnL"].sum()) if matured_ids else 0.0
-
-    # 3. For existing deals: decompose ΔP&L into rate + time + spread
-    existing_curr = curr_by_deal[curr_by_deal["Dealid"].isin(existing_ids)].set_index("Dealid")
-    existing_prev = prev_by_deal[prev_by_deal["Dealid"].isin(existing_ids)].set_index("Dealid")
-
-    # Join existing deals
-    both_ids = sorted(existing_ids)
-    time_effect = 0.0
-    rate_effect = 0.0
-    spread_effect = 0.0
-
-    # Get aggregate rate/nominal data from pnlAllS
+    # Per-currency rate snapshots from pnlAllS (nominal-weighted avg across horizon)
     curr_s = _safe_reset(curr_pnl_all_s)
     prev_s = _safe_reset(prev_pnl_all_s)
-
     curr_rates = _extract_by_ccy(curr_s, "OISfwd")
     prev_rates = _extract_by_ccy(prev_s, "OISfwd")
     curr_ref = _extract_by_ccy(curr_s, "RateRef")
     prev_ref = _extract_by_ccy(prev_s, "RateRef")
-    curr_nom = _extract_by_ccy(curr_s, "Nominal")
-    prev_nom = _extract_by_ccy(prev_s, "Nominal")
 
-    currencies = sorted(set(curr_rates.keys()) | set(prev_rates.keys()))
+    rate_effect = 0.0
+    spread_effect = 0.0
+    residual_effect = 0.0
     by_currency = {}
 
-    # Actual calendar days between runs (not hardcoded 30)
-    days_elapsed = max((pd.Timestamp(date_run) - pd.Timestamp(prev_date_run)).days, 1)
+    currencies = sorted(set(existing_prev_by_ccy.keys()) | set(existing_curr_by_ccy.keys())
+                        | set(prev_rates.keys()) | set(curr_rates.keys()))
 
     for ccy in currencies:
-        nom_p = prev_nom.get(ccy, 0)
-        nom_c = curr_nom.get(ccy, 0)
-        ois_p = prev_rates.get(ccy, 0)
-        ois_c = curr_rates.get(ccy, 0)
-        ref_p = prev_ref.get(ccy, 0)
-        ref_c = curr_ref.get(ccy, 0)
-
-        # Spread = OIS - RateRef (the margin)
+        ois_p = float(prev_rates.get(ccy, 0.0))
+        ois_c = float(curr_rates.get(ccy, 0.0))
+        ref_p = float(prev_ref.get(ccy, 0.0))
+        ref_c = float(curr_ref.get(ccy, 0.0))
         spread_p = ois_p - ref_p
         spread_c = ois_c - ref_c
 
-        # Rate effect on existing portfolio: Nom_prev × ΔOIS × (days / 360)
-        ccy_rate_eff = nom_p * (ois_c - ois_p) / 360 * days_elapsed
-        rate_effect += ccy_rate_eff
+        exist_prev_ccy = float(existing_prev_by_ccy.get(ccy, 0.0))
+        exist_curr_ccy = float(existing_curr_by_ccy.get(ccy, 0.0))
+        exist_delta_ccy = exist_curr_ccy - exist_prev_ccy
 
-        # Spread effect: Nom_prev × ΔSpread × (days / 360)
-        ccy_spread_eff = nom_p * (spread_c - spread_p) / 360 * days_elapsed
-        spread_effect += ccy_spread_eff
+        # Self-calibrated nominal-time factor from the prev P&L identity:
+        #   prev_pnl = T_p × spread_p_avg  ⇒  T_p = prev_pnl / spread_p
+        # Ensures rate/spread effects scale with forecast P&L, not with
+        # elapsed days between runs.
+        if abs(spread_p) > 1e-8:
+            t_p = exist_prev_ccy / spread_p
+        else:
+            t_p = 0.0
+
+        # ΔOIS on existing book (client rate held at prev)
+        rate_eff_ccy = t_p * (ois_c - ois_p)
+        # ΔClientRate on existing book (OIS held at prev). Signed: a lower
+        # client rate on assets increases (OIS − Ref) and thus P&L.
+        spread_eff_ccy = t_p * (ref_p - ref_c)
+        # Residual = amortization, mix, forecast-window shrinkage, cross-term
+        residual_ccy = exist_delta_ccy - rate_eff_ccy - spread_eff_ccy
+
+        rate_effect += rate_eff_ccy
+        spread_effect += spread_eff_ccy
+        residual_effect += residual_ccy
 
         by_currency[ccy] = {
-            "ois_prev": round(float(ois_p) * 10000, 1),  # bps
-            "ois_curr": round(float(ois_c) * 10000, 1),
-            "nominal_prev": round(float(nom_p), 0),
-            "nominal_curr": round(float(nom_c), 0),
-            "spread_prev": round(float(spread_p) * 10000, 1),
-            "spread_curr": round(float(spread_c) * 10000, 1),
+            "ois_prev": round(ois_p * 10000, 1),
+            "ois_curr": round(ois_c * 10000, 1),
+            "spread_prev": round(spread_p * 10000, 1),
+            "spread_curr": round(spread_c * 10000, 1),
+            "existing_prev_pnl": round(exist_prev_ccy, 0),
+            "existing_curr_pnl": round(exist_curr_ccy, 0),
+            "rate_effect": round(rate_eff_ccy, 0),
+            "spread_effect": round(spread_eff_ccy, 0),
+            "residual": round(residual_ccy, 0),
         }
 
-    # Total P&L
-    total_curr = curr_by_deal["PnL"].sum()
-    total_prev = prev_by_deal["PnL"].sum()
+    # Total P&L (reconciles by construction: delta = new + matured + rate + spread + residual)
+    total_curr = float(curr_by_deal["PnL"].sum())
+    total_prev = float(prev_by_deal["PnL"].sum())
     total_delta = total_curr - total_prev
-
-    # Time effect = residual after accounting for other effects
-    time_effect = total_delta - new_deal_pnl - matured_deal_pnl - rate_effect - spread_effect
 
     # Build waterfall steps
     waterfall = [
-        {"label": f"Prev NII ({prev_date_run.strftime('%Y-%m-%d')})", "value": round(float(total_prev), 0), "type": "base"},
-        {"label": "Time / Roll-down", "value": round(float(time_effect), 0), "type": "effect"},
-        {"label": f"New Deals (+{len(new_ids)})", "value": round(float(new_deal_pnl), 0), "type": "effect"},
-        {"label": f"Maturing Deals (-{len(matured_ids)})", "value": round(float(matured_deal_pnl), 0), "type": "effect"},
-        {"label": "Rate Effect", "value": round(float(rate_effect), 0), "type": "effect"},
-        {"label": "Spread Effect", "value": round(float(spread_effect), 0), "type": "effect"},
-        {"label": f"Current NII ({date_run.strftime('%Y-%m-%d')})", "value": round(float(total_curr), 0), "type": "total"},
+        {"label": f"Prev NII ({prev_date_run.strftime('%Y-%m-%d')})", "value": round(total_prev, 0), "type": "base"},
+        {"label": f"New Deals (+{len(new_ids)})", "value": round(new_deal_pnl, 0), "type": "effect"},
+        {"label": f"Maturing Deals (-{len(matured_ids)})", "value": round(matured_deal_pnl, 0), "type": "effect"},
+        {"label": "Rate Effect (ΔOIS)", "value": round(rate_effect, 0), "type": "effect"},
+        {"label": "Spread Effect (ΔClientRate)", "value": round(spread_effect, 0), "type": "effect"},
+        {"label": "Residual (time / mix / amort.)", "value": round(residual_effect, 0), "type": "effect"},
+        {"label": f"Current NII ({date_run.strftime('%Y-%m-%d')})", "value": round(total_curr, 0), "type": "total"},
     ]
 
     # Detail tables
@@ -216,14 +199,16 @@ def compute_pnl_explain(
         "new_deals": new_deals_detail,
         "matured_deals": matured_deals_detail,
         "summary": {
-            "prev_nii": round(float(total_prev), 0),
-            "curr_nii": round(float(total_curr), 0),
-            "delta": round(float(total_delta), 0),
-            "time_effect": round(float(time_effect), 0),
-            "new_deal_effect": round(float(new_deal_pnl), 0),
-            "matured_deal_effect": round(float(matured_deal_pnl), 0),
-            "rate_effect": round(float(rate_effect), 0),
-            "spread_effect": round(float(spread_effect), 0),
+            "prev_nii": round(total_prev, 0),
+            "curr_nii": round(total_curr, 0),
+            "delta": round(total_delta, 0),
+            "new_deal_effect": round(new_deal_pnl, 0),
+            "matured_deal_effect": round(matured_deal_pnl, 0),
+            "rate_effect": round(rate_effect, 0),
+            "spread_effect": round(spread_effect, 0),
+            "residual_effect": round(residual_effect, 0),
+            # Back-compat alias — older renderers may read `time_effect`.
+            "time_effect": round(residual_effect, 0),
             "n_new": len(new_ids),
             "n_matured": len(matured_ids),
             "n_existing": len(existing_ids),
@@ -249,13 +234,12 @@ def _aggregate_deal_pnl(pnl_by_deal: pd.DataFrame) -> pd.DataFrame:
 
 
 def _safe_reset(df: pd.DataFrame) -> pd.DataFrame:
-    """Reset MultiIndex to flat columns."""
+    """Reset MultiIndex to flat columns. Returns input unchanged when already flat."""
     if df is None or df.empty:
         return pd.DataFrame()
-    result = df.copy()
-    if isinstance(result.index, pd.MultiIndex):
-        result = result.reset_index()
-    return result
+    if isinstance(df.index, pd.MultiIndex):
+        return df.reset_index()
+    return df
 
 
 def _extract_by_ccy(df: pd.DataFrame, indice: str) -> dict:

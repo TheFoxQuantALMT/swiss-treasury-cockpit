@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from pnl_engine.config import SUPPORTED_CURRENCIES
+
 
 _BUDGET_RENAME = {
     "currency": "currency",
@@ -15,8 +17,6 @@ _BUDGET_RENAME = {
     "perimeter": "perimeter",
     "product": "product",
 }
-
-SUPPORTED_CURRENCIES = {"CHF", "EUR", "USD", "GBP"}
 
 
 def parse_budget(path: Path | str) -> pd.DataFrame:

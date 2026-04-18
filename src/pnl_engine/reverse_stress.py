@@ -112,77 +112,65 @@ def reverse_stress_nii(
     return bisect_breach_shock(eval_fn, limit, direction="below", **kwargs)
 
 
+_MAX_SHOCK_BP = 500.0
+
+
 def reverse_stress_eve(
-    base_eve: float,
     tier1_capital: float,
     dv01: float,
     threshold_pct: float = 15.0,
     convexity: float | None = None,
-    **kwargs,
 ) -> dict:
-    """Simplified reverse stress for ΔEVE/Tier1 using DV01 approximation.
+    """Reverse stress for ΔEVE/Tier1 using DV01 (+ optional convexity).
 
-    Finds the shock where |ΔEVE|/Tier1 exceeds threshold_pct.
+    Solves the breach analytically:
+        ΔEVE(s) = DV01·s + 0.5·convexity·s²  (s in bp)
+        breach when  |ΔEVE(s)| ≥ limit = Tier1 × threshold_pct / 100
 
-    Args:
-        base_eve: Base EVE.
-        tier1_capital: Tier 1 capital.
-        dv01: DV01 (EVE change per 1bp).
-        threshold_pct: IRRBB outlier threshold (default 15%).
-        convexity: Optional convexity (second-order term). When provided,
-            ΔEVE ≈ DV01 × shock + 0.5 × convexity × shock². Units: EVE
-            change per bp² (same scale as dv01 per bp).
+    With convexity, ΔEVE is a parabola in ``s`` — bisection on a non-monotonic
+    function can miss the correct root, so we solve the quadratic directly and
+    pick the smallest real root with |s| ≤ _MAX_SHOCK_BP.
 
     Returns:
-        Bisection result dict.
+        Dict with breach_shock_bp (signed bp at first breach), breach_value,
+        message. breach_shock_bp is None when no breach occurs within range.
     """
     if tier1_capital <= 0:
         return {"breach_shock_bp": None, "message": "Tier 1 capital not provided"}
 
-    limit_delta_eve = tier1_capital * threshold_pct / 100.0
+    limit = tier1_capital * threshold_pct / 100.0
 
-    # Search for positive ΔEVE breach (rates up) and negative ΔEVE breach
-    # (rates down) separately.  Each eval function is monotonic because
-    # delta(shock) = DV01*s + 0.5*conv*s² is a parabola in one direction.
-    def _delta(shock_bp: float) -> float:
-        d = dv01 * shock_bp
-        if convexity is not None:
-            d += 0.5 * convexity * shock_bp ** 2
-        return d
+    def _roots_for(rhs: float) -> list[float]:
+        """Solve 0.5·c·s² + DV01·s − rhs = 0 for s."""
+        c = convexity if convexity is not None else 0.0
+        if abs(c) < 1e-12:
+            if abs(dv01) < 1e-12:
+                return []
+            return [rhs / dv01]
+        a = c / 2.0
+        b = dv01
+        disc = b * b + 4.0 * a * rhs
+        if disc < 0:
+            return []
+        sq = disc ** 0.5
+        return [(-b + sq) / (2.0 * a), (-b - sq) / (2.0 * a)]
 
-    # Positive shock: does delta exceed +limit?
-    def _eval_pos_up(bp: float) -> float:
-        return limit_delta_eve - _delta(bp)
-
-    # Positive shock: does delta fall below -limit?
-    def _eval_pos_down(bp: float) -> float:
-        return _delta(bp) + limit_delta_eve
-
-    # Negative shock: does delta exceed +limit?
-    def _eval_neg_up(bp: float) -> float:
-        return limit_delta_eve - _delta(-bp)
-
-    # Negative shock: does delta fall below -limit?
-    def _eval_neg_down(bp: float) -> float:
-        return _delta(-bp) + limit_delta_eve
-
-    # Try all four directions; collect breach shocks
-    candidates = []
-    for label, fn, sign in [
-        ("pos_up", _eval_pos_up, 1),
-        ("pos_down", _eval_pos_down, 1),
-        ("neg_up", _eval_neg_up, -1),
-        ("neg_down", _eval_neg_down, -1),
-    ]:
-        result = bisect_breach_shock(fn, 0.0, low_bp=0.0, direction="below", **kwargs)
-        bp = result.get("breach_shock_bp")
-        if bp is not None:
-            candidates.append((abs(bp), sign * bp, result))
+    candidates: list[float] = []
+    for rhs in (limit, -limit):
+        for root in _roots_for(rhs):
+            if abs(root) <= _MAX_SHOCK_BP:
+                candidates.append(root)
 
     if not candidates:
-        return {"breach_shock_bp": None, "message": "No breach found within search range"}
+        return {
+            "breach_shock_bp": None,
+            "message": f"No breach within ±{_MAX_SHOCK_BP:.0f} bp range",
+        }
 
-    # Return the smallest (most conservative) breach shock
-    candidates.sort(key=lambda x: x[0])
-    _, shock_bp, best = candidates[0]
-    return {**best, "breach_shock_bp": round(shock_bp, 1)}
+    shock_bp = min(candidates, key=abs)
+    delta = dv01 * shock_bp + 0.5 * (convexity or 0.0) * shock_bp ** 2
+    return {
+        "breach_shock_bp": round(shock_bp, 1),
+        "breach_value": round(delta, 0),
+        "message": "Solved analytically",
+    }

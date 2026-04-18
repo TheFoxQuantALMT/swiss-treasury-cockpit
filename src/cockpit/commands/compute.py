@@ -21,7 +21,7 @@ def cmd_compute(
     """Run P&L engine, scoring, alerts, and portfolio snapshot."""
     from cockpit.engine.pnl.forecast import ForecastRatePnL
     from cockpit.engine.snapshot import build_portfolio_snapshot
-    from cockpit.data.parsers import parse_mtd, parse_echeancier, parse_reference_table
+    from cockpit.data.parsers import parse_reference_table
 
     date_dt = datetime.strptime(date, "%Y-%m-%d")
 

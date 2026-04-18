@@ -136,20 +136,25 @@ class TestNewAndMaturedDeals:
         assert result["summary"]["matured_deal_effect"] == -300  # lost the P&L
         assert len(result["matured_deals"]) >= 1
 
-    def test_matured_by_date(self):
-        """Deal present in both but maturity between prev and curr dates."""
-        pbd = _make_pnl_by_deal([1, 2], [100, 200])
+    def test_existing_deal_pnl_drop_goes_to_residual(self):
+        """Deal present in both runs with lower curr P&L (e.g., nearing maturity)
+        is treated as existing; its P&L drop flows into the residual, not
+        into `matured`. Set-membership is the clean criterion for classification."""
+        pbd_prev = _make_pnl_by_deal([1, 2], [100, 200])
+        pbd_curr = _make_pnl_by_deal([1, 2], [100, 50])  # deal 2 runs off
         pnl_s = _make_pnl_all_s(["CHF"], [300], [0.01], [2e6])
-        deals = _make_deals([1, 2],
-                           ["2025-01-01", "2025-01-01"],
-                           ["2027-01-01", "2026-04-05"])  # deal 2 matures on curr date
+        deals = _make_deals([1, 2], ["2025-01-01"] * 2, ["2027-01-01"] * 2)
 
         result = compute_pnl_explain(
-            pbd, pbd, pnl_s, pnl_s, deals,
+            pbd_curr, pbd_prev, pnl_s, pnl_s, deals,
             datetime(2026, 4, 5), datetime(2026, 4, 4),
         )
-        # Deal 2 should be classified as matured
-        assert result["summary"]["n_matured"] >= 1
+        assert result["summary"]["n_matured"] == 0
+        assert result["summary"]["n_existing"] == 2
+        # Δexisting = -150 should fully land in residual (rates unchanged).
+        assert result["summary"]["rate_effect"] == 0
+        assert result["summary"]["spread_effect"] == 0
+        assert result["summary"]["residual_effect"] == -150
 
 
 class TestEmptyInputs:

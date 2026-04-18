@@ -419,7 +419,7 @@ def _build_scenario_studio(
                     tier1 = outlier["tier1_capital"] if outlier else 0
                     dv01 = eve_d["dv01"].get("total_dv01", 0)
                     if tier1 > 0 and dv01 != 0:
-                        rs_eve = reverse_stress_eve(eve_d["total_eve"], tier1, dv01)
+                        rs_eve = reverse_stress_eve(tier1, dv01)
                         reverse_stress["eve"] = rs_eve
     except Exception as e:
         logger.warning("Reverse stress test failed: %s", e)
@@ -443,6 +443,7 @@ def _build_hedge_strategy(
     pnl_by_deal: Optional[pd.DataFrame] = None,
     sensitivity: Optional[dict] = None,
     nii_at_risk: Optional[dict] = None,
+    date_run: Optional[datetime] = None,
 ) -> dict:
     """Hedge Strategy Optimizer -- hedge coverage, naked exposure, cost, roll calendar."""
     empty: dict = {
@@ -551,7 +552,8 @@ def _build_hedge_strategy(
         hedging_cal = hedging.copy()
         hedging_cal["_mat"] = pd.to_datetime(hedging_cal[mat_col], errors="coerce")
         hedging_cal = hedging_cal.dropna(subset=["_mat"]).sort_values("_mat")
-        now = pd.Timestamp.now()
+        # Anchor roll calendar on date_run for backfill determinism
+        now = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.now()
         upcoming = hedging_cal[hedging_cal["_mat"] <= now + pd.DateOffset(months=12)]
 
         for _, row in upcoming.head(20).iterrows():

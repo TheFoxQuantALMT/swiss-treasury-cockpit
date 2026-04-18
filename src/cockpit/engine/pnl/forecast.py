@@ -45,13 +45,17 @@ import pandas as pd
 
 from pnl_engine.config import FUNDING_SOURCE
 from pnl_engine.orchestrator import PnlEngine
+from cockpit.export.synthesis import build_synthesis, export_synthesis_to_excel
 from cockpit.data.parsers import (
+    BankNativeInputs,
+    discover_bank_native_input,
+    parse_bank_native_deals,
+    parse_bank_native_schedule,
+    parse_bank_native_wirp,
     parse_book,
     parse_deals,
-    parse_echeancier,
-    parse_irs_stock,
-    parse_mtd,
-    parse_wirp,
+    parse_schedule,
+    parse_wirp_ideal,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +71,6 @@ class ForecastRatePnL:
 
     Delegates all computation to ``pnl_engine.PnlEngine``. This class adds:
     - File discovery and parsing (load_data)
-    - Legacy MTD/IRS format support
     - Excel export and dill serialization
     """
 
@@ -81,6 +84,7 @@ class ForecastRatePnL:
         input_dir: Optional[Union[str, Path]] = None,
         output_dir: Optional[Union[str, Path]] = None,
         funding_source: str = FUNDING_SOURCE,
+        auto_run: bool = True,
     ):
         self.dateRun = dateRun
         self.date_ref_day = self.dateRun.strftime("%Y%m%d")
@@ -107,6 +111,7 @@ class ForecastRatePnL:
         self.scheduleDataMTM: Optional[pd.DataFrame] = None
         self.wirpData: Optional[pd.DataFrame] = None
         self.irsStock: Optional[pd.DataFrame] = None
+        self.book2NonIrs: pd.DataFrame = pd.DataFrame()
         self.fwdOIS0: Optional[pd.DataFrame] = None
         self.fwdWIRP: Optional[pd.DataFrame] = None
         self.pnlAll: Optional[pd.DataFrame] = None
@@ -116,17 +121,27 @@ class ForecastRatePnL:
         # Internal engine instance
         self._engine: Optional[PnlEngine] = None
 
-        self.run(shocks=["50", "0"], export=export)
+        if auto_run:
+            self.run(shocks=["50", "0"], export=export)
 
     def load_data(self) -> None:
         """Load deal data, schedule, WIRP, and IRS stock from Excel files.
 
         Supports three input layouts (tried in order):
+        - **Bank-native format**: triple of ``*Daily Rate PnL*_YYYYMMDD.xlsx``,
+          ``YYYYMMDD_WIRP.xlsx``, ``YYYYMMDD_rate_schedule.xlsx`` — either
+          directly in ``input_dir`` or under a ``YYYYPP/YYYYMMDDVV/`` tree.
+          Applies per-deal FX re-apply via ``Optimus Reporting FxRate``.
         - **K+EUR format**: ``*Daily Rate PnL*`` (Book1 + Book2 sheets, IRS-MTM from Folder Short Name)
         - **Ideal format**: ``*deals*`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
-        - **Legacy format**: ``*MTD*``, ``*Echeancier*``, ``*WIRP*``, ``*IRS*`` (separate files)
         """
-        # --- Deals: K+EUR format → ideal → legacy ---
+        bank_native_inputs = self._detect_bank_native_input()
+        if bank_native_inputs is not None:
+            self._load_bank_native(bank_native_inputs)
+            logger.info("load_data Done (bank-native: %d deals, %d schedule rows)",
+                        len(self.pnlData), len(self.scheduleData))
+            return
+
         book_files = list(self.input_dir.glob("*Daily Rate PnL*"))
         deals_files = list(self.input_dir.glob("*deals*"))
 
@@ -136,7 +151,6 @@ class ForecastRatePnL:
             book1 = parse_book(book_file, date_run_ts, "Book1")
             book2 = parse_book(book_file, date_run_ts, "Book2")
             self.pnlData = pd.concat([book1, book2], ignore_index=True)
-            # IRS-MTM deals (Folder Short Name == TMSWBFIGE) serve as irsStock
             self.irsStock = self._irs_stock_from_pnl_data()
             logger.info(
                 "Loaded K+EUR format: %s (Book1=%d, Book2=%d, IRS-MTM=%d)",
@@ -148,52 +162,122 @@ class ForecastRatePnL:
             logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
                         deals_files[0].name, len(self.pnlData), len(self.irsStock))
         else:
-            mtd_candidates = list(self.input_dir.glob("*MTD Standard Liquidity PnL Report*"))
-            if not mtd_candidates:
-                raise FileNotFoundError(f"No deal file found in {self.input_dir}")
-            mtd_file = mtd_candidates[0]
-            irs_candidates = list(self.input_dir.glob("*IRS*"))
-            if not irs_candidates:
-                raise FileNotFoundError(f"No IRS file found in {self.input_dir}")
-            irs_file = irs_candidates[0]
-            self.pnlData = parse_mtd(mtd_file)
-            self.irsStock = parse_irs_stock(irs_file)
+            raise FileNotFoundError(f"No deal file found in {self.input_dir}")
 
-        # --- Schedule ---
-        schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*")) or list(self.input_dir.glob("*Echeancier*"))
+        schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*"))
         if not schedule_files:
-            echeancier_candidates = list(self.input_dir.glob("*Echeancier*"))
-            if not echeancier_candidates:
-                raise FileNotFoundError(f"No schedule/Echeancier file found in {self.input_dir}")
-            schedule_files = echeancier_candidates
-        echeancier_file = schedule_files[0]
-        self.scheduleData = parse_echeancier(echeancier_file)
+            raise FileNotFoundError(f"No rate_schedule file found in {self.input_dir}")
+        self.scheduleData = parse_schedule(schedule_files[0])
 
-        # --- WIRP ---
         wirp_files = list(self.input_dir.glob("*wirp*")) or list(self.input_dir.glob("*WIRP*"))
         if not wirp_files:
-            wirp_candidates = list(self.input_dir.glob("*WIRP*"))
-            if not wirp_candidates:
-                raise FileNotFoundError(f"No WIRP file found in {self.input_dir}")
-            wirp_files = wirp_candidates
-        wirp_file = wirp_files[0]
-        self.wirpData = parse_wirp(wirp_file)
+            raise FileNotFoundError(f"No WIRP file found in {self.input_dir}")
+        self.wirpData = parse_wirp_ideal(wirp_files[0])
 
-        # Filter TMSWBFIGE folder for IRS-MTM deals (legacy schedule only, not K+EUR)
-        if not book_files:
-            if "Folder" in self.scheduleData.columns:
-                self.scheduleDataMTM = self.scheduleData[
-                    self.scheduleData["Folder"].isin(["TMSWBFIGE"])
-                ]
-                self._append_mtm_from_schedule()
-            else:
-                self.scheduleDataMTM = pd.DataFrame()
-                if not deals_files:
-                    logger.warning("Folder column not found in Echeancier — skipping MTM schedule append")
-        else:
-            self.scheduleDataMTM = pd.DataFrame()
+        self.scheduleDataMTM = pd.DataFrame()
 
         logger.info("load_data Done (%d deals, %d schedule rows)", len(self.pnlData), len(self.scheduleData))
+
+    def _detect_bank_native_input(self) -> Optional[BankNativeInputs]:
+        """Return a BankNativeInputs if the input_dir resolves to bank-native files.
+
+        Two layouts are accepted:
+        - ``input_dir`` is the day dir itself containing the three bank-native files
+          (detected by presence of ``YYYYMMDD_rate_schedule.xlsx``, which is
+          unique to the bank-native layout).
+        - ``input_dir`` is the root of a ``YYYYPP/YYYYMMDDVV/`` tree.
+        """
+        date_str = pd.Timestamp(self.dateRun).strftime("%Y%m%d")
+
+        rs_candidates = list(self.input_dir.glob(f"{date_str}_rate_schedule.xlsx"))
+        wirp_candidates = list(self.input_dir.glob(f"{date_str}_WIRP.xlsx"))
+        pnl_candidates = list(self.input_dir.glob(f"*Daily Rate PnL*_{date_str}.xlsx"))
+        if rs_candidates and wirp_candidates and pnl_candidates:
+            return BankNativeInputs(
+                pnl_workbook=pnl_candidates[0],
+                wirp=wirp_candidates[0],
+                rate_schedule=rs_candidates[0],
+                position_date=pd.Timestamp(self.dateRun).normalize(),
+                variant="",
+                day_dir=self.input_dir,
+            )
+
+        try:
+            return discover_bank_native_input(self.input_dir, position_date=pd.Timestamp(self.dateRun))
+        except FileNotFoundError:
+            return None
+
+    def _load_bank_native(self, inputs: BankNativeInputs) -> None:
+        """Populate pnlData/scheduleData/wirpData/irsStock from the bank-native triple.
+
+        FX re-apply (per memory rule): overwrite @Amount_CHF / Amount_CHF_source
+        with nominal_ccy × Optimus Reporting FxRate so the forecast uses a single
+        consistent FX snapshot across all 60 months. Book2 is split: IRS go to
+        irsStock for the WASP MTM path; non-IRS Book2 (MTM bond/FVH legs) are
+        set aside as ``book2NonIrs`` for Phase 3b.
+        """
+        deals = parse_bank_native_deals(inputs.pnl_workbook, date_run=pd.Timestamp(self.dateRun))
+        self.scheduleData = parse_bank_native_schedule(inputs.rate_schedule)
+        self.wirpData = parse_bank_native_wirp(inputs.wirp)
+        self.scheduleDataMTM = pd.DataFrame()
+
+        if "FxRate" in deals.columns:
+            deals["Amount_CHF"] = deals["Amount"].astype(float) * deals["FxRate"].astype(float)
+
+        book1 = deals[deals["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
+        book2 = deals[deals["IAS Book"] == "BOOK2"].copy().reset_index(drop=True)
+
+        self.pnlData = book1
+        self.irsStock, self.book2NonIrs = self._split_book2_bank_native(book2)
+
+        logger.info(
+            "Bank-native: BOOK1=%d, BOOK2 IRS=%d, BOOK2 non-IRS=%d (deferred), schedule=%d",
+            len(self.pnlData), len(self.irsStock), len(self.book2NonIrs),
+            len(self.scheduleData),
+        )
+
+    @staticmethod
+    def _split_book2_bank_native(book2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Split Book2 deals: IRS → MTM stock (WASP path); non-IRS → deferred.
+
+        Bank-native Book2 contains four @Category2 buckets: IRS_FVH, IRS_FVO
+        (both IRS) plus OPP_Bond_ASW, OPR_FVH (MTM bond / hedge legs). The MTM
+        bond legs need a different pricing path (Phase 3b); for now they are
+        separated out and the engine sees only IRS Book2.
+        """
+        if book2.empty:
+            return pd.DataFrame(), pd.DataFrame()
+
+        is_irs = book2["Product"].isin({"IRS", "IRS-MTM"})
+        irs = book2[is_irs].copy()
+        non_irs = book2[~is_irs].copy()
+
+        if irs.empty:
+            return pd.DataFrame(), non_irs.reset_index(drop=True)
+
+        irs_stock = irs.rename(columns={
+            "Maturitydate": "Maturity Date",
+            "Valuedate": "Value Date",
+            "Strategy IAS": "Strategy (Agapes IAS)",
+            "Currency": "Currency Code (ISO)",
+            "Dealid": "Deal",
+            "Floating Rates Short Name": "Index",
+            "Clientrate": "Rate",
+            "Amount": "Notional",
+        })
+        # Pay/Receive derived from Direction (L/B/S → RECEIVE fixed leg; D → PAY)
+        if "Direction" in irs_stock.columns:
+            irs_stock["Pay/Receive"] = np.where(
+                irs_stock["Direction"].isin(["L", "B", "S"]), "RECEIVE", "PAY"
+            )
+            irs_stock["Buy / Sell"] = np.where(
+                irs_stock["Pay/Receive"] == "RECEIVE", "Buy", "Sell"
+            )
+            irs_stock["Asset / Liabilities"] = np.where(
+                irs_stock["Pay/Receive"] == "RECEIVE", "Actif", "Passif"
+            )
+
+        return irs_stock.reset_index(drop=True), non_irs.reset_index(drop=True)
 
     @staticmethod
     def _split_deals_by_book(all_deals: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -242,34 +326,6 @@ class ForecastRatePnL:
             )
 
         return mtm.reset_index(drop=True)
-
-    def _append_mtm_from_schedule(self) -> None:
-        """Append IRS-MTM deals from TMSWBFIGE schedule rows missing in conso."""
-        if self.scheduleDataMTM is None or self.scheduleDataMTM.empty:
-            return
-
-        col_map = {
-            "Situation Date": "Mark To Market Date",
-            "Deal currency": "Currency",
-            "Trade Date": "Tradedate",
-            "Value Date": "Valuedate",
-            "Maturity Date": "Maturitydate",
-        }
-        passthrough = ["Dealid", "Direction", "Amount", "Rate"]
-
-        available = [c for c in list(col_map) + passthrough if c in self.scheduleDataMTM.columns]
-        mtm = self.scheduleDataMTM[available].rename(columns=col_map).copy()
-
-        if "Rate" in mtm.columns:
-            mtm["Clientrate"] = mtm.pop("Rate") / 100
-
-        mtm["Product2BuyBack"] = "IRS-MTM"
-        mtm["Product"] = "IRS"
-        mtm["Périmètre TOTAL"] = "CC"
-        mtm = mtm.reindex(columns=self.pnlData.columns)
-
-        self.pnlData = pd.concat([self.pnlData, mtm], ignore_index=True)
-        logger.info("Appended %d IRS-MTM rows from TMSWBFIGE schedule", len(mtm))
 
     def run(
         self,
@@ -346,6 +402,10 @@ class ForecastRatePnL:
         Sheets:
         - ``pnl{dateRates}``: aggregated portfolio P&L (wide format)
         - ``Deal PnL``: deal-level P&L detail (all shocks × months)
+
+        For bank-native loads (``IAS Book`` + ``Category2`` on ``pnlData``),
+        additionally writes ``{YYYYMM}_Daily_Forecast.xlsx`` with the
+        ``Synthesis`` sheet.
         """
         out = Path(self.output)
         out.mkdir(parents=True, exist_ok=True)
@@ -375,6 +435,45 @@ class ForecastRatePnL:
                     writer, sheet_name="Deal PnL", index=False,
                 )
         logger.info("export_files Done -> %s", path)
+
+        self._export_synthesis(out)
+
+    def _export_synthesis(self, out: Path) -> None:
+        """Write the bank-native Synthesis workbook when Book/Category2 are present."""
+        deals = self._taxonomy_frame()
+        if deals is None or self.pnl_by_deal is None or self.pnl_by_deal.empty:
+            return
+
+        synthesis = build_synthesis(self.pnl_by_deal, deals, shock="0")
+        if synthesis.empty:
+            return
+        export_synthesis_to_excel(
+            synthesis, out / f"{self.date_ref_month}_Daily_Forecast.xlsx"
+        )
+
+    def _taxonomy_frame(self) -> Optional[pd.DataFrame]:
+        """Assemble the Dealid → (IAS Book, Category2) lookup from loaded data.
+
+        Returns None when the load path was not bank-native (no Category2).
+        """
+        frames: list[pd.DataFrame] = []
+        for df in (self.pnlData, self.book2NonIrs):
+            if df is None or df.empty:
+                continue
+            if {"Dealid", "IAS Book", "Category2"}.issubset(df.columns):
+                frames.append(df[["Dealid", "IAS Book", "Category2"]])
+
+        irs = self.irsStock
+        if irs is not None and not irs.empty and "Category2" in irs.columns:
+            dealid_col = "Deal" if "Deal" in irs.columns else "Dealid"
+            if dealid_col in irs.columns and "IAS Book" in irs.columns:
+                frames.append(
+                    irs[[dealid_col, "IAS Book", "Category2"]].rename(columns={dealid_col: "Dealid"})
+                )
+
+        if not frames:
+            return None
+        return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["Dealid"])
 
 
 # Need overlay_wirp for update_pnl reload path

@@ -10,6 +10,7 @@ import pandas as pd
 
 from cockpit.data.quality import build_quality_report
 from cockpit.pnl_dashboard.charts.helpers import safe_float
+from pnl_engine.config import SNB_RESERVE_RATIO
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ def _build_snb_reserves(
                     by_product.append({
                         "product": prod,
                         "balance": round(balance, 0),
-                        "reserve": round(balance * 0.025, 0),
+                        "reserve": round(balance * SNB_RESERVE_RATIO, 0),
                     })
         result["by_product"] = by_product
 
@@ -179,13 +180,37 @@ def _build_data_quality(
     deals: Optional[pd.DataFrame] = None,
     echeancier: Optional[pd.DataFrame] = None,
     ois_curves: Optional[pd.DataFrame] = None,
+    enrichment_issues: Optional[list[dict]] = None,
 ) -> dict:
-    """Build data quality report for the dashboard tab."""
+    """Build data quality report for the dashboard tab.
+
+    `enrichment_issues` is an optional list of dicts like
+    ``{"source": "budget", "file": "budget.xlsx", "error": "..."}`` captured
+    by the render command when an optional enrichment file failed to parse.
+    These are surfaced here so silent parse failures become visible in the
+    dashboard instead of only the stdout log.
+    """
     if date_run is None:
         return {"has_data": False}
     report = build_quality_report(date_run, deals, echeancier, ois_curves)
     result = report.to_dict()
     result["has_data"] = True
+
+    issues = list(enrichment_issues or [])
+    result["enrichment_issues"] = issues
+    if issues:
+        # Surface as failed checks so overall status reflects the problem
+        result["checks"].append({
+            "name": "Optional Enrichments",
+            "status": "fail",
+            "value": len(issues),
+            "detail": "; ".join(
+                f"{i.get('source', '?')}: {i.get('error', 'parse failed')}"
+                for i in issues[:5]
+            ),
+        })
+        result["n_fail"] = result.get("n_fail", 0) + 1
+        result["overall_status"] = "fail"
     return result
 
 

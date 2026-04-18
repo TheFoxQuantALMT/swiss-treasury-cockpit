@@ -8,7 +8,16 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from pnl_engine.config import CURRENCY_TO_OIS, MM_BY_CURRENCY, PRODUCT_RATE_COLUMN, SHOCKS, FLOAT_NAME_TO_WASP, LOOKBACK_DAYS
+from pnl_engine.config import (
+    CURRENCY_TO_OIS,
+    FLOAT_NAME_TO_WASP,
+    LOOKBACK_DAYS,
+    MM_BY_CURRENCY,
+    PRODUCT_RATE_COLUMN,
+    SHOCKS,
+    STRATEGY_LEG_BND,
+    STRATEGY_LEG_IAM,
+)
 
 _TENOR_SUFFIX_RE = re.compile(r"(\d+)([MWY])$")
 _TENOR_DAYS_PER_UNIT = {"W": 7, "M": 30, "Y": 365}
@@ -584,32 +593,38 @@ def compute_book2_mtm(
     return wt.stockSwapMTM(calc_date, irs_stock, Shock=shock_bps)
 
 
+def filter_strategy_legs(strategy: pd.DataFrame) -> pd.DataFrame:
+    """Apply §10.8 direction filters to IAS strategy legs.
+
+    BND-HCD / BND-NHCD legs are bond-like: drop rows where Direction is L or D.
+    IAM/LD-HCD / IAM/LD-NHCD legs are deposit/loan-like: drop Direction B or S.
+
+    Assumes ``strategy`` is a non-empty DataFrame with Product2BuyBack and
+    Direction columns. Returns the filtered copy; the input is not mutated.
+    """
+    bnd_mask = strategy["Product2BuyBack"].isin(STRATEGY_LEG_BND)
+    iam_mask = strategy["Product2BuyBack"].isin(STRATEGY_LEG_IAM)
+    exclude_bnd = bnd_mask & strategy["Direction"].isin(["L", "D"])
+    exclude_iam = iam_mask & strategy["Direction"].isin(["B", "S"])
+    exclude = exclude_bnd | exclude_iam
+    if not exclude.any():
+        return strategy
+    return strategy[~exclude]
+
+
 def merge_results(
     non_strategy: pd.DataFrame,
     strategy: pd.DataFrame,
     book2: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Concatenate non-strategy, strategy, and book2 results with direction filtering.
-
-    Direction filters applied to strategy legs:
-    - BND-HCD / BND-NHCD: exclude Direction L and D
-    - IAM/LD-HCD / IAM/LD-NHCD: exclude Direction B and S (bond-like)
-    """
+    """Concatenate non-strategy, strategy, and book2 results with direction filtering."""
     parts = []
 
     if non_strategy is not None and not non_strategy.empty:
         parts.append(non_strategy)
 
     if strategy is not None and not strategy.empty:
-        # Apply direction filters
-        bnd_mask = strategy["Product2BuyBack"].isin(["BND-HCD", "BND-NHCD"])
-        iam_mask = strategy["Product2BuyBack"].isin(["IAM/LD-HCD", "IAM/LD-NHCD"])
-
-        exclude_bnd = bnd_mask & strategy["Direction"].isin(["L", "D"])
-        exclude_iam = iam_mask & strategy["Direction"].isin(["B", "S"])
-
-        filtered = strategy[~(exclude_bnd | exclude_iam)]
-        parts.append(filtered)
+        parts.append(filter_strategy_legs(strategy))
 
     if book2 is not None and not book2.empty:
         parts.append(book2)
@@ -882,7 +897,7 @@ def run_all_shocks(
                     cache.put(cache_key_ref, ref_curves)
 
         # 4e. Build rate matrix
-        rate_matrix = build_rate_matrix(deals_use, days, ref_curves)
+        rate_matrix = build_rate_matrix(deals_use, days, ref_curves, date_run=start)
 
         # 4f. compute_daily_pnl (one vectorized broadcast)
         daily_pnl = compute_daily_pnl(

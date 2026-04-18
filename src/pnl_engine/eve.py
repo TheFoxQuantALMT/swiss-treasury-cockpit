@@ -396,7 +396,8 @@ def compute_key_rate_durations(
             eve_b = eve_base.loc[ccy_mask, "eve"].sum()
             eve_s = eve_bumped.loc[ccy_mask, "eve"].sum()
 
-            krd = -(eve_s - eve_b) / (bump_bps / 10000.0) / eve_b if abs(eve_b) > 1e-6 else 0.0
+            # abs(eve_b) keeps KRD sign meaningful across asset/liability aggregates.
+            krd = -(eve_s - eve_b) / (bump_bps / 10000.0) / abs(eve_b) if abs(eve_b) > 1e-6 else 0.0
 
             results.append({
                 "currency": ccy,
