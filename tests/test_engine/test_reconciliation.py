@@ -18,25 +18,11 @@ import pytest
 
 from cockpit.config import CURRENCY_TO_OIS, FLOAT_NAME_TO_WASP
 from cockpit.data.parsers import parse_wirp_ideal
-from cockpit.engine.pnl.engine import _mock_curves_from_wirp
 from cockpit.engine.pnl.matrices import build_date_grid
+from tests._helpers.mock_curves import _mock_curves_from_wirp
+from tests.conftest import requires_wasp as wasp
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "ideal_input"
-
-
-# ---------------------------------------------------------------------------
-# Check WASP availability
-# ---------------------------------------------------------------------------
-
-def _wasp_available() -> bool:
-    try:
-        from cockpit.engine.pnl.curves import wt
-        return wt is not None
-    except Exception:
-        return False
-
-
-wasp = pytest.mark.skipif(not _wasp_available(), reason="WASP not available")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -198,27 +184,6 @@ class TestBook2Mtm:
         result = compute_book2_mtm(irs_stock, datetime(2026, 4, 4), shock="0")
         assert "MTM" in result.columns
         assert len(result) == len(irs_stock)
-
-    def test_mock_mtm_returns_zero(self):
-        """When WASP unavailable, deterministic mock returns zero MTM."""
-        from cockpit.engine.pnl.engine import compute_book2_mtm
-        from cockpit.data.parsers import parse_deals
-        from cockpit.engine.pnl.forecast import ForecastRatePnL
-        from datetime import datetime
-
-        deals = parse_deals(FIXTURES / "deals.xlsx")
-        _, irs_stock = ForecastRatePnL._split_deals_by_book(deals)
-
-        if irs_stock.empty:
-            pytest.skip("No BOOK2 deals in test data")
-
-        result = compute_book2_mtm(irs_stock, datetime(2026, 4, 4), shock="0")
-        assert "MTM" in result.columns
-        # Analytical fallback: MTM ≈ Notional × (Rate - OIS_proxy) × remaining_years
-        # Should produce non-zero values for deals with rate != OIS proxy
-        assert not result["MTM"].isna().any(), "MTM should not contain NaN"
-        assert result["MTM"].dtype == float
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Reconciliation 4: Cross-check PnL against manual spreadsheet formula

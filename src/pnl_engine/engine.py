@@ -731,46 +731,6 @@ def _build_ois_matrix(
     return result
 
 
-def _mock_curves_from_wirp(
-    wirp: pd.DataFrame,
-    days: pd.DatetimeIndex,
-    shock: str = "0",
-) -> pd.DataFrame:
-    """Build mock daily OIS curves from WIRP meeting schedule.
-
-    For each OIS indice found in WIRP, creates a daily series by forward-filling
-    meeting rates across the date grid. Applies parallel shock shift (bps -> decimal).
-    """
-    rows = []
-    for indice in wirp["Indice"].unique():
-        sub = wirp[wirp["Indice"] == indice].sort_values("Meeting")
-        meetings = sub["Meeting"].values.astype("datetime64[D]")
-        rates = sub["Rate"].values.astype(float)
-
-        # Use searchsorted: for each day, find the latest meeting <= that day
-        day_arr = days.values.astype("datetime64[D]")
-        idx = np.searchsorted(meetings, day_arr, side="right") - 1
-
-        for j, d in enumerate(days):
-            if idx[j] >= 0:
-                val = rates[idx[j]]
-            else:
-                # Before first meeting — use first rate as backfill
-                val = rates[0] if len(rates) > 0 else 0.0
-            rows.append({"Date": d, "Indice": indice, "value": val})
-
-    df = pd.DataFrame(rows)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df["dateM"] = df["Date"].dt.to_period("M")
-
-    # Apply parallel shock shift (bps -> decimal), aligned with pnl.py mock path
-    shock_f = 0.0 if shock == "wirp" else float(shock)
-    if shock_f != 0.0:
-        df["value"] = df["value"] + shock_f / 10_000.0
-
-    return df
-
-
 def run_all_shocks(
     deals: pd.DataFrame,
     echeancier: pd.DataFrame,
@@ -789,7 +749,7 @@ def run_all_shocks(
     wirp : parsed WIRP (rate expectations)
     irs_stock : parsed IRS stock (for BOOK2 — not used in shock loop)
     cache : CurveCache instance
-    date_rates : optional WASP date (unused when WASP unavailable)
+    date_rates : WASP calc date (required)
     shocks : list of shock labels; defaults to SHOCKS config
     """
     if shocks is None:
@@ -856,19 +816,15 @@ def run_all_shocks(
     all_results = []
 
     for shock in shocks:
-        # 4a. Load OIS curves (from cache or WASP or WIRP mock)
+        # 4a. Load OIS curves (from cache or WASP)
         cache_key = ("ois", shock, tuple(sorted(ois_indices)))
         ois_curves = cache.get(cache_key)
         if ois_curves is None:
-            try:
-                ois_curves = load_daily_curves(
-                    date=date_rates,
-                    indices=ois_indices,
-                    shock=shock,
-                )
-            except RuntimeError:
-                logger.info("WASP unavailable, building mock curves from WIRP (shock=%s)", shock)
-                ois_curves = _mock_curves_from_wirp(wirp, days, shock=shock)
+            ois_curves = load_daily_curves(
+                date=date_rates,
+                indices=ois_indices,
+                shock=shock,
+            )
             cache.put(cache_key, ois_curves)
 
         # 4b. Apply WIRP overlay if shock == "wirp"
@@ -884,16 +840,12 @@ def run_all_shocks(
             cache_key_ref = ("ref", shock, tuple(sorted(float_wasp_indices)))
             ref_curves = cache.get(cache_key_ref)
             if ref_curves is None:
-                try:
-                    ref_curves = load_daily_curves(
-                        date=date_rates,
-                        indices=float_wasp_indices,
-                        shock=shock,
-                    )
-                except RuntimeError:
-                    ref_curves = None  # floating deals fall back to static RateRef
-                if ref_curves is not None:
-                    cache.put(cache_key_ref, ref_curves)
+                ref_curves = load_daily_curves(
+                    date=date_rates,
+                    indices=float_wasp_indices,
+                    shock=shock,
+                )
+                cache.put(cache_key_ref, ref_curves)
 
         # 4e. Build rate matrix
         rate_matrix = build_rate_matrix(deals_use, days, ref_curves, date_run=start)

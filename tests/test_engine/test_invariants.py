@@ -20,12 +20,12 @@ from cockpit.config import CURRENCY_TO_OIS
 from cockpit.data.parsers import parse_deals, parse_schedule, _month_columns
 from cockpit.engine.pnl.engine import (
     _build_ois_matrix,
-    _mock_curves_from_wirp,
     _resolve_rate_ref,
     aggregate_to_monthly,
     compute_daily_pnl,
     compute_strategy_pnl,
 )
+from tests._helpers.mock_curves import _mock_curves_from_wirp
 from cockpit.engine.pnl.matrices import (
     build_accrual_days,
     build_alive_mask,

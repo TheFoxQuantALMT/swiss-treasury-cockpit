@@ -7,7 +7,6 @@ from pnl_engine.engine import (  # noqa: F401
     # Private re-exports used by tests (test_invariants.py, test_engine.py,
     # test_reconciliation.py, test_validation.py) via this wrapper.
     _build_ois_matrix,
-    _mock_curves_from_wirp,
     _resolve_rate_ref,
     aggregate_to_monthly,
     compute_book2_mtm,

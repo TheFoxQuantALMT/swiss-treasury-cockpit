@@ -1,9 +1,14 @@
-"""Forward curve loading — WASP daily grid and WIRP overlay."""
+"""Forward curve loading — WASP daily grid and WIRP overlay.
+
+WASP is a hard requirement: in production the bank's ``wasptools`` wrapper
+(which imports ``PyWestminster`` / ``PyWestRamp`` / ``PyFPGTools``) must be
+reachable. When it is not — e.g. on a dev laptop off the bank network — the
+import below fails and every WASP-using call raises ``RuntimeError`` with a
+clear message. Tests that require WASP are gated with ``@pytest.mark.wasp``.
+"""
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
@@ -11,13 +16,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_WASP_PATH = os.environ.get("WASP_TOOLS_PATH", "").strip()
-if _WASP_PATH:
-    sys.path.insert(0, _WASP_PATH)
-
 try:
-    import waspTools as wt
-except Exception as exc:
+    from pnl_engine import wasptools as wt
+except Exception as exc:  # WASP binaries unreachable (e.g. dev laptop)
     wt = None
     _WASP_ERROR = exc
 else:
@@ -25,9 +26,9 @@ else:
 
 
 def _require_wasp():
-    """Raise immediately if waspTools is not available."""
+    """Raise immediately if wasptools is not available."""
     if wt is None:
-        raise RuntimeError(f"waspTools is required but unavailable: {_WASP_ERROR}")
+        raise RuntimeError(f"wasptools is required but unavailable: {_WASP_ERROR}")
 
 
 def load_daily_curves(

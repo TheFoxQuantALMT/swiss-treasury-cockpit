@@ -189,22 +189,6 @@ def test_merge_results_direction_filtering():
     ]) == 1
 
 
-# --- Issue #14: BOOK2 MTM test ---
-
-def test_compute_book2_mtm_mock():
-    """BOOK2 MTM falls back to deterministic mock when WASP unavailable."""
-    from cockpit.engine.pnl.engine import compute_book2_mtm
-
-    irs_stock = pd.DataFrame({
-        "Deal Number KND": ["IRS@300157"],
-        "Amount": [10_000_000.0],
-        "Rate": [0.22],
-    })
-    result = compute_book2_mtm(irs_stock, "2026-03-26", "0")
-    assert "MTM" in result.columns
-    assert len(result) == 1
-
-
 # --- T2: Alive mask with date_run ---
 
 def test_build_alive_mask_with_date_run():
@@ -250,7 +234,7 @@ def test_resolve_rate_ref_product_mapping():
 
 def test_mock_curves_shock_applied():
     """Mock curves from WIRP should have shock shift applied."""
-    from cockpit.engine.pnl.engine import _mock_curves_from_wirp
+    from tests._helpers.mock_curves import _mock_curves_from_wirp
     wirp = pd.DataFrame({
         "Indice": ["CHFSON"],
         "Meeting": [pd.Timestamp("2026-04-01")],

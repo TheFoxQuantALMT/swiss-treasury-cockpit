@@ -10,10 +10,12 @@ import pytest
 
 from cockpit.data.parsers import parse_deals
 from cockpit.engine.pnl.forecast import ForecastRatePnL
+from tests.conftest import requires_wasp
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ideal_input"
 
 
+@requires_wasp
 class TestEveComputation:
     """Test EVE computation via PnlEngine.run_eve()."""
 
@@ -61,6 +63,7 @@ class TestEveComputation:
             assert alive["duration"].min() > -30
 
 
+@requires_wasp
 class TestEveScenarios:
     """Test ΔEVE scenario computation."""
 
@@ -176,6 +179,7 @@ class TestEveConvexity:
         assert result["total"]["effective_duration"] == 0.0
         assert result["total"]["convexity"] == 0.0
 
+    @requires_wasp
     def test_engine_integration(self):
         """run_eve with scenarios populates eve_convexity attribute."""
         from cockpit.data.parsers.scenarios import parse_scenarios

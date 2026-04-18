@@ -370,21 +370,17 @@ def _build_carry_funding_matrix(
     """Build funding matrix from WASP carry-compounded rates per (currency, month).
 
     For each currency, loads one carry-compounded rate per month via WASP,
-    then fills all days in that month with that rate. Falls back to OIS
-    matrix for currencies where carry loading fails.
+    then fills all days in that month with that rate. Currencies without
+    a carry index keep the OIS baseline.
     """
     import logging
     from pnl_engine.config import CURRENCY_TO_CARRY_INDEX, SUPPORTED_CURRENCIES
     from pnl_engine.curves import load_carry_compounded
 
     logger = logging.getLogger(__name__)
-    n_deals = len(deals)
-    n_days = len(days)
-    result = ois_matrix.copy()  # fallback: OIS
+    result = ois_matrix.copy()  # baseline: OIS (used for currencies without a carry index)
 
-    # Build month boundaries
     months = days.to_period("M").unique()
-
     day_periods = days.to_period("M")
     for ccy in SUPPORTED_CURRENCIES:
         if ccy not in CURRENCY_TO_CARRY_INDEX:
@@ -401,11 +397,6 @@ def _build_carry_funding_matrix(
             try:
                 carry_rate = load_carry_compounded(month.start_time, month.end_time, ccy)
                 result[np.ix_(deal_mask, day_mask)] = carry_rate
-            except RuntimeError as exc:
-                # WASP unavailable — bail out for this currency on the first
-                # failure to avoid logging once per month.
-                logger.info("Carry compounded skipped for %s (%s) — keeping OIS", ccy, exc)
-                break
             except Exception as exc:
                 logger.warning("Carry compounded failed %s %s, keeping OIS: %s", ccy, month, exc)
                 if idx == 0:

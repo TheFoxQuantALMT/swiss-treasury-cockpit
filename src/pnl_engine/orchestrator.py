@@ -29,7 +29,6 @@ from pnl_engine.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PROD
 from pnl_engine.curves import CurveCache, clear_carry_cache, load_daily_curves, overlay_wirp
 from pnl_engine.engine import (
     _build_ois_matrix,
-    _mock_curves_from_wirp,
     _month_columns,
     _resolve_rate_ref,
     aggregate_to_monthly,
@@ -266,35 +265,26 @@ class PnlEngine:
 
         return self.pnlAll
 
-    def _load_curves_with_wirp_fallback(
+    def _load_curves_cached(
         self, kind: str, indices: list[str], shock: str,
     ) -> pd.DataFrame:
-        """Load daily forward curves with WIRP mock fallback when WASP is down.
-
-        Why: matches the legacy `run_all_shocks` path so the class-based
-        orchestrator degrades gracefully in WASP-less environments.
-        """
+        """Load daily forward curves from WASP, with per-run memoization."""
         cache_key = (kind, str(self.dateRates), shock)
         cached = self._fwd_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        try:
-            curves = load_daily_curves(date=self.dateRates, indices=indices, shock=shock)
-        except RuntimeError:
-            logger.info("WASP unavailable, building mock %s curves from WIRP (shock=%s)", kind, shock)
-            curves = _mock_curves_from_wirp(self.wirp, self._days, shock=shock)
-
+        curves = load_daily_curves(date=self.dateRates, indices=indices, shock=shock)
         self._fwd_cache.put(cache_key, curves)
         return curves
 
     def _load_ois_curves(self, shock: str) -> pd.DataFrame:
-        return self._load_curves_with_wirp_fallback("ois", self._ois_indices, shock)
+        return self._load_curves_cached("ois", self._ois_indices, shock)
 
     def _load_ref_curves(self, shock: str) -> Optional[pd.DataFrame]:
         if not self._float_wasp_indices:
             return None
-        return self._load_curves_with_wirp_fallback("ref", self._float_wasp_indices, shock)
+        return self._load_curves_cached("ref", self._float_wasp_indices, shock)
 
     def update_pnl(
         self,
@@ -372,11 +362,6 @@ class PnlEngine:
                 self._alive_mask, self._days,
                 date_rates=self._dateRates_ts,
             )
-        except RuntimeError as exc:
-            # WASP unavailable — common in dev/test; don't dump stack trace.
-            logger.info("Cumulative factor build skipped (%s) — using per-month compounding", exc)
-            cum_carry = None
-            cum_rate = None
         except Exception:
             logger.warning("Cumulative factor build failed — falling back to per-month compounding", exc_info=True)
             cum_carry = None
@@ -663,11 +648,7 @@ class PnlEngine:
         if irs.empty:
             return pd.DataFrame()
 
-        try:
-            book2 = compute_book2_mtm(irs, self.dateRates, shock)
-        except RuntimeError as exc:
-            logger.info("BOOK2 MTM skipped (WASP unavailable): %s", exc)
-            return pd.DataFrame()
+        book2 = compute_book2_mtm(irs, self.dateRates, shock)
         if book2.empty or "MTM" not in book2.columns:
             return pd.DataFrame()
 
