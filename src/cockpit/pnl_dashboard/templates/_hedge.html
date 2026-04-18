@@ -1,6 +1,79 @@
 <div id="tab-hedge" class="tab-content">
   <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Hedge Effectiveness</h3>
 
+  {% if has_strategy_consolidated %}
+  <div class="card" style="margin-bottom: 16px;">
+    <h3 style="font-size: 0.85rem; margin-bottom: 8px;">
+      Strategy IAS — Cross-Book Consolidated View
+    </h3>
+    <div class="grid-3" style="margin-bottom: 12px;">
+      <div class="kpi-card" style="border-left: 3px solid var(--accent-green);">
+        <div class="label">Within corridor [80%, 125%]</div>
+        <div class="value positive">{{ strategy_consolidated.summary.n_ok }}</div>
+      </div>
+      <div class="kpi-card" style="border-left: 3px solid var(--accent-red);">
+        <div class="label">Breaches (under / over)</div>
+        <div class="value negative">{{ strategy_consolidated.summary.n_under + strategy_consolidated.summary.n_over }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">Total relationships</div>
+        <div class="value">{{ strategy_consolidated.summary.n_total }}</div>
+      </div>
+    </div>
+    <div style="overflow-x: auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy IAS</th>
+          <th>Type</th>
+          <th>CCY</th>
+          <th style="text-align:right;">#Hedged / #Hedging</th>
+          <th style="text-align:right;">Hedged FV</th>
+          <th style="text-align:right;">&Delta;FV</th>
+          <th style="text-align:right;">IRS MtM</th>
+          <th style="text-align:right;">&Delta;MtM</th>
+          <th style="text-align:right;">Effectiveness</th>
+          <th>Corridor</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in strategy_consolidated.rows %}
+        <tr>
+          <td>{{ r.strategy_ias }}</td>
+          <td>{{ r.hedge_type }}</td>
+          <td>{{ r.currencies }}</td>
+          <td style="text-align:right;">{{ r.n_hedged }} / {{ r.n_hedging }}</td>
+          <td style="text-align:right;">{% if r.hedged_clean_fv_today is not none %}{{ "{:,.0f}".format(r.hedged_clean_fv_today) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align:right;" class="{% if r.hedged_clean_dFV is not none and r.hedged_clean_dFV > 0 %}positive{% elif r.hedged_clean_dFV is not none and r.hedged_clean_dFV < 0 %}negative{% endif %}">{% if r.hedged_clean_dFV is not none %}{{ "{:+,.0f}".format(r.hedged_clean_dFV) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align:right;">{% if r.hedging_irs_mtm_today is not none %}{{ "{:,.0f}".format(r.hedging_irs_mtm_today) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align:right;" class="{% if r.hedging_irs_dMtM is not none and r.hedging_irs_dMtM > 0 %}positive{% elif r.hedging_irs_dMtM is not none and r.hedging_irs_dMtM < 0 %}negative{% endif %}">{% if r.hedging_irs_dMtM is not none %}{{ "{:+,.0f}".format(r.hedging_irs_dMtM) }}{% else %}&mdash;{% endif %}</td>
+          <td style="text-align:right; font-weight: 600;">{% if r.effectiveness_ratio is not none %}{{ "{:.2%}".format(r.effectiveness_ratio) }}{% else %}&mdash;{% endif %}</td>
+          <td>
+            {% if r.corridor_flag == 'ok' %}
+            <span style="color: var(--accent-green); font-weight: 600;">OK</span>
+            {% elif r.corridor_flag == 'under' %}
+            <span style="color: var(--accent-red); font-weight: 600;">UNDER</span>
+            {% elif r.corridor_flag == 'over' %}
+            <span style="color: var(--accent-red); font-weight: 600;">OVER</span>
+            {% elif r.corridor_flag == 'multi_ccy' %}
+            <span style="color: var(--text-secondary);">MULTI-CCY</span>
+            {% else %}
+            <span style="color: var(--text-secondary);">N/A</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px;">
+      IFRS 9 &sect;6.4 corridor: effectiveness ratio &minus;&Delta;MtM&nbsp;/&nbsp;&Delta;FV must lie in [80%, 125%].
+      Hedged FV uses BOOK1 bond clean price; deltas compare to the prior snapshot saved in
+      <code>data/kpi_snapshots/</code>. N/A rows lack a prior snapshot or have no bond hedged item (e.g. IAM/LD FVH).
+    </p>
+  </div>
+  {% endif %}
+
   {% if has_hedge %}
   <div class="grid-3" style="margin-bottom: 16px;">
     <div class="kpi-card" style="border-left: 3px solid var(--accent-green);">
@@ -90,10 +163,10 @@
 
   <p class="footnote">IAS 39: Dollar-offset ratio must be between -0.80 and -1.25. IFRS 9: Economic relationship test requires R&sup2; &ge; 0.80.</p>
 
-  {% else %}
+  {% elif not has_strategy_consolidated %}
   <div style="text-align: center; padding: 60px; color: var(--text-secondary);">
     <p>No hedge effectiveness data available.</p>
-    <p style="font-size: 0.85rem;">Provide hedge_pairs.xlsx mapping hedged items to hedging instruments.</p>
+    <p style="font-size: 0.85rem;">Provide hedge_pairs.xlsx mapping hedged items to hedging instruments, or designate deals via <code>Strategy IAS</code> for the cross-book consolidated view.</p>
   </div>
   {% endif %}
 </div>

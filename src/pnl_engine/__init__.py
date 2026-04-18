@@ -46,6 +46,11 @@ from pnl_engine.scenarios import (
     BCBS_SCENARIOS,
     TENOR_YEARS,
 )
+from pnl_engine.strategy_consolidated import (
+    compute_strategy_consolidated,
+    EFFECTIVE_LOW,
+    EFFECTIVE_HIGH,
+)
 
 __all__ = [
     # Main entry point
@@ -87,4 +92,8 @@ __all__ = [
     "apply_scenario_to_curves",
     "BCBS_SCENARIOS",
     "TENOR_YEARS",
+    # Strategy IAS consolidation (cross-book hedge effectiveness)
+    "compute_strategy_consolidated",
+    "EFFECTIVE_LOW",
+    "EFFECTIVE_HIGH",
 ]

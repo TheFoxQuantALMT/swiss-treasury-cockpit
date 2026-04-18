@@ -62,6 +62,8 @@ def render_pnl_dashboard(
         "has_budget": data["budget"].get("has_data", False),
         "hedge": data["hedge"],
         "has_hedge": data["hedge"].get("has_data", False),
+        "strategy_consolidated": data.get("strategy_consolidated", {"has_data": False}),
+        "has_strategy_consolidated": data.get("strategy_consolidated", {}).get("has_data", False),
         "nii_at_risk": data["nii_at_risk"],
         "has_nii_at_risk": data["nii_at_risk"].get("has_data", False),
         "forecast_tracking": data["forecast_tracking"],

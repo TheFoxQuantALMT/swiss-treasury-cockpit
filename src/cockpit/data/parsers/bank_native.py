@@ -102,6 +102,7 @@ _DEAL_RENAME: dict[str, str] = {
     "[Daily] PnL MTM": "PnL_Realized",
     "Portfolio Short Name": "Portfolio",
     "Folder Short Name": "Folder",
+    "Clean_Price": "Clean Price",  # % of par, bonds only
 }
 
 

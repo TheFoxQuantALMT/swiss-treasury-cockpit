@@ -391,6 +391,87 @@ def cmd_render_pnl(
         except Exception as e:
             print(f"[render-pnl] Warning: enrichment computation failed: {e}")
 
+    # Cross-book hedge-effectiveness view — join BOOK1 bond Clean FV with BOOK2 IRS MtM.
+    # Needs yesterday's snapshot for ΔFV / ΔMtM; falls back to NaN on first-run / missing.
+    strategy_consolidated = None
+    book2_mtm_today = None
+    deals_prev = None
+    mtm_prev = None
+    prev_snap_date = None
+    try:
+        import pandas as pd
+        from pnl_engine.strategy_consolidated import compute_strategy_consolidated
+        from pnl_engine.engine import compute_book2_mtm
+        from cockpit.engine.pnl.kpi_store import (
+            load_strategy_snapshot,
+            save_strategy_snapshot,
+        )
+
+        full_deals_today = pd.concat(
+            [df for df in (pnl.pnlData, pnl.book2NonIrs, pnl.irsStock)
+             if df is not None and not df.empty],
+            ignore_index=True,
+        )
+
+        book2_mtm_today = pd.DataFrame()
+        if pnl.irsStock is not None and not pnl.irsStock.empty:
+            try:
+                book2_mtm_today = compute_book2_mtm(pnl.irsStock, date_dt, "0")
+            except Exception as exc:
+                print(f"[render-pnl] Warning: Book2 MTM for consolidator failed: {exc}")
+
+        deals_prev, mtm_prev, prev_snap_date = load_strategy_snapshot(
+            DATA_DIR, on_or_before=(prev_date or date))
+        if prev_snap_date == date:
+            # Same-day snapshot (re-run) — not a valid prior; drop it
+            deals_prev = mtm_prev = None
+            prev_snap_date = None
+
+        strategy_consolidated = compute_strategy_consolidated(
+            deals_today=full_deals_today,
+            book2_mtm_today=book2_mtm_today if not book2_mtm_today.empty else None,
+            deals_prev=deals_prev,
+            book2_mtm_prev=mtm_prev,
+        )
+
+        if strategy_consolidated is not None and not strategy_consolidated.empty:
+            flags = strategy_consolidated["corridor_flag"].value_counts().to_dict()
+            print(
+                f"[render-pnl] Strategy consolidated: {len(strategy_consolidated)} relationships "
+                f"(ok={flags.get('ok', 0)}, under={flags.get('under', 0)}, "
+                f"over={flags.get('over', 0)}, na={flags.get('na', 0)})"
+            )
+
+        try:
+            snap_path = save_strategy_snapshot(
+                full_deals_today, book2_mtm_today, date, DATA_DIR)
+            if snap_path:
+                print(f"[render-pnl] Saved strategy snapshot to {snap_path}")
+        except Exception as exc:
+            print(f"[render-pnl] Warning: could not save strategy snapshot: {exc}")
+
+        try:
+            from cockpit.engine.pnl.kpi_store import save_realized_daily
+            realized_path = save_realized_daily(
+                pnl.pnlData, pnl.book2NonIrs, date, DATA_DIR)
+            if realized_path:
+                print(f"[render-pnl] Saved realized daily snapshot to {realized_path}")
+        except Exception as exc:
+            print(f"[render-pnl] Warning: could not save realized daily snapshot: {exc}")
+
+        try:
+            from cockpit.engine.pnl.kpi_store import save_pnl_explain_snapshot
+            explain_path = save_pnl_explain_snapshot(
+                getattr(pnl, "pnl_by_deal", None), pnl.pnlAllS, date, DATA_DIR)
+            if explain_path:
+                print(f"[render-pnl] Saved P&L Explain snapshot to {explain_path}")
+        except Exception as exc:
+            print(f"[render-pnl] Warning: could not save P&L Explain snapshot: {exc}")
+
+    except Exception as exc:
+        print(f"[render-pnl] Warning: strategy consolidator failed: {exc}")
+        strategy_consolidated = None
+
     # Common kwargs for building dashboard data
     dashboard_kwargs = dict(
         pnl_all=pnl.pnlAll,
@@ -418,6 +499,7 @@ def cmd_render_pnl(
         kpi_history=kpi_history,
         locked_in_nii_data=locked_in_nii_data,
         beta_sensitivity_data=beta_sensitivity_data,
+        strategy_consolidated=strategy_consolidated,
         enrichment_issues=enrichment_issues,
     )
 
@@ -462,6 +544,143 @@ def cmd_render_pnl(
 
     if format in ("pnl-xlsx", "all") and dashboard_data:
         try:
+            if getattr(pnl, "_engine", None) is not None:
+                import pandas as pd
+                month_end = (pd.Timestamp(date_dt) + pd.offsets.MonthEnd(0)).normalize()
+                projections = {}
+                for shock_key, shock_arg in (("central", "0"), ("wirp", "wirp")):
+                    try:
+                        projections[shock_key] = pnl._engine.compute_daily_projection(
+                            shock=shock_arg,
+                            start_date=pd.Timestamp(date_dt),
+                            end_date=month_end,
+                        )
+                    except Exception as proj_e:
+                        print(f"[render-pnl] Warning: daily projection ({shock_key}) failed: {proj_e}")
+                if projections:
+                    dashboard_data["daily_projection"] = {
+                        "has_data": any(not df.empty for df in projections.values()),
+                        "central": projections.get("central"),
+                        "wirp": projections.get("wirp"),
+                        "start_date": pd.Timestamp(date_dt).strftime("%Y-%m-%d"),
+                        "end_date": month_end.strftime("%Y-%m-%d"),
+                    }
+
+            # Realized Daily P&L — bank-reported figures by currency × book.
+            try:
+                import pandas as pd
+                realized_rows: list[dict] = []
+
+                def _push_realized(df: pd.DataFrame | None, book_label: str, col: str):
+                    if df is None or df.empty or col not in df.columns or "Currency" not in df.columns:
+                        return
+                    sub = df[["Currency", col]].copy()
+                    sub[col] = pd.to_numeric(sub[col], errors="coerce")
+                    agg = sub.dropna(subset=["Currency"]).groupby("Currency")[col].sum()
+                    for ccy, v in agg.items():
+                        if float(v) == 0.0:
+                            continue
+                        realized_rows.append({
+                            "currency": str(ccy), "book": book_label, "value": float(v),
+                        })
+
+                _push_realized(pnl.pnlData, "BOOK1 Accrual (PnL_Acc_Adj)", "PnL_Acc_Adj")
+                _push_realized(pnl.pnlData, "BOOK1 Realized (PnL_IAS)", "PnL_Realized")
+                _push_realized(pnl.book2NonIrs, "BOOK2 Realized (PnL_MTM)", "PnL_Realized")
+
+                if realized_rows:
+                    rdf = pd.DataFrame(realized_rows)
+                    pivot = rdf.pivot_table(
+                        index="currency", columns="book", values="value",
+                        aggfunc="sum", fill_value=0.0,
+                    ).reset_index()
+                    dashboard_data["realized_daily_pnl"] = {
+                        "has_data": True,
+                        "rows": rdf.to_dict(orient="records"),
+                        "pivot": pivot,
+                        "date_run": pd.Timestamp(date_dt).strftime("%Y-%m-%d"),
+                    }
+            except Exception as rd_e:
+                print(f"[render-pnl] Warning: realized daily P&L aggregation failed: {rd_e}")
+
+            # BOOK2 ΔMTM by currency — day-over-day (reuse prev snapshot already loaded).
+            try:
+                from pnl_engine.strategy_consolidated import compute_book2_mtm_delta_by_currency
+                dod = compute_book2_mtm_delta_by_currency(
+                    mtm_today=book2_mtm_today if (book2_mtm_today is not None and not book2_mtm_today.empty) else None,
+                    mtm_prev=mtm_prev,
+                    irs_today=pnl.irsStock,
+                    deals_prev=deals_prev,
+                    prev_date=prev_snap_date,
+                )
+                dashboard_data["book2_delta_dod"] = dod
+            except Exception as dod_e:
+                print(f"[render-pnl] Warning: Book2 ΔMTM (DoD) failed: {dod_e}")
+
+            # Month-over-Month P&L Explain — full waterfall vs the last snapshot
+            # on-or-before the last day of the previous month.
+            try:
+                import pandas as pd
+                from datetime import datetime as _dt
+                from cockpit.engine.pnl.kpi_store import load_pnl_explain_snapshot
+                from cockpit.engine.pnl.pnl_explain import compute_pnl_explain
+                anchor = (pd.Timestamp(date_dt).replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+                prev_by_deal, prev_all_s, prev_snap_d = load_pnl_explain_snapshot(
+                    DATA_DIR, on_or_before=anchor)
+                if prev_by_deal is not None and not prev_by_deal.empty \
+                        and getattr(pnl, "pnl_by_deal", None) is not None:
+                    prev_dt_mom = _dt.strptime(prev_snap_d, "%Y-%m-%d")
+                    mom = compute_pnl_explain(
+                        curr_pnl_by_deal=pnl.pnl_by_deal,
+                        prev_pnl_by_deal=prev_by_deal,
+                        curr_pnl_all_s=pnl.pnlAllS,
+                        prev_pnl_all_s=prev_all_s,
+                        deals=pnl.pnlData,
+                        date_run=date_dt,
+                        prev_date_run=prev_dt_mom,
+                    )
+                    if mom and mom.get("has_data"):
+                        dashboard_data["attribution_mom"] = mom
+                        s = mom["summary"]
+                        print(f"[render-pnl] MoM P&L Explain: anchor={prev_snap_d} "
+                              f"dNII={s['delta']:+,.0f} (new={s['new_deal_effect']:+,.0f}, "
+                              f"matured={s['matured_deal_effect']:+,.0f}, "
+                              f"rate={s['rate_effect']:+,.0f})")
+            except Exception as mom_e:
+                print(f"[render-pnl] Warning: MoM P&L Explain failed: {mom_e}")
+
+            # BOOK1 Realized — MTD (sum of saved daily snapshots from month-start to today).
+            try:
+                import pandas as pd
+                from cockpit.engine.pnl.kpi_store import load_realized_mtd
+                month_start_str = pd.Timestamp(date_dt).replace(day=1).strftime("%Y-%m-%d")
+                book1_mtd = load_realized_mtd(
+                    DATA_DIR, month_start=month_start_str, date_run=date)
+                if book1_mtd is not None:
+                    dashboard_data["book1_realized_mtd"] = book1_mtd
+            except Exception as b1_e:
+                print(f"[render-pnl] Warning: BOOK1 realized MTD load failed: {b1_e}")
+
+            # BOOK2 ΔMTM by currency — MTD (vs last snapshot on-or-before month start).
+            try:
+                import pandas as pd
+                from cockpit.engine.pnl.kpi_store import load_strategy_snapshot
+                from pnl_engine.strategy_consolidated import compute_book2_mtm_delta_by_currency
+                month_start = pd.Timestamp(date_dt).replace(day=1)
+                anchor = (month_start - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+                deals_mstart, mtm_mstart, mstart_date = load_strategy_snapshot(
+                    DATA_DIR, on_or_before=anchor)
+                mtd = compute_book2_mtm_delta_by_currency(
+                    mtm_today=book2_mtm_today if (book2_mtm_today is not None and not book2_mtm_today.empty) else None,
+                    mtm_prev=mtm_mstart,
+                    irs_today=pnl.irsStock,
+                    deals_prev=deals_mstart,
+                    prev_date=mstart_date,
+                )
+                dashboard_data["book2_delta_mtd"] = mtd
+            except Exception as mtd_e:
+                print(f"[render-pnl] Warning: Book2 ΔMTM (MTD) failed: {mtd_e}")
+
             from cockpit.export.pnl_report import export_pnl_report
             pnl_xlsx_path = output_dir / f"{date}_pnl_report.xlsx"
             result_path = export_pnl_report(dashboard_data, pnl_xlsx_path, date, deals=pnl.pnlData)

@@ -54,6 +54,7 @@ _BOOK_RENAME = {
     "[Daily] PnL IAS - ORC": "PnL_IAS",
     "[Daily] PnL MTM - ORC": "PnL_MTM",
     "IAM Deal ID": "IAM Deal ID",
+    "Clean_Price": "Clean Price",  # % of par, bonds only; NaN elsewhere
 }
 
 _RATE_COLS = ["Clientrate", "EqOisRate", "YTM"]
@@ -150,6 +151,10 @@ def parse_book(
     # --- Spread: bps → decimal ---
     if "Spread" in df.columns:
         df["Spread"] = pd.to_numeric(df["Spread"], errors="coerce").fillna(0.0) / 10_000.0
+
+    # --- Clean Price: % of par, kept as-is (NaN for non-bond rows) ---
+    if "Clean Price" in df.columns:
+        df["Clean Price"] = pd.to_numeric(df["Clean Price"], errors="coerce")
 
     # --- Filter: supported currencies ---
     if "Currency" in df.columns:

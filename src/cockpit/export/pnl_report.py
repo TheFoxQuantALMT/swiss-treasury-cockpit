@@ -71,9 +71,16 @@ def export_pnl_report(
         ("KPI Dashboard", lambda: _write_kpi_dashboard(wb, dashboard_data, date_run)),
         ("Day-over-Day Bridge", lambda: _write_dod_bridge(wb, dashboard_data, date_run)),
         ("Attribution Waterfall", lambda: _write_attribution(wb, dashboard_data, date_run)),
+        ("P&L Explain (MoM)", lambda: _write_attribution_mom(wb, dashboard_data, date_run)),
         ("Monthly Series", lambda: _write_monthly_series(wb, dashboard_data, date_run)),
+        ("Daily Projection (MTD)", lambda: _write_daily_projection(wb, dashboard_data, date_run)),
+        ("Realized Daily P&L", lambda: _write_realized_daily_pnl(wb, dashboard_data, date_run)),
+        ("BOOK2 \u0394MTM - Day-over-Day", lambda: _write_book2_delta_dod(wb, dashboard_data, date_run)),
+        ("BOOK2 \u0394MTM - MTD", lambda: _write_book2_delta_mtd(wb, dashboard_data, date_run)),
+        ("BOOK1 Realized - MTD", lambda: _write_book1_realized_mtd(wb, dashboard_data, date_run)),
         ("Top Contributors", lambda: _write_top_contributors(wb, dashboard_data, date_run)),
         ("Strategy P&L", lambda: _write_strategy(wb, dashboard_data, date_run)),
+        ("Hedge Effectiveness", lambda: _write_hedge_effectiveness(wb, dashboard_data, date_run)),
         ("3-Way Margin (FTP)", lambda: _write_ftp(wb, dashboard_data, date_run)),
         ("Fixed vs Floating", lambda: _write_fixed_float(wb, dashboard_data, date_run)),
         ("Budget vs Actual", lambda: _write_budget(wb, dashboard_data, date_run)),
@@ -456,16 +463,15 @@ def _write_dod_bridge(wb: Workbook, data: dict, date_run: str) -> None:
     footer(ws, date_run=date_run, source_key="summary.dod_bridge")
 
 
-def _write_attribution(wb: Workbook, data: dict, date_run: str) -> None:
-    ws = wb.create_sheet("Attribution Waterfall")
-    attribution = data.get("attribution") or {}
-    if not attribution.get("has_data"):
-        write_empty_state(ws, "Attribution requires a prior run — skipped.")
-        return
+def _render_attribution_block(
+    ws, attribution: dict, title: str, subtitle: str, date_run: str, source_key: str,
+) -> None:
+    """Core P&L Explain rendering — summary, by-currency, new/matured deal lists.
 
-    row = title_block(ws, "P&L Attribution Waterfall",
-                      "Decomposes ΔNII (current vs prior run) into drivers.",
-                      span_cols=3)
+    Shared between the Day-over-Day (``Attribution Waterfall``) and
+    Month-over-Month (``Attribution MoM``) sheets.
+    """
+    row = title_block(ws, title, subtitle, span_cols=3)
 
     summary = attribution.get("summary") or {}
     row = write_header_row(ws, row, ["Driver", "Value"])
@@ -510,8 +516,8 @@ def _write_attribution(wb: Workbook, data: dict, date_run: str) -> None:
         row = section_header(ws, row, "Per-currency breakdown")
         row = write_header_row(ws, row, ["Currency", "Previous NII", "Current NII", "Delta", "Rate Effect"])
         for ccy, entry in by_ccy.items():
-            prev = float(entry.get("prev_nii", 0) or 0)
-            curr = float(entry.get("curr_nii", 0) or 0)
+            prev = float(entry.get("prev_nii", entry.get("existing_prev_pnl", 0)) or 0)
+            curr = float(entry.get("curr_nii", entry.get("existing_curr_pnl", 0)) or 0)
             delta = float(entry.get("delta", curr - prev) or 0)
             rate_fx = float(entry.get("rate_effect", 0) or 0)
             ws.cell(row=row, column=1, value=ccy)
@@ -523,9 +529,102 @@ def _write_attribution(wb: Workbook, data: dict, date_run: str) -> None:
             ws.cell(row=row, column=5, value=rate_fx).number_format = FMT_CURRENCY
             row += 1
 
-    set_column_widths(ws, [32, 22, 22, 22, 22])
+    TOP_N = 15
+    new_deals = attribution.get("new_deals") or []
+    if new_deals:
+        row += 2
+        row = section_header(
+            ws, row, f"Top new deals (by |P&L|) — showing {min(TOP_N, len(new_deals))} of {len(new_deals)}",
+        )
+        row = write_header_row(
+            ws, row, ["Deal ID", "Counterparty", "CCY", "Product", "Nominal", "P&L contribution"],
+        )
+        for d in new_deals[:TOP_N]:
+            ws.cell(row=row, column=1, value=str(d.get("deal_id", "")))
+            ws.cell(row=row, column=2, value=str(d.get("counterparty", "")))
+            ws.cell(row=row, column=3, value=str(d.get("currency", "")))
+            ws.cell(row=row, column=4, value=str(d.get("product", "")))
+            ws.cell(row=row, column=5, value=float(d.get("nominal", 0) or 0)).number_format = FMT_CURRENCY
+            pv = float(d.get("pnl", 0) or 0)
+            pc = ws.cell(row=row, column=6, value=pv)
+            pc.number_format = FMT_CURRENCY
+            apply_sign_fill(pc, pv)
+            row += 1
+
+    matured_deals = attribution.get("matured_deals") or []
+    if matured_deals:
+        row += 2
+        row = section_header(
+            ws, row, f"Top matured deals (by |P&L lost|) — showing {min(TOP_N, len(matured_deals))} of {len(matured_deals)}",
+        )
+        row = write_header_row(
+            ws, row, ["Deal ID", "Counterparty", "CCY", "Product", "Nominal", "P&L lost"],
+        )
+        for d in matured_deals[:TOP_N]:
+            ws.cell(row=row, column=1, value=str(d.get("deal_id", "")))
+            ws.cell(row=row, column=2, value=str(d.get("counterparty", "")))
+            ws.cell(row=row, column=3, value=str(d.get("currency", "")))
+            ws.cell(row=row, column=4, value=str(d.get("product", "")))
+            ws.cell(row=row, column=5, value=float(d.get("nominal", 0) or 0)).number_format = FMT_CURRENCY
+            # pnl_lost is the negated prev P&L — a positive value means NII lost to maturity
+            lv = float(d.get("pnl_lost", 0) or 0)
+            lc = ws.cell(row=row, column=6, value=lv)
+            lc.number_format = FMT_CURRENCY
+            apply_sign_fill(lc, -lv)  # invert: loss of income shown in red
+            row += 1
+
+    set_column_widths(ws, [32, 22, 22, 22, 22, 24])
     freeze(ws, "A5")
-    footer(ws, date_run=date_run, source_key="attribution")
+    footer(ws, date_run=date_run, source_key=source_key)
+
+
+def _write_attribution(wb: Workbook, data: dict, date_run: str) -> None:
+    """Day-over-Day P&L Explain — driven by ``dashboard_data['attribution']``."""
+    ws = wb.create_sheet("Attribution Waterfall")
+    attribution = data.get("attribution") or {}
+    if not attribution.get("has_data"):
+        write_empty_state(ws, "Attribution requires a prior run — skipped.")
+        return
+    _render_attribution_block(
+        ws, attribution,
+        title="P&L Attribution Waterfall — Day-over-Day",
+        subtitle="Decomposes \u0394NII (current vs prior run) into drivers.",
+        date_run=date_run, source_key="attribution",
+    )
+
+
+def _write_attribution_mom(wb: Workbook, data: dict, date_run: str) -> None:
+    """Month-over-Month P&L Explain — driven by ``dashboard_data['attribution_mom']``.
+
+    Anchor is the latest explain snapshot on-or-before the last day of the
+    previous month. When no such snapshot exists (first run of the month with
+    no prior April run), the sheet shows an empty-state message explaining how
+    the anchor accumulates.
+    """
+    ws = wb.create_sheet("P&L Explain (MoM)")
+    mom = data.get("attribution_mom") or {}
+    if not mom.get("has_data"):
+        write_empty_state(
+            ws,
+            "MoM P&L Explain unavailable — no explain snapshot exists on or before "
+            "the last day of the previous month. The anchor is populated by running "
+            "`render-pnl --format pnl-xlsx` on that day (or any earlier day of the "
+            "prior month, whichever was last).",
+        )
+        return
+
+    summary = mom.get("summary") or {}
+    prev_d = summary.get("prev_date", "\u2014")
+    curr_d = summary.get("curr_date", date_run)
+    _render_attribution_block(
+        ws, mom,
+        title=f"P&L Explain — Month-over-Month ({prev_d} \u2192 {curr_d})",
+        subtitle=(
+            "Decomposes \u0394NII vs the last explain snapshot on-or-before month-start. "
+            "Same decomposition as DoD (rate / spread / time / new / matured)."
+        ),
+        date_run=date_run, source_key="attribution_mom",
+    )
 
 
 def _write_monthly_series(wb: Workbook, data: dict, date_run: str) -> None:
@@ -599,6 +698,374 @@ def _write_monthly_series(wb: Workbook, data: dict, date_run: str) -> None:
     freeze(ws, f"B{header_row + 1}")
     add_autofilter(ws)
     footer(ws, date_run=date_run, source_key="pnl_series")
+
+
+def _write_daily_projection(wb: Workbook, data: dict, date_run: str) -> None:
+    """Daily P&L projection from dateRun through month-end for Central (shock=0) and WIRP.
+
+    Two blocks side-by-side: one per shock. Rows = calendar days; columns per
+    currency + Total. Friday rows carry Sat+Sun accrual (d_i=3) by ISDA 2021
+    convention, so summing down a currency column gives the period NII.
+    """
+    ws = wb.create_sheet("Daily Projection (MTD)")
+    proj = data.get("daily_projection") or {}
+    if not proj.get("has_data"):
+        write_empty_state(
+            ws,
+            "Daily projection unavailable — requires live engine matrices (--format pnl-xlsx/all).",
+        )
+        return
+
+    start_d = proj.get("start_date", "")
+    end_d = proj.get("end_date", "")
+    blocks = [
+        ("Central (Base / shock=0)", proj.get("central")),
+        ("WIRP (Market-implied)", proj.get("wirp")),
+    ]
+    blocks = [(label, df) for label, df in blocks if isinstance(df, pd.DataFrame) and not df.empty]
+    if not blocks:
+        write_empty_state(ws, "Daily projection dataframes are empty.")
+        return
+
+    # Union of currencies across blocks (stable order: CHF, EUR, USD, GBP, then alpha-rest)
+    preferred = ["CHF", "EUR", "USD", "GBP"]
+    all_ccy: list[str] = []
+    for _, df in blocks:
+        for c in df["Currency"].astype(str).unique().tolist():
+            if c not in all_ccy:
+                all_ccy.append(c)
+    ordered_ccy = [c for c in preferred if c in all_ccy] + sorted(c for c in all_ccy if c not in preferred)
+
+    total_cols_per_block = 1 + len(ordered_ccy) + 1  # Date + currencies + Total
+    span = total_cols_per_block * len(blocks) + (len(blocks) - 1)  # separator cols
+    row = title_block(
+        ws,
+        f"Daily P&L Projection — {start_d} → {end_d}",
+        f"Per-day NII accrual by currency (Fri carries Sat+Sun). "
+        f"Side-by-side: Central vs WIRP.",
+        span_cols=max(span, 6),
+    )
+
+    # Two side-by-side blocks separated by a blank column
+    block_starts: list[tuple[int, str, pd.DataFrame]] = []
+    col_cursor = 1
+    for label, df in blocks:
+        block_starts.append((col_cursor, label, df))
+        col_cursor += total_cols_per_block + 1  # +1 separator
+
+    # Block title row
+    title_row = row
+    for col_start, label, _df in block_starts:
+        cell = ws.cell(row=title_row, column=col_start, value=label)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor=NAVY)
+        cell.alignment = Alignment(horizontal="center")
+        ws.merge_cells(
+            start_row=title_row, start_column=col_start,
+            end_row=title_row, end_column=col_start + total_cols_per_block - 1,
+        )
+    row += 1
+
+    # Header row (Date | CCYs... | Total) per block
+    header_row = row
+    for col_start, _label, _df in block_starts:
+        ws.cell(row=header_row, column=col_start, value="Date")
+        for i, ccy in enumerate(ordered_ccy, start=1):
+            ws.cell(row=header_row, column=col_start + i, value=ccy)
+        ws.cell(row=header_row, column=col_start + len(ordered_ccy) + 1, value="Total")
+    style_header_row(ws, header_row, n_cols=col_cursor - 2)
+    row += 1
+
+    # Collect the union of dates across blocks (preserve chronological order)
+    all_dates: list[pd.Timestamp] = []
+    for _, _lbl, df in block_starts:
+        for d in pd.to_datetime(df["Date"]).unique():
+            if d not in all_dates:
+                all_dates.append(d)
+    all_dates = sorted(all_dates)
+
+    data_start = row
+    for d in all_dates:
+        for col_start, _label, df in block_starts:
+            dc = ws.cell(row=row, column=col_start, value=d)
+            dc.number_format = FMT_DATE
+            sub = df[pd.to_datetime(df["Date"]) == d]
+            total = 0.0
+            any_val = False
+            for i, ccy in enumerate(ordered_ccy, start=1):
+                mask = sub["Currency"].astype(str) == ccy
+                if mask.any():
+                    v = float(sub.loc[mask, "PnL_Daily"].sum())
+                    ws.cell(row=row, column=col_start + i, value=v).number_format = FMT_CURRENCY
+                    total += v
+                    any_val = True
+            if any_val:
+                tc = ws.cell(row=row, column=col_start + len(ordered_ccy) + 1, value=total)
+                tc.number_format = FMT_CURRENCY
+                tc.font = Font(bold=True)
+                apply_sign_fill(tc, total)
+        row += 1
+    data_end = row - 1
+
+    # Totals row per block
+    for col_start, _label, df in block_starts:
+        ws.cell(row=row, column=col_start, value="Total").font = Font(bold=True)
+        grand_total = 0.0
+        for i, ccy in enumerate(ordered_ccy, start=1):
+            mask = df["Currency"].astype(str) == ccy
+            if mask.any():
+                v = float(df.loc[mask, "PnL_Daily"].sum())
+                tc = ws.cell(row=row, column=col_start + i, value=v)
+                tc.number_format = FMT_CURRENCY
+                tc.font = Font(bold=True)
+                apply_sign_fill(tc, v)
+                grand_total += v
+        gc = ws.cell(row=row, column=col_start + len(ordered_ccy) + 1, value=grand_total)
+        gc.number_format = FMT_CURRENCY
+        gc.font = Font(bold=True)
+        apply_sign_fill(gc, grand_total)
+    row += 1
+
+    # Heat-map over per-currency numeric cells (exclude Date + Total) per block
+    if data_end >= data_start:
+        for col_start, _label, _df in block_starts:
+            first = get_column_letter(col_start + 1)
+            last = get_column_letter(col_start + len(ordered_ccy))
+            add_color_scale_range(
+                ws, f"{first}{data_start}:{last}{data_end}",
+                diverging_at_zero=True,
+            )
+
+    # Column widths: 12 for Date, 15 per currency+Total, 2 separator
+    widths: list[int] = []
+    for b_idx, _bs in enumerate(block_starts):
+        widths.append(12)  # Date
+        widths.extend([15] * len(ordered_ccy))
+        widths.append(16)  # Total
+        if b_idx < len(block_starts) - 1:
+            widths.append(2)  # separator
+    set_column_widths(ws, widths)
+    freeze(ws, f"A{header_row + 1}")
+    footer(ws, date_run=date_run, source_key="daily_projection (central + wirp)")
+
+
+def _write_realized_daily_pnl(wb: Workbook, data: dict, date_run: str) -> None:
+    """Realized daily P&L from bank export — BOOK1 accrual/IAS + BOOK2 MTM.
+
+    Unlike the forecast projection (engine recomputed), this sheet reports the
+    numbers the bank itself booked on ``date_run``. Rows = currencies; columns
+    = one per book bucket (BOOK1 Accrual, BOOK1 IAS, BOOK2 MTM) + row Total.
+    """
+    ws = wb.create_sheet("Realized Daily P&L")
+    realized = data.get("realized_daily_pnl") or {}
+    if not realized.get("has_data"):
+        write_empty_state(
+            ws,
+            "Realized daily P&L unavailable — requires bank-native input "
+            "(Book1 with PnL_Acc_Adj / PnL_Realized, Book2 non-IRS with PnL_Realized).",
+        )
+        return
+
+    pivot = realized.get("pivot")
+    if pivot is None or not isinstance(pivot, pd.DataFrame) or pivot.empty:
+        write_empty_state(ws, "Realized daily P&L pivot is empty.")
+        return
+
+    book_cols = [c for c in pivot.columns if c != "currency"]
+    headers = ["Currency"] + book_cols + ["Total"]
+
+    row = title_block(
+        ws,
+        f"Realized Daily P&L — {realized.get('date_run', '')}",
+        "Bank-reported daily P&L (not forecast). BOOK1 = accrual IAS/ORC, BOOK2 = MTM.",
+        span_cols=len(headers),
+    )
+    header_row = row
+    row = write_header_row(ws, row, headers)
+
+    col_totals = {col: 0.0 for col in book_cols}
+    for _, r in pivot.iterrows():
+        ccy = str(r["currency"])
+        ws.cell(row=row, column=1, value=ccy).font = Font(bold=True)
+        row_total = 0.0
+        for i, col in enumerate(book_cols, start=2):
+            v = float(r[col] or 0.0)
+            c = ws.cell(row=row, column=i, value=v)
+            c.number_format = FMT_CURRENCY
+            apply_sign_fill(c, v)
+            row_total += v
+            col_totals[col] += v
+        tc = ws.cell(row=row, column=len(headers), value=row_total)
+        tc.number_format = FMT_CURRENCY
+        tc.font = Font(bold=True)
+        apply_sign_fill(tc, row_total)
+        row += 1
+
+    # Totals row
+    ws.cell(row=row, column=1, value="Total").font = Font(bold=True)
+    grand_total = 0.0
+    for i, col in enumerate(book_cols, start=2):
+        v = col_totals[col]
+        tc = ws.cell(row=row, column=i, value=v)
+        tc.number_format = FMT_CURRENCY
+        tc.font = Font(bold=True)
+        apply_sign_fill(tc, v)
+        grand_total += v
+    gc = ws.cell(row=row, column=len(headers), value=grand_total)
+    gc.number_format = FMT_CURRENCY
+    gc.font = Font(bold=True)
+    apply_sign_fill(gc, grand_total)
+
+    set_column_widths(ws, [12] + [22] * len(book_cols) + [18])
+    freeze(ws, f"A{header_row + 1}")
+    footer(ws, date_run=date_run, source_key="realized_daily_pnl")
+
+
+def _write_book2_delta(
+    wb: Workbook, sheet_name: str, title: str, subtitle_template: str,
+    block: dict, date_run: str, source_key: str,
+) -> None:
+    """Shared layout for BOOK2 ΔMTM sheets (DoD / MTD).
+
+    ``subtitle_template`` may contain ``{prev_date}``, which is replaced by the
+    resolved prior snapshot date (or "—" when absent).
+    """
+    ws = wb.create_sheet(sheet_name)
+    if not block or not block.get("has_data"):
+        write_empty_state(
+            ws,
+            f"{title} unavailable — requires a prior strategy snapshot and today's Book2 MTM.",
+        )
+        return
+
+    prev_date = block.get("prev_date") or "\u2014"
+    row = title_block(
+        ws, title,
+        subtitle_template.format(prev_date=prev_date),
+        span_cols=5,
+    )
+    header_row = row
+    row = write_header_row(ws, row, ["Currency", "#Deals", "MTM Prev", "MTM Today", "\u0394MTM"])
+
+    rows = block.get("rows") or []
+    for r in rows:
+        ws.cell(row=row, column=1, value=str(r.get("currency", ""))).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=int(r.get("n_deals", 0) or 0)).number_format = FMT_INT
+        ws.cell(row=row, column=3, value=float(r.get("mtm_prev", 0.0))).number_format = FMT_CURRENCY
+        ws.cell(row=row, column=4, value=float(r.get("mtm_today", 0.0))).number_format = FMT_CURRENCY
+        delta = float(r.get("delta", 0.0))
+        dc = ws.cell(row=row, column=5, value=delta)
+        dc.number_format = FMT_CURRENCY
+        dc.font = Font(bold=True)
+        apply_sign_fill(dc, delta)
+        row += 1
+
+    totals = block.get("totals") or {}
+    ws.cell(row=row, column=1, value="Total").font = Font(bold=True)
+    n_total = sum(int(r.get("n_deals", 0) or 0) for r in rows)
+    ws.cell(row=row, column=2, value=n_total).number_format = FMT_INT
+    ws.cell(row=row, column=3, value=float(totals.get("mtm_prev", 0.0))).number_format = FMT_CURRENCY
+    ws.cell(row=row, column=4, value=float(totals.get("mtm_today", 0.0))).number_format = FMT_CURRENCY
+    total_delta = float(totals.get("delta", 0.0))
+    tc = ws.cell(row=row, column=5, value=total_delta)
+    tc.number_format = FMT_CURRENCY
+    tc.font = Font(bold=True)
+    apply_sign_fill(tc, total_delta)
+
+    set_column_widths(ws, [12, 10, 20, 20, 20])
+    freeze(ws, f"A{header_row + 1}")
+    footer(ws, date_run=date_run, source_key=source_key)
+
+
+def _write_book2_delta_dod(wb: Workbook, data: dict, date_run: str) -> None:
+    """BOOK2 ΔMTM — Day-over-Day (vs last snapshot strictly before today)."""
+    _write_book2_delta(
+        wb,
+        sheet_name="BOOK2 \u0394MTM - Day-over-Day",
+        title="BOOK2 \u0394MTM — Day-over-Day",
+        subtitle_template="MTM(today) \u2212 MTM(prev). Prior snapshot: {prev_date}.",
+        block=data.get("book2_delta_dod") or {},
+        date_run=date_run,
+        source_key="book2_delta_dod",
+    )
+
+
+def _write_book2_delta_mtd(wb: Workbook, data: dict, date_run: str) -> None:
+    """BOOK2 ΔMTM — Month-to-Date (vs last snapshot on-or-before month start)."""
+    _write_book2_delta(
+        wb,
+        sheet_name="BOOK2 \u0394MTM - MTD",
+        title="BOOK2 \u0394MTM — Month-to-Date",
+        subtitle_template="MTM(today) \u2212 MTM(month-start). Anchor snapshot: {prev_date}.",
+        block=data.get("book2_delta_mtd") or {},
+        date_run=date_run,
+        source_key="book2_delta_mtd",
+    )
+
+
+def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
+    """BOOK1 Realized — MTD (sum of daily bank-reported BOOK1 P&L for the month)."""
+    ws = wb.create_sheet("BOOK1 Realized - MTD")
+    block = data.get("book1_realized_mtd") or {}
+    if not block or not block.get("has_data"):
+        days = int(block.get("days_counted", 0) or 0) if block else 0
+        msg = (
+            f"BOOK1 Realized MTD unavailable — {days} daily snapshot(s) found but no "
+            "non-zero BOOK1 figures. MTD accumulates from kpi_snapshots/*_realized.json "
+            "(one file per pnl-xlsx run)."
+        )
+        write_empty_state(ws, msg)
+        return
+
+    month_start = block.get("month_start", "")
+    date_end = block.get("date_run", "")
+    days = int(block.get("days_counted", 0) or 0)
+
+    row = title_block(
+        ws,
+        f"BOOK1 Realized — MTD ({month_start} \u2192 {date_end})",
+        f"Sum of bank-reported BOOK1 daily P&L across {days} snapshot(s). "
+        "Accrual = @PnL_Acc_Estim_Adj; IAS = [Daily] PnL IAS - ORC.",
+        span_cols=5,
+    )
+    header_row = row
+    row = write_header_row(
+        ws, row, ["Currency", "BOOK1 Accrual MTD", "BOOK1 IAS MTD", "BOOK1 Total MTD", "# Deals"],
+    )
+
+    rows = block.get("rows") or []
+    for r in rows:
+        ws.cell(row=row, column=1, value=str(r.get("currency", ""))).font = Font(bold=True)
+        accr = float(r.get("book1_accrual", 0.0))
+        ias = float(r.get("book1_ias", 0.0))
+        total = float(r.get("book1_total", accr + ias))
+        ac = ws.cell(row=row, column=2, value=accr)
+        ac.number_format = FMT_CURRENCY
+        apply_sign_fill(ac, accr)
+        ic = ws.cell(row=row, column=3, value=ias)
+        ic.number_format = FMT_CURRENCY
+        apply_sign_fill(ic, ias)
+        tc = ws.cell(row=row, column=4, value=total)
+        tc.number_format = FMT_CURRENCY
+        tc.font = Font(bold=True)
+        apply_sign_fill(tc, total)
+        # Column 5 left blank — deal count is not tracked in snapshot; kept for future use.
+        row += 1
+
+    totals = block.get("totals") or {}
+    ws.cell(row=row, column=1, value="Total").font = Font(bold=True)
+    accr_t = float(totals.get("book1_accrual", 0.0))
+    ias_t = float(totals.get("book1_ias", 0.0))
+    tot_t = float(totals.get("book1_total", accr_t + ias_t))
+    for col, v in ((2, accr_t), (3, ias_t), (4, tot_t)):
+        c = ws.cell(row=row, column=col, value=v)
+        c.number_format = FMT_CURRENCY
+        c.font = Font(bold=True)
+        apply_sign_fill(c, v)
+
+    set_column_widths(ws, [12, 22, 22, 22, 10])
+    freeze(ws, f"A{header_row + 1}")
+    footer(ws, date_run=date_run, source_key="book1_realized_mtd")
 
 
 def _write_top_contributors(wb: Workbook, data: dict, date_run: str) -> None:
@@ -749,6 +1216,112 @@ def _write_strategy(wb: Workbook, data: dict, date_run: str) -> None:
     set_column_widths(ws, [14, 18, 14, 20, 20, 14, 14])
     add_autofilter(ws)
     footer(ws, date_run=date_run, source_key="strategy")
+
+
+def _write_hedge_effectiveness(wb: Workbook, data: dict, date_run: str) -> None:
+    """Strategy IAS cross-book consolidated view — IAS 39 / IFRS 9 corridor test."""
+    ws = wb.create_sheet("Hedge Effectiveness")
+    sc = data.get("strategy_consolidated") or {}
+    if not sc.get("has_data"):
+        write_empty_state(
+            ws,
+            "No hedge effectiveness data — requires deals with Strategy IAS designation "
+            "and both hedged items and hedging instruments.",
+        )
+        return
+
+    row = title_block(
+        ws,
+        "Hedge Effectiveness — Strategy IAS Consolidated",
+        "Corridor [80%, 125%]: Effectiveness = -\u0394MtM / \u0394FV. \u0394 vs prior snapshot.",
+        span_cols=11,
+    )
+
+    summary = sc.get("summary") or {}
+    row = section_header(ws, row, "Summary")
+    row = write_header_row(ws, row, ["Total", "OK", "Under", "Over", "N/A", "Multi-CCY"])
+    ws.cell(row=row, column=1, value=int(summary.get("n_total", 0) or 0)).number_format = FMT_INT
+    ok_cell = ws.cell(row=row, column=2, value=int(summary.get("n_ok", 0) or 0))
+    ok_cell.number_format = FMT_INT
+    if summary.get("n_ok"):
+        ok_cell.fill = PatternFill("solid", fgColor=FILL_POS)
+    under_cell = ws.cell(row=row, column=3, value=int(summary.get("n_under", 0) or 0))
+    under_cell.number_format = FMT_INT
+    if summary.get("n_under"):
+        under_cell.fill = PatternFill("solid", fgColor=FILL_NEG)
+    over_cell = ws.cell(row=row, column=4, value=int(summary.get("n_over", 0) or 0))
+    over_cell.number_format = FMT_INT
+    if summary.get("n_over"):
+        over_cell.fill = PatternFill("solid", fgColor=FILL_NEG)
+    ws.cell(row=row, column=5, value=int(summary.get("n_na", 0) or 0)).number_format = FMT_INT
+    ws.cell(row=row, column=6, value=int(summary.get("n_multi_ccy", 0) or 0)).number_format = FMT_INT
+    row += 2
+
+    rows = sc.get("rows") or []
+    if rows:
+        row = section_header(ws, row, "Relationships")
+        header_row = row
+        row = write_header_row(
+            ws, row,
+            [
+                "Strategy IAS", "Type", "CCY", "#Hedged", "#Hedging",
+                "Hedged FV", "\u0394FV", "IRS MtM", "\u0394MtM",
+                "Effectiveness", "Corridor",
+            ],
+        )
+        for r in rows:
+            ws.cell(row=row, column=1, value=r.get("strategy_ias", ""))
+            ws.cell(row=row, column=2, value=r.get("hedge_type", ""))
+            ws.cell(row=row, column=3, value=r.get("currencies", ""))
+            ws.cell(row=row, column=4, value=int(r.get("n_hedged", 0) or 0)).number_format = FMT_INT
+            ws.cell(row=row, column=5, value=int(r.get("n_hedging", 0) or 0)).number_format = FMT_INT
+
+            fv = r.get("hedged_clean_fv_today")
+            if fv is not None:
+                ws.cell(row=row, column=6, value=float(fv)).number_format = FMT_CURRENCY
+            dfv = r.get("hedged_clean_dFV")
+            if dfv is not None:
+                dfv_val = float(dfv)
+                dc = ws.cell(row=row, column=7, value=dfv_val)
+                dc.number_format = FMT_CURRENCY
+                apply_sign_fill(dc, dfv_val)
+
+            mtm = r.get("hedging_irs_mtm_today")
+            if mtm is not None:
+                ws.cell(row=row, column=8, value=float(mtm)).number_format = FMT_CURRENCY
+            dmtm = r.get("hedging_irs_dMtM")
+            if dmtm is not None:
+                dmtm_val = float(dmtm)
+                mc = ws.cell(row=row, column=9, value=dmtm_val)
+                mc.number_format = FMT_CURRENCY
+                apply_sign_fill(mc, dmtm_val)
+
+            eff = r.get("effectiveness_ratio")
+            if eff is not None:
+                ws.cell(row=row, column=10, value=float(eff)).number_format = FMT_PERCENT
+
+            flag = (r.get("corridor_flag") or "").lower()
+            flag_label = {
+                "ok": "OK",
+                "under": "UNDER",
+                "over": "OVER",
+                "multi_ccy": "MULTI-CCY",
+                "na": "N/A",
+            }.get(flag, flag.upper() or "N/A")
+            fc = ws.cell(row=row, column=11, value=flag_label)
+            if flag == "ok":
+                fc.fill = PatternFill("solid", fgColor=FILL_POS)
+                fc.font = Font(bold=True)
+            elif flag in ("under", "over"):
+                fc.fill = PatternFill("solid", fgColor=FILL_NEG)
+                fc.font = Font(bold=True)
+            row += 1
+
+        freeze(ws, f"A{header_row + 2}")
+        add_autofilter(ws)
+
+    set_column_widths(ws, [16, 10, 10, 10, 10, 18, 18, 18, 18, 14, 12])
+    footer(ws, date_run=date_run, source_key="strategy_consolidated")
 
 
 def _write_ftp(wb: Workbook, data: dict, date_run: str) -> None:

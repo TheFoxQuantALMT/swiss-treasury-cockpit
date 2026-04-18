@@ -77,9 +77,18 @@ class TestParseDeals:
             "Dealid", "Product", "Currency", "Direction", "IAS Book",
             "Amount", "Clientrate", "Maturitydate", "Périmètre TOTAL",
             # Bank-native additions
-            "Category2", "FxRate",
+            "Category2", "FxRate", "Clean Price",
         ]:
             assert col in deals.columns, f"missing column {col}"
+
+    def test_clean_price_bonds_only(self, deals):
+        """Clean Price populated on BND rows (% of par), NaN elsewhere."""
+        bnd = deals[deals["Product"] == "BND"]
+        non_bnd = deals[deals["Product"] != "BND"]
+        assert bnd["Clean Price"].notna().all(), "Clean Price missing on a BND row"
+        assert non_bnd["Clean Price"].isna().all(), "Clean Price unexpectedly set on a non-BND row"
+        # Bounds sanity: prices should be 80-120% of par in a normal environment
+        assert bnd["Clean Price"].between(80, 120).all()
 
     def test_dealid_string(self, deals):
         assert pd.api.types.is_string_dtype(deals["Dealid"])

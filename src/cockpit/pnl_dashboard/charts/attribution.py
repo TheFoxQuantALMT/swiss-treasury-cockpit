@@ -1050,3 +1050,54 @@ def _build_forecast_tracking(forecast_history: Optional[pd.DataFrame] = None) ->
         "revisions": revisions,
         "stats": stats,
     }
+
+
+# ---------------------------------------------------------------------------
+# Strategy IAS consolidated view (cross-book hedge effectiveness)
+# ---------------------------------------------------------------------------
+
+def _build_strategy_consolidated_view(
+    strategy_consolidated: Optional[pd.DataFrame],
+) -> dict:
+    """Format the consolidator output for the Hedge Effectiveness tab.
+
+    Expects the DataFrame produced by
+    :func:`pnl_engine.strategy_consolidated.compute_strategy_consolidated`.
+    Returns a dict with ``has_data``, a list of per-strategy rows, and the
+    counterparty-style summary (``n_ok`` / ``n_under`` / ``n_over`` etc.)
+    the template can use to render an IFRS-9 corridor table.
+    """
+    if strategy_consolidated is None or strategy_consolidated.empty:
+        return {"has_data": False, "rows": [], "summary": {}}
+
+    df = strategy_consolidated.copy()
+
+    rows: list[dict] = []
+    for _, r in df.iterrows():
+        ratio = r.get("effectiveness_ratio")
+        rows.append({
+            "strategy_ias": str(r.get("strategy_ias", "")),
+            "hedge_type": str(r.get("hedge_type", "")),
+            "currencies": str(r.get("currencies", "")),
+            "multi_currency": bool(r.get("multi_currency", False)),
+            "n_hedged": int(r.get("n_hedged", 0) or 0),
+            "n_hedging": int(r.get("n_hedging", 0) or 0),
+            "n_hedging_book2": int(r.get("n_hedging_book2", 0) or 0),
+            "hedged_clean_fv_today": _safe_float(r.get("hedged_clean_fv_today")),
+            "hedged_clean_dFV": _safe_float(r.get("hedged_clean_dFV")),
+            "hedging_irs_mtm_today": _safe_float(r.get("hedging_irs_mtm_today")),
+            "hedging_irs_dMtM": _safe_float(r.get("hedging_irs_dMtM")),
+            "effectiveness_ratio": None if pd.isna(ratio) else float(ratio),
+            "corridor_flag": str(r.get("corridor_flag", "na")),
+        })
+
+    flag_counts = df["corridor_flag"].value_counts().to_dict() if "corridor_flag" in df.columns else {}
+    summary = {
+        "n_total": int(len(df)),
+        "n_ok": int(flag_counts.get("ok", 0)),
+        "n_under": int(flag_counts.get("under", 0)),
+        "n_over": int(flag_counts.get("over", 0)),
+        "n_na": int(flag_counts.get("na", 0)),
+        "n_multi_ccy": int(flag_counts.get("multi_ccy", 0)),
+    }
+    return {"has_data": True, "rows": rows, "summary": summary}

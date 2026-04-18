@@ -925,3 +925,68 @@ class PnlEngine:
             logger.warning("Enrichment: beta_sensitivity failed: %s", exc)
 
         return enrichment
+
+    def compute_daily_projection(
+        self,
+        shock: str,
+        start_date: pd.Timestamp,
+        end_date: pd.Timestamp,
+    ) -> pd.DataFrame:
+        """Daily P&L projection aggregated by currency over [start_date, end_date].
+
+        Returns a long DataFrame with columns [Date, Currency, PnL_Daily].
+        PnL per day follows the core formula Nominal×(OIS-RateRef)×d_i/MM, where
+        d_i is the calendar-day weight (Fri carries Sat+Sun accrual). Summing
+        over a calendar-day range therefore gives the period NII accrual.
+        """
+        if self._deals_use is None or self._nominal_daily is None or self._days is None:
+            return pd.DataFrame(columns=["Date", "Currency", "PnL_Daily"])
+
+        start_ts = pd.Timestamp(start_date).normalize()
+        end_ts = pd.Timestamp(end_date).normalize()
+        day_mask = (self._days >= start_ts) & (self._days <= end_ts)
+        if not day_mask.any():
+            return pd.DataFrame(columns=["Date", "Currency", "PnL_Daily"])
+
+        if shock == "wirp":
+            ois_curves = self.fwdWIRP
+        else:
+            ois_curves = self._load_ois_curves(shock=shock)
+
+        ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
+        ref_curves = self._load_ref_curves(shock=shock)
+        rate_matrix = build_rate_matrix(
+            self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts,
+        )
+        mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
+
+        if self._nmd_profiles is not None and not self._nmd_profiles.empty:
+            from pnl_engine.nmd import apply_deposit_beta
+            try:
+                shock_bps = float(shock) if shock != "wirp" else 0.0
+            except (ValueError, TypeError):
+                shock_bps = 0.0
+            rate_matrix = apply_deposit_beta(
+                rate_matrix, self._deals_use, self._nmd_profiles, ois_matrix,
+                shock_bps=shock_bps,
+            )
+
+        daily_pnl = compute_daily_pnl(
+            self._nominal_daily, ois_matrix, rate_matrix, mm_broadcast,
+            accrual_days=self._accrual_days,
+        )
+
+        sub = daily_pnl[:, day_mask]  # (n_deals, n_window_days)
+        window_days = self._days[day_mask]
+        currencies = self._deals_use["Currency"].fillna("—").values
+
+        # Aggregate by currency: group row-sums via pandas
+        df = pd.DataFrame(sub, index=currencies, columns=window_days)
+        df.index.name = "Currency"
+        by_ccy = df.groupby(level=0).sum().T  # (n_days, n_ccy)
+        by_ccy.index.name = "Date"
+
+        long = by_ccy.reset_index().melt(
+            id_vars="Date", var_name="Currency", value_name="PnL_Daily",
+        )
+        return long

@@ -35,6 +35,7 @@ from cockpit.pnl_dashboard.charts.attribution import (
     _build_budget,
     _build_attribution,
     _build_forecast_tracking,
+    _build_strategy_consolidated_view,
 )
 from cockpit.pnl_dashboard.charts.profitability import (
     _build_hedge_effectiveness,
@@ -105,6 +106,8 @@ def build_pnl_dashboard_data(
     # Pre-computed enrichment data (from engine, needs matrices not available here)
     locked_in_nii_data: Optional[dict] = None,
     beta_sensitivity_data: Optional[dict] = None,
+    # Cross-book hedge-effectiveness view (one row per Strategy IAS)
+    strategy_consolidated: Optional[pd.DataFrame] = None,
     # Optional-enrichment parse failures captured by the CLI render command
     enrichment_issues: Optional[list[dict]] = None,
 ) -> dict:
@@ -167,6 +170,8 @@ def build_pnl_dashboard_data(
         "snb_reserves": _build_snb_reserves(deals, limits=limits),
         # NMD Backtest (placeholder)
         "nmd_backtest": _build_nmd_backtest(deals, nmd_profiles),
+        # Cross-book strategy consolidated view (wired into Hedge Effectiveness tab)
+        "strategy_consolidated": _build_strategy_consolidated_view(strategy_consolidated),
         # Raw per-deal DataFrame for Excel export
         "pnl_by_deal_df": pnl_by_deal,
     }

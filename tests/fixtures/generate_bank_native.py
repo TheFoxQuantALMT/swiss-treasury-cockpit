@@ -58,6 +58,7 @@ BOOK1_COLUMNS = [
     "CoC/SellDown Carry Rate", "@EqOISRate2", "Credit Spread FIFO",
     "@PnL_Acc_Estim_Unadj", "@PnL_CoC_Estim_Unadj", "@Nb_Day_Adj",
     "@PnL_Acc_Estim_Adj", "@PnL_CoC_Estim_Adj", "[Daily] PnL IAS - ORC",
+    "Clean_Price",
 ]
 
 BOOK2_COLUMNS = [
@@ -72,6 +73,7 @@ BOOK2_COLUMNS = [
     "CoC/SellDown Carry Rate", "@EqOISRate2", "Credit Spread FIFO",
     "@PnL_Acc_Estim_Unadj", "@PnL_CoC_Estim_Unadj", "@Nb_Day_Adj",
     "@PnL_Acc_Estim_Adj", "@PnL_CoC_Estim_Adj", "[Daily] PnL MTM",
+    "Clean_Price",
 ]
 
 RATE_SCHEDULE_META_COLUMNS = [
@@ -143,6 +145,7 @@ def _b1(**kw) -> dict:
         "@Nb_Day_Adj": kw.get("nb_day_adj", 1),
         "@PnL_Acc_Estim_Adj": pnl_acc, "@PnL_CoC_Estim_Adj": pnl_coc,
         "[Daily] PnL IAS - ORC": kw.get("pnl_realized", round(pnl_acc + pnl_coc, 2)),
+        "Clean_Price": kw.get("clean_price"),  # % of par, bonds only
     }
 
 
@@ -181,6 +184,7 @@ def _b2(**kw) -> dict:
         "@Nb_Day_Adj": kw.get("nb_day_adj", 1),
         "@PnL_Acc_Estim_Adj": pnl_acc, "@PnL_CoC_Estim_Adj": pnl_coc,
         "[Daily] PnL MTM": kw.get("pnl_realized", round((pnl_acc + pnl_coc) * 3.5, 2)),
+        "Clean_Price": kw.get("clean_price"),  # % of par, bonds only
     }
 
 
@@ -229,19 +233,19 @@ BOOK1_ROWS = [
         indexation="FIXED", isin="CH0012345678",
         trade_date=date(2024, 1, 20), value_date=date(2024, 1, 22),
         maturity=date(2029, 1, 22), counterparty="BKCHSIXSWX",
-        amount=-20_000_000.0, client_rate=0.0150, ytm=0.0175),
+        amount=-20_000_000.0, client_rate=0.0150, ytm=0.0175, clean_price=102.35),
     _b1(key_id="B1-007", deal_id="200002", category="OPP", category2="OPP_Bond_nASW",
         ccy="EUR", direction="B", product="BND", sub_product="GOVT_BOND",
         indexation="FIXED", isin="DE0001102624",
         trade_date=date(2024, 3, 10), value_date=date(2024, 3, 12),
         maturity=date(2029, 3, 12), counterparty="BKEUROCLRBE",
-        amount=-20_000_000.0, client_rate=0.0250, ytm=0.0285, spread=0.0015),
+        amount=-20_000_000.0, client_rate=0.0250, ytm=0.0285, spread=0.0015, clean_price=101.18),
     _b1(key_id="B1-008", deal_id="200003", category="OPP", category2="OPP_Bond_nASW",
         ccy="EUR", direction="S", product="BND", sub_product="CORP_BOND",
         indexation="FIXED", isin="FR0013999999",
         trade_date=date(2025, 6, 15), value_date=date(2025, 6, 17),
         maturity=date(2030, 6, 17), counterparty="BKEURLCHGB",
-        amount=-15_000_000.0, client_rate=0.0275, ytm=0.0310),   # S asset (negative, per DIRECTION_SIDE)
+        amount=-15_000_000.0, client_rate=0.0275, ytm=0.0310, clean_price=102.85),   # S asset (negative, per DIRECTION_SIDE)
 
     # === OPP_Bond_ASW (2): accrual leg of asset-swap ===
     _b1(key_id="B1-009", deal_id="300001", iam_deal_id="IAM-300001",
@@ -250,14 +254,14 @@ BOOK1_ROWS = [
         strategy_ias="STRAT_CHF_ASW_001", isin="CH0001234567",
         trade_date=date(2024, 6, 1), value_date=date(2024, 6, 3),
         maturity=date(2031, 6, 3), counterparty="BKCHSIXSWX",
-        amount=-15_000_000.0, client_rate=0.0175, ytm=0.0200, spread=0.0065),
+        amount=-15_000_000.0, client_rate=0.0175, ytm=0.0200, spread=0.0065, clean_price=103.52),
     _b1(key_id="B1-010", deal_id="300002", iam_deal_id="IAM-300002",
         category="OPP", category2="OPP_Bond_ASW", ccy="EUR", direction="B",
         product="BND", sub_product="CORP_BOND_ASW", indexation="FIXED",
         strategy_ias="STRAT_EUR_ASW_001", isin="XS2345678901",
         trade_date=date(2025, 2, 10), value_date=date(2025, 2, 12),
         maturity=date(2030, 2, 12), counterparty="BKEUROCLRBE",
-        amount=-25_000_000.0, client_rate=0.0310, ytm=0.0335, spread=0.0080),
+        amount=-25_000_000.0, client_rate=0.0310, ytm=0.0335, spread=0.0080, clean_price=104.17),
 
     # === OPR_FVH (3): hedged items with Strategy IAS linkage ===
     _b1(key_id="B1-011", deal_id="400001", iam_deal_id="IAM-400001",
@@ -280,7 +284,7 @@ BOOK1_ROWS = [
         strategy_ias="STRAT_CHF_FVH_002", isin="CH0002468135",
         trade_date=date(2025, 4, 10), value_date=date(2025, 4, 14),
         maturity=date(2032, 4, 14), counterparty="BKCHSIXSWX",
-        amount=-30_000_000.0, client_rate=0.0195, ytm=0.0220, spread=0.0050),
+        amount=-30_000_000.0, client_rate=0.0195, ytm=0.0220, spread=0.0050, clean_price=104.48),
 
     # === OPR_nFVH (3): open-risk floaters (SARON3M term, ESTR6M term, SONIA overnight) ===
     _b1(key_id="B1-014", deal_id="500001", category="OPR", category2="OPR_nFVH",
@@ -333,7 +337,7 @@ BOOK2_ROWS = [
         trade_date=date(2024, 6, 1), value_date=date(2024, 6, 3),
         rate_start=date(2026, 3, 3), rate_end=date(2026, 6, 3),
         maturity=date(2031, 6, 3), counterparty="BKCHSIXSWX",
-        amount=-15_000_000.0, client_rate=0.0115, spread=0.0065),
+        amount=-15_000_000.0, client_rate=0.0115, spread=0.0065, clean_price=103.52),
     _b2(key_id="B2-002", deal_id="350002", category="OPP", category2="OPP_Bond_ASW",
         ccy="EUR", direction="B", product="BND", sub_product="CORP_BOND_ASW",
         indexation="FLOAT", strategy_ias="STRAT_EUR_ASW_001", rate_ref="ESTR6M",
@@ -341,14 +345,14 @@ BOOK2_ROWS = [
         trade_date=date(2025, 2, 10), value_date=date(2025, 2, 12),
         rate_start=date(2025, 8, 12), rate_end=date(2026, 2, 12),
         maturity=date(2030, 2, 12), counterparty="BKEUROCLRBE",
-        amount=-25_000_000.0, client_rate=0.0245, spread=0.0080),
+        amount=-25_000_000.0, client_rate=0.0245, spread=0.0080, clean_price=104.17),
     _b2(key_id="B2-003", deal_id="350003", category="OPP", category2="OPP_Bond_ASW",
         ccy="CHF", direction="S", product="BND", sub_product="CORP_BOND_ASW",
         indexation="FLOAT", rate_ref="SARON3M", isin="CH0009876543",
         trade_date=date(2025, 8, 15), value_date=date(2025, 8, 19),
         rate_start=date(2026, 2, 19), rate_end=date(2026, 5, 19),
         maturity=date(2029, 8, 19), counterparty="BKCHSIXSWX",
-        amount=-10_000_000.0, client_rate=0.0120, spread=0.0055),   # S asset (negative, per DIRECTION_SIDE)
+        amount=-10_000_000.0, client_rate=0.0120, spread=0.0055, clean_price=101.94),   # S asset (negative, per DIRECTION_SIDE)
 
     # === OPR_FVH (2): MtM mark on FVH hedging designation ===
     _b2(key_id="B2-004", deal_id="700001", category="OPR", category2="OPR_FVH",
