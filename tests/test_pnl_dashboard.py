@@ -392,7 +392,7 @@ class TestCounterpartyPnl:
             "Product": ["IAM/LD", "IAM/LD", "BND", "FXS"],
             "Product2BuyBack": ["IAM/LD", "IAM/LD", "BND", "FXS"],
             "Direction": ["D", "D", "L", "B"],
-            "PnL": [150, 250, -75, 120],
+            "PnL_Simple": [150, 250, -75, 120],
             "Nominal": [50e6, 30e6, 80e6, 20e6],
             "Shock": ["0", "0", "0", "0"],
             "Month": [pd.Period("2026-04", "M")] * 4,
@@ -476,7 +476,7 @@ class TestBudget:
             "Deal currency": ["CHF", "CHF"],
             "Shock": ["0", "0"],
             "Nominal": [1.1e6, 1.1e6],
-            "PnL": [90, 100],
+            "PnL_Simple": [90, 100],
         })
         deals = pd.DataFrame({
             "Currency": ["CHF"],
@@ -538,7 +538,7 @@ class TestHedgeEffectiveness:
             "Currency": ["CHF"] * 6,
             "Product": ["IAM/LD"] * 3 + ["IRS"] * 3,
             "Direction": ["D"] * 3 + ["D"] * 3,
-            "PnL": [100, 120, 110, -95, -115, -105],  # roughly opposite
+            "PnL_Simple": [100, 120, 110, -95, -115, -105],  # roughly opposite
             "Nominal": [50e6] * 6,
             "Shock": ["0"] * 6,
             "Month": months * 2,

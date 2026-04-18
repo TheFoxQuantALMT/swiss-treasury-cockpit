@@ -102,7 +102,7 @@ def _build_ftp(
         if source is not None:
             match = source[source["Dealid"] == deal_id]
             if not match.empty:
-                actual_pnl = float(match["PnL"].sum())
+                actual_pnl = float(match["PnL_Simple"].sum())
 
         # ALM margin decomposition (duration / credit / liquidity)
         # Duration contribution: FTP captures term premium over overnight
@@ -784,11 +784,11 @@ def _build_budget(
             )
             actual_nom_by_ccy[ccy] = float(ccy_deals["Nominal"].sum()) if "Nominal" in ccy_deals.columns and not ccy_deals.empty else 0.0
             # Weighted average rate
-            if "Nominal" in ccy_deals.columns and "PnL" in ccy_deals.columns and not ccy_deals.empty:
+            if "Nominal" in ccy_deals.columns and "PnL_Simple" in ccy_deals.columns and not ccy_deals.empty:
                 nom_sum = ccy_deals["Nominal"].abs().sum()
                 from pnl_engine.config import MM_BY_CURRENCY
                 _mm = float(MM_BY_CURRENCY.get(ccy, 360))
-                actual_rate_by_ccy[ccy] = float(ccy_deals["PnL"].sum() / nom_sum * _mm) if nom_sum > 0 else 0.0
+                actual_rate_by_ccy[ccy] = float(ccy_deals["PnL_Simple"].sum() / nom_sum * _mm) if nom_sum > 0 else 0.0
             else:
                 actual_rate_by_ccy[ccy] = 0.0
 

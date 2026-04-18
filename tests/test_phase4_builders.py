@@ -238,7 +238,7 @@ class TestBuildRiskCube:
             "Dealid": [100001, 100002, 100003, 100004],
             "Shock": ["0", "0", "0", "0"],
             "Month": [pd.Period("2026-04", "M")] * 4,
-            "PnL": [150.0, -80.0, 200.0, -50.0],
+            "PnL_Simple": [150.0, -80.0, 200.0, -50.0],
             "Deal currency": ["CHF", "CHF", "EUR", "CHF"],
             "Product": ["IAM/LD", "BND", "IAM/LD", "FXS"],
             "Direction": ["L", "L", "D", "S"],
@@ -255,7 +255,7 @@ class TestBuildRiskCube:
         pnl_by_deal = pd.DataFrame({
             "Dealid": [1, 2, 3],
             "Shock": ["0", "0", "0"],
-            "PnL": [100.0, -50.0, 200.0],
+            "PnL_Simple": [100.0, -50.0, 200.0],
             "Deal currency": ["CHF", "EUR", "CHF"],
             "Product": ["IAM/LD", "IAM/LD", "BND"],
             "Direction": ["L", "D", "L"],
@@ -270,7 +270,7 @@ class TestBuildRiskCube:
         pnl_by_deal = pd.DataFrame({
             "Dealid": [1, 2, 3, 4],
             "Shock": ["0"] * 4,
-            "PnL": [100.0, -50.0, 200.0, 75.0],
+            "PnL_Simple": [100.0, -50.0, 200.0, 75.0],
             "Deal currency": ["CHF", "CHF", "EUR", "CHF"],
             "Product": ["IAM/LD", "BND", "IAM/LD", "FXS"],
             "Direction": ["L", "L", "D", "S"],
@@ -439,7 +439,7 @@ class TestBuildHedgeStrategy:
         pnl_by_deal = pd.DataFrame({
             "Dealid": [100004],
             "Shock": ["0"],
-            "PnL": [-50.0],
+            "PnL_Simple": [-50.0],
             "Deal currency": ["CHF"],
             "Product": ["IRS"],
             "Direction": ["S"],

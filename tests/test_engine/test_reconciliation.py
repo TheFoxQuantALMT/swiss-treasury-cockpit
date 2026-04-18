@@ -257,7 +257,7 @@ class TestCrossCheckManual:
         monthly = aggregate_to_monthly(daily, nom_arr, ois_arr, rate_arr, days)
 
         apr = monthly[monthly["Month"].astype(str) == "2026-04"]
-        engine_pnl = apr["PnL"].iloc[0]
+        engine_pnl = apr["PnL_Simple"].iloc[0]
 
         assert abs(manual_pnl - engine_pnl) < 0.01, (
             f"Manual={manual_pnl:.4f} vs Engine={engine_pnl:.4f}"
@@ -294,8 +294,8 @@ class TestCrossCheckManual:
         for _, row in monthly.iterrows():
             m = row["Month"]
             expected = manual_by_month.get(m, 0.0)
-            assert abs(row["PnL"] - expected) < 0.01, (
-                f"Month {m}: Manual={expected:.4f} vs Engine={row['PnL']:.4f}"
+            assert abs(row["PnL_Simple"] - expected) < 0.01, (
+                f"Month {m}: Manual={expected:.4f} vs Engine={row['PnL_Simple']:.4f}"
             )
 
 

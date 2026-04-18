@@ -164,7 +164,7 @@ def _build_counterparty_pnl(df: pd.DataFrame, pnl_by_deal: Optional[pd.DataFrame
     source = None
     if pnl_by_deal is not None and not pnl_by_deal.empty and "Counterparty" in pnl_by_deal.columns:
         source = pnl_by_deal[pnl_by_deal["Shock"] == "0"].copy()
-        pnl_col = "PnL"
+        pnl_col = "PnL_Simple"
         cpty_col = "Counterparty"
         prod_col = "Product2BuyBack" if "Product2BuyBack" in source.columns else "Product"
     elif not df.empty and "Counterparty" in df.columns:

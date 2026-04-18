@@ -108,7 +108,6 @@ def _aggregate_slice(
     n_deals = daily_pnl.shape[0]
     n_mask_days = mask.sum()
 
-    pnl = daily_pnl[:, mask].sum(axis=1)
     nom_days = nominal_daily[:, mask].sum(axis=1)
     nom_avg = nom_days / n_cal_days if n_cal_days > 0 else np.zeros(n_deals)
 
@@ -117,7 +116,6 @@ def _aggregate_slice(
     safe_nom = np.where(nom_days == 0, np.nan, nom_days)
 
     out = {
-        "PnL": pnl,
         "Nominal": nom_avg,
         "nominal_days": nom_days,
         "OISfwd": ois_x_nom / safe_nom,
@@ -135,7 +133,7 @@ def _aggregate_slice(
         fund = (nom_slice * funding_slice * d_i[np.newaxis, :] / mm_slice).sum(axis=1)
         out["GrossCarry"] = gross
 
-        # Simple: OIS forward, linear (WASP dailyFwdRate, MESA AGG)
+        # Simple: linear funding − rate, follows funding_source config (OIS or carry)
         out["FundingCost_Simple"] = fund
         out["PnL_Simple"] = fund - gross
         fund_x_nom = (funding_slice * nom_slice).sum(axis=1)
@@ -143,14 +141,12 @@ def _aggregate_slice(
 
         # Compounded: value-date cumulative factors (preferred) or per-month fallback
         if carry_factor_month is not None and rate_factor_month is not None:
-            # From cumulative WASP carryCompounded(VD, month_end)
             total_d = d_i.sum()
             safe_total_d = total_d if total_d > 0 else 1.0
             out["FundingCost_Compounded"] = nom_avg * (carry_factor_month - 1.0)
             out["PnL_Compounded"] = nom_avg * (carry_factor_month - rate_factor_month)
             out["FundingRate_Compounded"] = (carry_factor_month - 1.0) * mm_slice[:, 0] / safe_total_d
         elif carry_funding_daily is not None:
-            # Fallback: per-month product (for tests without cumulative data)
             carry_slice = carry_funding_daily[:, mask]
             rate_factors = 1.0 + rate_slice * d_i[np.newaxis, :] / mm_slice
             carry_factors = 1.0 + carry_slice * d_i[np.newaxis, :] / mm_slice
@@ -163,6 +159,9 @@ def _aggregate_slice(
         zeros = np.zeros(n_deals)
         for k in ("GrossCarry", "FundingCost_Simple", "PnL_Simple", "FundingRate_Simple"):
             out[k] = zeros
+    else:
+        # No funding context — derive PnL_Simple from precomputed daily P&L
+        out["PnL_Simple"] = daily_pnl[:, mask].sum(axis=1)
 
     has_compounded = "FundingCost_Compounded" in out
     if not has_compounded and (carry_funding_daily is not None or carry_factor_month is not None):
@@ -406,7 +405,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     agg_spec = {
         "Amount": ("Amount", "sum") if "Amount" in strat.columns else ("Nominal", "sum"),
         "Nominal": ("Nominal", "sum"),
-        "PnL": ("PnL", "sum"),
+        "PnL_Simple": ("PnL_Simple", "sum"),
     }
     if has_compounded:
         agg_spec["PnL_Compounded"] = ("PnL_Compounded", "sum")
@@ -426,7 +425,7 @@ def compute_strategy_pnl(monthly: pd.DataFrame) -> pd.DataFrame:
     # -- Step 2: Pivot by Product (§10.2) --
     idx_cols = ["Périmètre TOTAL", "Strategy IAS", "Currency", "Month", "Days in Month", "PnL_Type"]
     idx_cols = [c for c in idx_cols if c in agg.columns]
-    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL", "PnL_Compounded"]
+    pivot_vals = ["Amount", "Nominal", "Clientrate", "EqOisRate", "CocRate", "OISfwd", "YTM", "PnL_Simple", "PnL_Compounded"]
     present_vals = [v for v in pivot_vals if v in agg.columns]
 
     pivoted = pd.pivot_table(

@@ -143,7 +143,7 @@ class TestFixedDepositCHF:
         expected_daily = 10_000_000 * (0.0150 - 0.0100) / 360
         expected_april = expected_daily * 30
 
-        actual = apr_total["PnL"].iloc[0]
+        actual = apr_total["PnL_Simple"].iloc[0]
         assert abs(actual - expected_april) < 0.01, f"Expected {expected_april:.2f}, got {actual:.2f}"
 
     def test_may_31_days(self):
@@ -161,7 +161,7 @@ class TestFixedDepositCHF:
         expected_daily = 10_000_000 * 0.005 / 360
         expected_may = expected_daily * 31
 
-        actual = may_total["PnL"].iloc[0]
+        actual = may_total["PnL_Simple"].iloc[0]
         assert abs(actual - expected_may) < 0.01
 
     def test_negative_spread_means_loss(self):
@@ -179,7 +179,7 @@ class TestFixedDepositCHF:
         # OIS (1.00%) < ClientRate (2.00%) → negative PnL
         expected_daily = 10_000_000 * (0.0100 - 0.0200) / 360
         expected = expected_daily * 30
-        actual = apr_total["PnL"].iloc[0]
+        actual = apr_total["PnL_Simple"].iloc[0]
         assert actual < 0
         assert abs(actual - expected) < 0.01
 
@@ -207,7 +207,7 @@ class TestGBPDayCount:
         #   Daily PnL = 5_000_000 × (0.045 − 0.040) / 365 = 684.9315 per day
         #   April (30 days) → 30 × 684.9315 = 20547.945
         expected = 5_000_000 * (0.045 - 0.040) / 365 * 30
-        actual = apr_total["PnL"].iloc[0]
+        actual = apr_total["PnL_Simple"].iloc[0]
         assert abs(actual - expected) < 0.01
 
     def test_gbp_vs_chf_same_deal(self):
@@ -223,8 +223,8 @@ class TestGBPDayCount:
         chf_apr = chf[chf["Month"].astype(str) == "2026-04"]
         gbp_apr = gbp[gbp["Month"].astype(str) == "2026-04"]
 
-        chf_pnl = chf_apr[chf_apr["PnL_Type"] == "Total"]["PnL"].iloc[0]
-        gbp_pnl = gbp_apr[gbp_apr["PnL_Type"] == "Total"]["PnL"].iloc[0]
+        chf_pnl = chf_apr[chf_apr["PnL_Type"] == "Total"]["PnL_Simple"].iloc[0]
+        gbp_pnl = gbp_apr[gbp_apr["PnL_Type"] == "Total"]["PnL_Simple"].iloc[0]
 
         ratio = chf_pnl / gbp_pnl
         # CHF uses 360 divisor, GBP uses 365 → CHF daily PnL is higher
@@ -258,7 +258,7 @@ class TestBondDayCount:
         # Daily PnL = 20M × (0.015 − 0.020) / 360 = -277.78 per day
         # April 30d → -8333.33
         expected = 20_000_000 * (0.015 - 0.020) / 360 * 30
-        actual = apr_total["PnL"].iloc[0]
+        actual = apr_total["PnL_Simple"].iloc[0]
         assert abs(actual - expected) < 0.01
 
 
@@ -285,7 +285,7 @@ class TestMidMonthMaturity:
         # Daily PnL = 10M × (0.02 − 0.01) / 360 = 277.78
         # 15 days → 4166.67
         expected = 10_000_000 * 0.01 / 360 * 15
-        actual = apr_total["PnL"].iloc[0]
+        actual = apr_total["PnL_Simple"].iloc[0]
         assert abs(actual - expected) < 0.01
 
     def test_zero_after_maturity(self):
@@ -299,7 +299,7 @@ class TestMidMonthMaturity:
         may = monthly[monthly["Month"].astype(str) == "2026-05"]
         may_total = may[may["PnL_Type"] == "Total"] if "PnL_Type" in may.columns else may
 
-        assert abs(may_total["PnL"].iloc[0]) < 0.001
+        assert abs(may_total["PnL_Simple"].iloc[0]) < 0.001
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -460,9 +460,9 @@ class TestRealizedForecastSplit:
         monthly = _run_single_deal_pnl(deal, ois_rate=0.0200, date_rates=date_rates)
 
         apr = monthly[monthly["Month"].astype(str) == "2026-04"]
-        total = apr[apr["PnL_Type"] == "Total"]["PnL"].iloc[0]
-        realized = apr[apr["PnL_Type"] == "Realized"]["PnL"].iloc[0]
-        forecast = apr[apr["PnL_Type"] == "Forecast"]["PnL"].iloc[0]
+        total = apr[apr["PnL_Type"] == "Total"]["PnL_Simple"].iloc[0]
+        realized = apr[apr["PnL_Type"] == "Realized"]["PnL_Simple"].iloc[0]
+        forecast = apr[apr["PnL_Type"] == "Forecast"]["PnL_Simple"].iloc[0]
 
         daily_pnl = 10_000_000 * 0.01 / 360
 
@@ -528,11 +528,11 @@ class TestShockSensitivity:
         shock_apr = shocked[(shocked["Month"].astype(str) == "2026-04") & (shocked["PnL_Type"] == "Total")]
 
         # +50bp OIS → more PnL for deposit holder
-        assert shock_apr["PnL"].iloc[0] > base_apr["PnL"].iloc[0]
+        assert shock_apr["PnL_Simple"].iloc[0] > base_apr["PnL_Simple"].iloc[0]
 
         # Delta should be exactly: Nominal × 0.0050 / 360 × 30 days
         expected_delta = 10_000_000 * 0.0050 / 360 * 30
-        actual_delta = shock_apr["PnL"].iloc[0] - base_apr["PnL"].iloc[0]
+        actual_delta = shock_apr["PnL_Simple"].iloc[0] - base_apr["PnL_Simple"].iloc[0]
         assert abs(actual_delta - expected_delta) < 0.01
 
     def test_loan_sensitivity_is_opposite(self):
@@ -550,7 +550,7 @@ class TestShockSensitivity:
         shock_apr = shocked[(shocked["Month"].astype(str) == "2026-04") & (shocked["PnL_Type"] == "Total")]
 
         # Loan: negative nominal → higher OIS → more negative PnL
-        assert shock_apr["PnL"].iloc[0] < base_apr["PnL"].iloc[0]
+        assert shock_apr["PnL_Simple"].iloc[0] < base_apr["PnL_Simple"].iloc[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

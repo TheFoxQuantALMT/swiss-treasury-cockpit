@@ -15,15 +15,21 @@ def export_dashboard_to_excel(
     dashboard_data: dict,
     output_path: Path | str,
     date_run: str = "",
+    deals: "pd.DataFrame | None" = None,
 ) -> Path | None:
     """Export dashboard data dict to Excel workbook.
 
-    Creates sheets for: Summary, Sensitivity, EVE, Alerts, Limits, FTP.
+    Creates sheets for: Summary, Sensitivity, EVE, Alerts, Limits, FTP, plus a
+    bank-native ``Synthesis`` sheet (rolled up by IAS Book × @Category2) when
+    the deals frame carries that taxonomy.
 
     Args:
         dashboard_data: Dict from build_pnl_dashboard_data().
         output_path: Output .xlsx path.
         date_run: Date string for metadata.
+        deals: Optional deals DataFrame carrying Dealid/IAS Book/Category2
+            (bank-native input). Enables the Synthesis sheet and enriches
+            Deal PnL with the taxonomy columns.
 
     Returns:
         Path to generated file, or None on failure.
@@ -99,23 +105,55 @@ def export_dashboard_to_excel(
             if ftp.get("has_data") and ftp.get("by_perimeter"):
                 pd.DataFrame(ftp["by_perimeter"]).to_excel(writer, sheet_name="FTP", index=False)
 
-            # Deal-level P&L
-            deal_pnl = dashboard_data.get("pnl_by_deal_df")
-            if deal_pnl is not None and not deal_pnl.empty:
+            # Deal-level P&L — enrich with bank-native taxonomy when available
+            deal_pnl_raw = dashboard_data.get("pnl_by_deal_df")
+            has_taxonomy = (
+                deals is not None
+                and {"Dealid", "IAS Book", "Category2"}.issubset(deals.columns)
+            )
+            if deal_pnl_raw is not None and not deal_pnl_raw.empty:
+                deal_pnl = deal_pnl_raw
+                if has_taxonomy:
+                    tax = (
+                        deals[["Dealid", "IAS Book", "Category2"]]
+                        .drop_duplicates(subset=["Dealid"])
+                        .assign(Dealid=lambda d: d["Dealid"].astype(str))
+                    )
+                    deal_pnl = deal_pnl_raw.assign(
+                        Dealid=lambda d: d["Dealid"].astype(str)
+                    ).merge(tax, on="Dealid", how="left")
                 export_cols = [c for c in [
                     "Dealid", "Counterparty", "Currency", "Product", "Direction",
-                    "Périmètre TOTAL", "Shock", "Month",
+                    "Périmètre TOTAL", "IAS Book", "Category2", "Shock", "Month",
                     "Nominal", "Amount", "Maturitydate", "is_floating",
                     "Clientrate", "OISfwd", "RateRef",
                     "GrossCarry", "FundingCost_Simple", "PnL_Simple",
                     "FundingRate_Simple",
                     "FundingCost_Compounded", "PnL_Compounded",
                     "FundingRate_Compounded",
-                    "PnL",
                 ] if c in deal_pnl.columns]
                 deal_pnl[export_cols].to_excel(
                     writer, sheet_name="Deal PnL", index=False,
                 )
+
+            # Synthesis (bank-native): IAS Book × @Category2 monthly roll-up,
+            # plus a second sheet broken down by Currency when deals carries it.
+            if deal_pnl_raw is not None and not deal_pnl_raw.empty and has_taxonomy:
+                try:
+                    from cockpit.export.synthesis import build_synthesis
+                    synthesis = build_synthesis(deal_pnl_raw, deals, shock="0")
+                    if not synthesis.empty:
+                        synthesis.to_excel(writer, sheet_name="Synthesis", index=False)
+                    if "Currency" in deals.columns:
+                        synthesis_ccy = build_synthesis(
+                            deal_pnl_raw, deals, shock="0", by_currency=True,
+                        )
+                        if not synthesis_ccy.empty:
+                            synthesis_ccy.to_excel(
+                                writer, sheet_name="Synthesis by Currency", index=False,
+                            )
+                except Exception as e:
+                    print(f"[excel-export] Synthesis sheet skipped: {e}")
 
             # Metadata
             meta = pd.DataFrame([{"date_run": date_run, "export_type": "dashboard"}])

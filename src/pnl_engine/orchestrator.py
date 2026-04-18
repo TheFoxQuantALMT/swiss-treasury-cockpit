@@ -29,6 +29,7 @@ from pnl_engine.config import CURRENCY_TO_OIS, FUNDING_SOURCE, NON_STRATEGY_PROD
 from pnl_engine.curves import CurveCache, clear_carry_cache, load_daily_curves, overlay_wirp
 from pnl_engine.engine import (
     _build_ois_matrix,
+    _mock_curves_from_wirp,
     _month_columns,
     _resolve_rate_ref,
     aggregate_to_monthly,
@@ -244,6 +245,11 @@ class PnlEngine:
         self.fwdOIS0 = self._load_ois_curves(shock="0")
         self.fwdWIRP = overlay_wirp(self.fwdOIS0, self.wirp)
 
+        # Reset carry cache once per run. Keys are (currency, start, end) and
+        # carry values are shock-independent, so clearing per shock would force
+        # 60×N_currency redundant WASP fetches per extra shock.
+        clear_carry_cache()
+
         # Run all shocks
         deal_summaries = []
         shock_results = []
@@ -260,40 +266,35 @@ class PnlEngine:
 
         return self.pnlAll
 
-    def _load_ois_curves(self, shock: str) -> pd.DataFrame:
-        """Load OIS daily forward curves for a given shock, with caching."""
-        cache_key = ("ois", str(self.dateRates), shock)
+    def _load_curves_with_wirp_fallback(
+        self, kind: str, indices: list[str], shock: str,
+    ) -> pd.DataFrame:
+        """Load daily forward curves with WIRP mock fallback when WASP is down.
+
+        Why: matches the legacy `run_all_shocks` path so the class-based
+        orchestrator degrades gracefully in WASP-less environments.
+        """
+        cache_key = (kind, str(self.dateRates), shock)
         cached = self._fwd_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        curves = load_daily_curves(
-            date=self.dateRates,
-            indices=self._ois_indices,
-            shock=shock,
-        )
+        try:
+            curves = load_daily_curves(date=self.dateRates, indices=indices, shock=shock)
+        except RuntimeError:
+            logger.info("WASP unavailable, building mock %s curves from WIRP (shock=%s)", kind, shock)
+            curves = _mock_curves_from_wirp(self.wirp, self._days, shock=shock)
 
         self._fwd_cache.put(cache_key, curves)
         return curves
+
+    def _load_ois_curves(self, shock: str) -> pd.DataFrame:
+        return self._load_curves_with_wirp_fallback("ois", self._ois_indices, shock)
 
     def _load_ref_curves(self, shock: str) -> Optional[pd.DataFrame]:
-        """Load non-OIS floating reference rate curves, with caching."""
         if not self._float_wasp_indices:
             return None
-
-        cache_key = ("ref", str(self.dateRates), shock)
-        cached = self._fwd_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        curves = load_daily_curves(
-            date=self.dateRates,
-            indices=self._float_wasp_indices,
-            shock=shock,
-        )
-
-        self._fwd_cache.put(cache_key, curves)
-        return curves
+        return self._load_curves_with_wirp_fallback("ref", self._float_wasp_indices, shock)
 
     def update_pnl(
         self,
@@ -326,6 +327,9 @@ class PnlEngine:
         ref_curves = self._load_ref_curves(shock=Shock)
         rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
 
+        # Broadcast to 2D so `_aggregate_slice` can do `mm_daily[:, mask]`.
+        mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
+
         # Apply NMD deposit beta if profiles provided
         if self._nmd_profiles is not None and not self._nmd_profiles.empty:
             from pnl_engine.nmd import apply_deposit_beta
@@ -343,7 +347,7 @@ class PnlEngine:
             self._nominal_daily,
             ois_matrix,
             rate_matrix,
-            self._mm[:, np.newaxis],
+            mm_broadcast,
             accrual_days=self._accrual_days,
         )
 
@@ -358,7 +362,6 @@ class PnlEngine:
         )
 
         # --- Cumulative factors for value-date compounding ---
-        clear_carry_cache()
         try:
             cum_carry, _carry_boundaries = build_cumulative_carry_factors(
                 self._deals_use, self._days,
@@ -369,6 +372,11 @@ class PnlEngine:
                 self._alive_mask, self._days,
                 date_rates=self._dateRates_ts,
             )
+        except RuntimeError as exc:
+            # WASP unavailable — common in dev/test; don't dump stack trace.
+            logger.info("Cumulative factor build skipped (%s) — using per-month compounding", exc)
+            cum_carry = None
+            cum_rate = None
         except Exception:
             logger.warning("Cumulative factor build failed — falling back to per-month compounding", exc_info=True)
             cum_carry = None
@@ -418,7 +426,7 @@ class PnlEngine:
             | ((~has_total) & monthly["PnL_Type"].isin(["Realized", "Forecast"]))
         ]
         if not total_rows.empty and deal_summary_cols:
-            agg_spec = {"PnL": ("PnL", "sum"), "Nominal": ("Nominal", "mean")}
+            agg_spec = {"Nominal": ("Nominal", "mean")}
             # CoC metrics — sum (already monthly totals from _aggregate_slice)
             for col in ["GrossCarry", "FundingCost_Simple", "PnL_Simple",
                         "FundingCost_Compounded", "PnL_Compounded"]:
@@ -655,7 +663,11 @@ class PnlEngine:
         if irs.empty:
             return pd.DataFrame()
 
-        book2 = compute_book2_mtm(irs, self.dateRates, shock)
+        try:
+            book2 = compute_book2_mtm(irs, self.dateRates, shock)
+        except RuntimeError as exc:
+            logger.info("BOOK2 MTM skipped (WASP unavailable): %s", exc)
+            return pd.DataFrame()
         if book2.empty or "MTM" not in book2.columns:
             return pd.DataFrame()
 
@@ -794,7 +806,7 @@ class PnlEngine:
         # broadcast don't depend on the OIS shift.
         ref_curves = self._load_ref_curves(shock="0")
         rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
-        mm_broadcast = self._mm[:, np.newaxis]
+        mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
         currencies_present = set(self._deals_use["Currency"].unique())
 
         for sc_name in scenario_names:

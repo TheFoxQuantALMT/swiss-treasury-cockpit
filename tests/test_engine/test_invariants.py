@@ -151,9 +151,9 @@ class TestTotalEqualsRealizedPlusForecast:
             deal_rows = current[current["deal_idx"] == deal_idx]
             types = set(deal_rows["PnL_Type"])
             if {"Total", "Realized", "Forecast"} <= types:
-                total = deal_rows[deal_rows["PnL_Type"] == "Total"]["PnL"].iloc[0]
-                realized = deal_rows[deal_rows["PnL_Type"] == "Realized"]["PnL"].iloc[0]
-                forecast = deal_rows[deal_rows["PnL_Type"] == "Forecast"]["PnL"].iloc[0]
+                total = deal_rows[deal_rows["PnL_Type"] == "Total"]["PnL_Simple"].iloc[0]
+                realized = deal_rows[deal_rows["PnL_Type"] == "Realized"]["PnL_Simple"].iloc[0]
+                forecast = deal_rows[deal_rows["PnL_Type"] == "Forecast"]["PnL_Simple"].iloc[0]
                 assert abs(total - (realized + forecast)) < 0.01, (
                     f"Deal {deal_idx}: Total={total:.4f} != Realized({realized:.4f}) + Forecast({forecast:.4f})"
                 )
@@ -297,7 +297,7 @@ class TestZeroNominalZeroPnl:
         df = engine_result["monthly_total"]
         zero_nom = df[df["Nominal"] == 0]
         if not zero_nom.empty:
-            assert (zero_nom["PnL"].abs() < 0.001).all(), (
+            assert (zero_nom["PnL_Simple"].abs() < 0.001).all(), (
                 "Found non-zero P&L rows with zero nominal"
             )
 
@@ -318,7 +318,7 @@ class TestPnlSignConvention:
         for _, row in deposits.iterrows():
             ois = row.get("OISfwd", 0)
             rate = row.get("RateRef", 0)
-            pnl = row["PnL"]
+            pnl = row["PnL_Simple"]
             if pd.notna(ois) and pd.notna(rate) and ois > rate + 1e-6:
                 assert pnl > -0.01, (
                     f"Deposit deal {row['deal_idx']}: OIS={ois:.4f} > RateRef={rate:.4f} "
@@ -356,7 +356,7 @@ class TestBackwardCompatibility:
             ]
             if not match.empty:
                 # Only the current month has Total rows in split mode
-                assert abs(row_ns["PnL"] - match["PnL"].iloc[0]) < 0.01, (
+                assert abs(row_ns["PnL_Simple"] - match["PnL_Simple"].iloc[0]) < 0.01, (
                     f"Deal {deal_idx}, Month {month}: "
-                    f"no-split={row_ns['PnL']:.4f} != split-total={match['PnL'].iloc[0]:.4f}"
+                    f"no-split={row_ns['PnL_Simple']:.4f} != split-total={match['PnL_Simple'].iloc[0]:.4f}"
                 )

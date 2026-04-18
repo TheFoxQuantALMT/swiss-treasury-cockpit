@@ -223,11 +223,10 @@ def test_no_coc_without_funding(april_days):
 
     monthly = aggregate_to_monthly(pnl, nom, ois, rate, april_days)
 
-    assert "PnL" in monthly.columns
+    assert "PnL_Simple" in monthly.columns
     assert "Nominal" in monthly.columns
     assert "GrossCarry" not in monthly.columns
     assert "FundingCost_Simple" not in monthly.columns
-    assert "PnL_Simple" not in monthly.columns
     assert "PnL_Compounded" not in monthly.columns
     assert "FundingRate_Simple" not in monthly.columns
 

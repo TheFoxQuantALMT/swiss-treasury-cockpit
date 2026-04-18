@@ -449,7 +449,7 @@ def cmd_render_pnl(
         try:
             from cockpit.export.excel_export import export_dashboard_to_excel
             xlsx_path = output_dir / f"{date}_pnl_dashboard.xlsx"
-            export_dashboard_to_excel(dashboard_data, xlsx_path, date)
+            export_dashboard_to_excel(dashboard_data, xlsx_path, date, deals=pnl.pnlData)
             print(f"[render-pnl] Excel export: {xlsx_path}")
         except Exception as e:
             print(f"[render-pnl] Warning: Excel export failed: {e}")

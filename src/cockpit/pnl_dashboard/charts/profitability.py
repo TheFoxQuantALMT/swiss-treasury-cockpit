@@ -39,7 +39,7 @@ def _build_hedge_effectiveness(
 
     if pnl_by_deal is not None and not pnl_by_deal.empty and "Dealid" in pnl_by_deal.columns:
         source = pnl_by_deal[pnl_by_deal["Shock"] == "0"].copy()
-        pnl_col = "PnL"
+        pnl_col = "PnL_Simple"
     elif not df.empty and "Dealid" in df.columns:
         source = df[(df["Indice"] == "PnL_Simple") & (df["Shock"] == "0")].copy()
     else:
@@ -284,7 +284,7 @@ def _build_deal_explorer(
                 "summary_stats": {}, "by_product": {}, "by_currency": {}}
 
     agg_cols = {}
-    for col in ["PnL", "GrossCarry", "FundingCost_Simple"]:
+    for col in ["PnL_Simple", "GrossCarry", "FundingCost_Simple"]:
         if col in by_deal.columns:
             agg_cols[col] = (col, "sum")
     for col in ["Nominal", "OISfwd", "RateRef"]:
@@ -311,10 +311,10 @@ def _build_deal_explorer(
         agg["Spread_bps"] = 0.0
 
     # Build deal list (capped at 200 for HTML performance)
-    if "PnL" not in agg.columns:
+    if "PnL_Simple" not in agg.columns:
         return {"has_data": False, "deals": [], "summary": {}, "histogram": {}, "maturity_profile": {}}
-    agg["PnL"] = agg["PnL"].fillna(0)
-    agg_sorted = agg.sort_values("PnL", key=abs, ascending=False)
+    agg["PnL_Simple"] = agg["PnL_Simple"].fillna(0)
+    agg_sorted = agg.sort_values("PnL_Simple", key=abs, ascending=False)
     deal_list = []
     for _, row in agg_sorted.head(200).iterrows():
         d = {
@@ -324,7 +324,7 @@ def _build_deal_explorer(
             "product": str(row.get("Product", "")),
             "direction": str(row.get("Direction", "")),
             "perimeter": str(row.get("P\u00e9rim\u00e8tre TOTAL", "")),
-            "pnl": round(float(row.get("PnL", 0)), 0),
+            "pnl": round(float(row.get("PnL_Simple", 0)), 0),
             "nominal": round(float(row.get("Nominal", 0)), 0),
             "ois": round(float(row.get("OISfwd", 0)) * 100, 4),
             "rate_ref": round(float(row.get("RateRef", 0)) * 100, 4),
@@ -341,7 +341,7 @@ def _build_deal_explorer(
         deal_list.append(d)
 
     # P&L histogram (binned)
-    pnl_values = agg["PnL"].dropna().values
+    pnl_values = agg["PnL_Simple"].dropna().values
     histogram = {"bins": [], "counts": []}
     if len(pnl_values) > 0:
         n_bins = min(30, max(10, len(pnl_values) // 5))
@@ -366,20 +366,20 @@ def _build_deal_explorer(
             maturity_profile["volumes"] = [round(float(v), 0) for v in grp["volume"].values[:20]]
 
     # Summary stats
-    total_pnl = float(agg["PnL"].sum())
-    positive = agg[agg["PnL"] > 0]
-    negative = agg[agg["PnL"] <= 0]
+    total_pnl = float(agg["PnL_Simple"].sum())
+    positive = agg[agg["PnL_Simple"] > 0]
+    negative = agg[agg["PnL_Simple"] <= 0]
     summary_stats = {
         "total_deals": len(agg),
         "total_pnl": round(total_pnl, 0),
-        "avg_pnl": round(float(agg["PnL"].mean()), 0) if len(agg) > 0 else 0,
-        "median_pnl": round(float(agg["PnL"].median()), 0) if len(agg) > 0 else 0,
+        "avg_pnl": round(float(agg["PnL_Simple"].mean()), 0) if len(agg) > 0 else 0,
+        "median_pnl": round(float(agg["PnL_Simple"].median()), 0) if len(agg) > 0 else 0,
         "positive_count": len(positive),
         "negative_count": len(negative),
-        "positive_pnl": round(float(positive["PnL"].sum()), 0) if len(positive) > 0 else 0,
-        "negative_pnl": round(float(negative["PnL"].sum()), 0) if len(negative) > 0 else 0,
-        "top1_pct": round(float(agg_sorted.head(1)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
-        "top10_pct": round(float(agg_sorted.head(10)["PnL"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
+        "positive_pnl": round(float(positive["PnL_Simple"].sum()), 0) if len(positive) > 0 else 0,
+        "negative_pnl": round(float(negative["PnL_Simple"].sum()), 0) if len(negative) > 0 else 0,
+        "top1_pct": round(float(agg_sorted.head(1)["PnL_Simple"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
+        "top10_pct": round(float(agg_sorted.head(10)["PnL_Simple"].sum()) / total_pnl * 100, 1) if total_pnl and not np.isnan(total_pnl) and total_pnl != 0 else 0,
     }
 
     # By product breakdown
@@ -388,7 +388,7 @@ def _build_deal_explorer(
         for prod, grp in agg.groupby("Product"):
             by_product[str(prod)] = {
                 "count": len(grp),
-                "pnl": round(float(grp["PnL"].sum()), 0),
+                "pnl": round(float(grp["PnL_Simple"].sum()), 0),
                 "nominal": round(float(grp["Nominal"].sum()), 0),
                 "color": PRODUCT_COLORS.get(str(prod), "#8b949e"),
             }
@@ -399,7 +399,7 @@ def _build_deal_explorer(
         for ccy, grp in agg.groupby("Currency"):
             by_currency[str(ccy)] = {
                 "count": len(grp),
-                "pnl": round(float(grp["PnL"].sum()), 0),
+                "pnl": round(float(grp["PnL_Simple"].sum()), 0),
                 "nominal": round(float(grp["Nominal"].sum()), 0),
                 "color": CURRENCY_COLORS.get(str(ccy), "#8b949e"),
             }

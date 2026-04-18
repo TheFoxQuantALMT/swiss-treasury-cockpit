@@ -22,7 +22,7 @@ def _make_pnl_by_deal(rows: list[tuple[str, str, float]], shock: str = "0") -> p
     """rows: list of (Dealid, 'YYYY-MM', PnL)."""
     return pd.DataFrame(
         [
-            {"Dealid": d, "Month": pd.Period(m, freq="M"), "PnL": v, "Shock": shock}
+            {"Dealid": d, "Month": pd.Period(m, freq="M"), "PnL_Simple": v, "Shock": shock}
             for d, m, v in rows
         ]
     )
@@ -143,6 +143,58 @@ class TestBuildSynthesis:
                 pd.DataFrame({"Dealid": ["D1"]}),
                 _make_deals({"D1": ("BOOK1", "OPP_CASH")}),
                 shock="0",
+            )
+
+
+class TestBuildSynthesisByCurrency:
+    def _make_pnl_multi_ccy(self) -> pd.DataFrame:
+        return pd.DataFrame([
+            {"Dealid": "D1", "Month": pd.Period("2026-04", "M"), "PnL_Simple": 100.0, "Shock": "0"},
+            {"Dealid": "D2", "Month": pd.Period("2026-04", "M"), "PnL_Simple": 200.0, "Shock": "0"},
+            {"Dealid": "D3", "Month": pd.Period("2026-04", "M"), "PnL_Simple": 50.0, "Shock": "0"},
+        ])
+
+    def _make_deals_multi_ccy(self) -> pd.DataFrame:
+        return pd.DataFrame([
+            {"Dealid": "D1", "IAS Book": "BOOK1", "Category2": "OPR_FVH", "Currency": "CHF"},
+            {"Dealid": "D2", "IAS Book": "BOOK1", "Category2": "OPR_FVH", "Currency": "EUR"},
+            {"Dealid": "D3", "IAS Book": "BOOK2", "Category2": "IRS_FVH", "Currency": "CHF"},
+        ])
+
+    def test_adds_currency_column(self):
+        out = build_synthesis(
+            self._make_pnl_multi_ccy(), self._make_deals_multi_ccy(),
+            shock="0", by_currency=True,
+        )
+        assert list(out.columns[:3]) == ["IAS Book", "Category2", "Currency"]
+
+    def test_splits_pnl_by_currency(self):
+        out = build_synthesis(
+            self._make_pnl_multi_ccy(), self._make_deals_multi_ccy(),
+            shock="0", by_currency=True,
+        )
+        chf_fvh = out[(out["IAS Book"] == "BOOK1") & (out["Category2"] == "OPR_FVH") & (out["Currency"] == "CHF")]
+        eur_fvh = out[(out["IAS Book"] == "BOOK1") & (out["Category2"] == "OPR_FVH") & (out["Currency"] == "EUR")]
+        assert chf_fvh["2026/04"].iloc[0] == 100.0
+        assert eur_fvh["2026/04"].iloc[0] == 200.0
+
+    def test_fvh_all_row_per_currency(self):
+        out = build_synthesis(
+            self._make_pnl_multi_ccy(), self._make_deals_multi_ccy(),
+            shock="0", by_currency=True,
+        )
+        fvh_all = out[out["Category2"] == FVH_ALL_LABEL]
+        fvh_ccys = set(fvh_all["Currency"])
+        assert "CHF" in fvh_ccys and "EUR" in fvh_ccys
+        fvh_chf = fvh_all[fvh_all["Currency"] == "CHF"]
+        assert fvh_chf["2026/04"].iloc[0] == 150.0  # D1 (BOOK1 OPR_FVH) + D3 (BOOK2 IRS_FVH)
+
+    def test_rejects_missing_currency(self):
+        with pytest.raises(ValueError, match="Currency"):
+            build_synthesis(
+                self._make_pnl_multi_ccy(),
+                _make_deals({"D1": ("BOOK1", "OPR_FVH")}),
+                shock="0", by_currency=True,
             )
 
 

@@ -78,13 +78,13 @@ def compute_pnl_explain(
     existing_ids = curr_ids & prev_ids
 
     # Bucket P&L: new, matured, existing
-    new_deal_pnl = float(curr_by_deal[curr_by_deal["Dealid"].isin(new_ids)]["PnL"].sum()) if new_ids else 0.0
-    matured_deal_pnl = float(-prev_by_deal[prev_by_deal["Dealid"].isin(matured_ids)]["PnL"].sum()) if matured_ids else 0.0
+    new_deal_pnl = float(curr_by_deal[curr_by_deal["Dealid"].isin(new_ids)]["PnL_Simple"].sum()) if new_ids else 0.0
+    matured_deal_pnl = float(-prev_by_deal[prev_by_deal["Dealid"].isin(matured_ids)]["PnL_Simple"].sum()) if matured_ids else 0.0
 
     existing_prev_pnl = prev_by_deal[prev_by_deal["Dealid"].isin(existing_ids)]
     existing_curr_pnl = curr_by_deal[curr_by_deal["Dealid"].isin(existing_ids)]
-    existing_prev_by_ccy = existing_prev_pnl.groupby("Currency")["PnL"].sum().to_dict() if "Currency" in existing_prev_pnl.columns else {}
-    existing_curr_by_ccy = existing_curr_pnl.groupby("Currency")["PnL"].sum().to_dict() if "Currency" in existing_curr_pnl.columns else {}
+    existing_prev_by_ccy = existing_prev_pnl.groupby("Currency")["PnL_Simple"].sum().to_dict() if "Currency" in existing_prev_pnl.columns else {}
+    existing_curr_by_ccy = existing_curr_pnl.groupby("Currency")["PnL_Simple"].sum().to_dict() if "Currency" in existing_curr_pnl.columns else {}
 
     # Per-currency rate snapshots from pnlAllS (nominal-weighted avg across horizon)
     curr_s = _safe_reset(curr_pnl_all_s)
@@ -148,8 +148,8 @@ def compute_pnl_explain(
         }
 
     # Total P&L (reconciles by construction: delta = new + matured + rate + spread + residual)
-    total_curr = float(curr_by_deal["PnL"].sum())
-    total_prev = float(prev_by_deal["PnL"].sum())
+    total_curr = float(curr_by_deal["PnL_Simple"].sum())
+    total_prev = float(prev_by_deal["PnL_Simple"].sum())
     total_delta = total_curr - total_prev
 
     # Build waterfall steps
@@ -173,7 +173,7 @@ def compute_pnl_explain(
                 "counterparty": str(row.get("Counterparty", "")),
                 "currency": str(row.get("Currency", "")),
                 "product": str(row.get("Product", "")),
-                "pnl": round(float(row["PnL"]), 0),
+                "pnl": round(float(row["PnL_Simple"]), 0),
                 "nominal": round(float(row.get("Nominal", 0)), 0),
             })
     new_deals_detail.sort(key=lambda x: abs(x["pnl"]), reverse=True)
@@ -187,7 +187,7 @@ def compute_pnl_explain(
                 "counterparty": str(row.get("Counterparty", "")),
                 "currency": str(row.get("Currency", "")),
                 "product": str(row.get("Product", "")),
-                "pnl_lost": round(-float(row["PnL"]), 0),
+                "pnl_lost": round(-float(row["PnL_Simple"]), 0),
                 "nominal": round(float(row.get("Nominal", 0)), 0),
             })
     matured_deals_detail.sort(key=lambda x: abs(x["pnl_lost"]), reverse=True)
@@ -227,7 +227,7 @@ def _aggregate_deal_pnl(pnl_by_deal: pd.DataFrame) -> pd.DataFrame:
         return pnl_by_deal
 
     agg = pnl_by_deal.groupby(group_cols).agg(
-        PnL=("PnL", "sum"),
+        PnL_Simple=("PnL_Simple", "sum"),
         Nominal=("Nominal", "mean"),
     ).reset_index()
     return agg

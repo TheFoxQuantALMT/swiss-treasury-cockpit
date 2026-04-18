@@ -44,9 +44,9 @@ def _build_basis_risk(
         shocks = ["-50bp", "-25bp", "-10bp", "+0bp", "+10bp", "+25bp", "+50bp"]
         shock_bps = [-50, -25, -10, 0, 10, 25, 50]
 
-        pnl_col = "PnL" if "PnL" in base.columns else "pnl" if "pnl" in base.columns else None
-        if pnl_col is None:
+        if "PnL_Simple" not in base.columns:
             return {"has_data": False}
+        pnl_col = "PnL_Simple"
 
         for prod in unique_products:
             mask = deals["Product"].str.strip() == prod

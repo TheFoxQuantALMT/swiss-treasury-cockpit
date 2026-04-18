@@ -33,7 +33,7 @@ def test_aggregate_to_monthly_pnl_sums():
     ois = np.full((1, 30), 0.05)
     rate = np.full((1, 30), 0.02)
     result = aggregate_to_monthly(daily_pnl, nominal, ois, rate, days)
-    assert result["PnL"].iloc[0] == 3000.0
+    assert result["PnL_Simple"].iloc[0] == 3000.0
 
 
 def test_aggregate_to_monthly_rate_wavg():
@@ -68,7 +68,7 @@ def test_strategy_pivot_builds_four_legs():
         "Month": [pd.Period("2026-04")] * 3,
         "Nominal": [-50_000_000.0, -12_000_000.0, -12_000_000.0],
         "Amount": [-50_000_000.0, -12_000_000.0, -12_000_000.0],
-        "PnL": [1000.0, 500.0, 200.0],
+        "PnL_Simple": [1000.0, 500.0, 200.0],
         "Clientrate": [0.008, 0.002, 0.002],
         "EqOisRate": [0.005, 0.0, 0.0],
         "YTM": [0.0, 0.0, 0.0],
@@ -95,7 +95,7 @@ def test_strategy_hcd_no_ois_subtraction():
         "Month": [pd.Period("2026-04")] * 2,
         "Nominal": [-50_000_000.0, -12_000_000.0],
         "Amount": [-50_000_000.0, -12_000_000.0],
-        "PnL": [1000.0, 500.0],
+        "PnL_Simple": [1000.0, 500.0],
         "Clientrate": [0.008, 0.002],
         "EqOisRate": [0.005, 0.0],
         "YTM": [0.0, 0.0],
@@ -289,9 +289,9 @@ def test_aggregate_to_monthly_realized_forecast_split():
     types = set(result["PnL_Type"].unique())
     assert types == {"Total", "Realized", "Forecast"}
 
-    total_pnl = result.loc[result["PnL_Type"] == "Total", "PnL"].iloc[0]
-    realized_pnl = result.loc[result["PnL_Type"] == "Realized", "PnL"].iloc[0]
-    forecast_pnl = result.loc[result["PnL_Type"] == "Forecast", "PnL"].iloc[0]
+    total_pnl = result.loc[result["PnL_Type"] == "Total", "PnL_Simple"].iloc[0]
+    realized_pnl = result.loc[result["PnL_Type"] == "Realized", "PnL_Simple"].iloc[0]
+    forecast_pnl = result.loc[result["PnL_Type"] == "Forecast", "PnL_Simple"].iloc[0]
     np.testing.assert_almost_equal(total_pnl, realized_pnl + forecast_pnl, decimal=6)
     assert realized_pnl > 0  # 15 days of positive P&L
     assert forecast_pnl > 0  # 15 days of positive P&L

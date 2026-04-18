@@ -3,8 +3,11 @@
 The bank delivers three files per day under ``YYYYPP/YYYYMMDDVV/``:
 
 1. ``K+EUR Daily Rate PnL GVA_YYYYMMDD.xlsx`` — two sheets, ``Book1_Daily_PnL``
-   (accrual / IAS) and ``Book2_Daily_PnL`` (mark-to-market). Rates are already
-   in decimal. Nominals are already signed per ``DIRECTION_SIDE``.
+   (accrual / IAS) and ``Book2_Daily_PnL`` (mark-to-market). Real exports
+   often store rates as percent and credit spreads as basis points; the
+   parser auto-detects (max |x| > 1.0) and rescales to decimal. Test
+   fixtures use decimal directly. Nominals are already signed per
+   ``DIRECTION_SIDE``.
 2. ``YYYYMMDD_WIRP.xlsx`` — market-implied policy rate expectations keyed by
    bare short names (SARON / ESTR / SOFR / SONIA).
 3. ``YYYYMMDD_rate_schedule.xlsx`` — wide monthly nominal schedule, sheet
@@ -106,10 +109,58 @@ _DEAL_RENAME: dict[str, str] = {
 # Daily P&L workbook parser (both sheets)
 # ---------------------------------------------------------------------------
 
+_HEADER_ANCHORS: tuple[str, ...] = ("Deal ID", "Position Date", "@KeyID")
+
+# Real bank exports use shorter Product codes than the engine's canonical set.
+_PRODUCT_RENAME: dict[str, str] = {
+    "LD": "IAM/LD",
+}
+
+# Real bank exports use plural / mixed-case Category2 spellings.
+_CATEGORY2_RENAME: dict[str, str] = {
+    "OPP_Bonds_ASW": "OPP_Bond_ASW",
+    "OPP_Bonds_nASW": "OPP_Bond_nASW",
+    "OPP_Cash": "OPP_CASH",
+}
+
+# Threshold above which a "rate" column is interpreted as percent and divided
+# by 100. Genuine decimal rates can't exceed 1.0 (= 100%), so any column whose
+# max absolute value clears 1.0 must be percent-encoded.
+_PERCENT_DETECT_THRESHOLD: float = 1.0
+# Rate columns the bank exports as percent (4.875 = 4.875%).
+_PERCENT_RATE_COLUMNS: tuple[str, ...] = ("Clientrate", "EqOisRate", "YTM", "CocRate")
+# Credit Spread FIFO is exported in basis points (8.0 = 8.0 bps = 0.0008).
+_BPS_RATE_COLUMNS: tuple[str, ...] = ("Spread",)
+_RATE_COLUMNS: tuple[str, ...] = _PERCENT_RATE_COLUMNS + _BPS_RATE_COLUMNS
+
+
+def _read_sheet_with_anchored_header(
+    xl: pd.ExcelFile, sheet_name: str, max_scan: int = 5,
+) -> pd.DataFrame:
+    """Read a sheet, locating the header by anchor columns within the first rows.
+
+    Why: bank exports sometimes prepend a blank/title row above the column
+    names, while test fixtures keep headers on row 0. Reads once with
+    header=None and promotes the detected row in-memory.
+    """
+    raw = pd.read_excel(xl, sheet_name=sheet_name, header=None)
+    if raw.empty:
+        return raw
+    header_row = 0
+    for i in range(min(max_scan, len(raw))):
+        row_vals = {str(v).strip() for v in raw.iloc[i].tolist() if pd.notna(v)}
+        if any(anchor in row_vals for anchor in _HEADER_ANCHORS):
+            header_row = i
+            break
+    promoted = raw.iloc[header_row + 1:].reset_index(drop=True)
+    promoted.columns = raw.iloc[header_row].astype(str)
+    return promoted
+
+
 def _parse_one_sheet(xl: pd.ExcelFile, sheet_name: str, book: str,
                      date_run: pd.Timestamp | None) -> pd.DataFrame:
     """Parse a single Book{1,2} sheet into canonical shape."""
-    raw = pd.read_excel(xl, sheet_name=sheet_name)
+    raw = _read_sheet_with_anchored_header(xl, sheet_name)
     rename = {k: v for k, v in _DEAL_RENAME.items() if k in raw.columns}
     df = raw.rename(columns=rename)
 
@@ -144,11 +195,15 @@ def _parse_one_sheet(xl: pd.ExcelFile, sheet_name: str, book: str,
 
     if "Category2" in df.columns:
         valid = _CATEGORY2_BY_BOOK[book]
-        df["Category2"] = df["Category2"].astype(str).str.strip()
+        df["Category2"] = df["Category2"].astype(str).str.strip().replace(_CATEGORY2_RENAME)
         unknown = ~df["Category2"].isin(valid)
         if unknown.any():
-            logger.warning("bank_native(%s): %d rows with unknown @Category2 (kept as-is)",
-                           sheet_name, int(unknown.sum()))
+            logger.warning("bank_native(%s): %d rows with unknown @Category2 (kept as-is): %s",
+                           sheet_name, int(unknown.sum()),
+                           sorted(df.loc[unknown, "Category2"].unique())[:5])
+
+    if "Product" in df.columns:
+        df["Product"] = df["Product"].astype(str).str.strip().replace(_PRODUCT_RENAME)
 
     if "Currency" in df.columns:
         df["Currency"] = df["Currency"].astype(str).str.strip().str.upper()
@@ -167,15 +222,20 @@ def _parse_one_sheet(xl: pd.ExcelFile, sheet_name: str, book: str,
     else:
         df["Périmètre TOTAL"] = "CC"
 
-    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread", "FxRate"]:
+    for col in (*_RATE_COLUMNS, "FxRate"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            # FxRate legitimately ≈ 1; skip the rate-decimal sanity check for it
-            if col != "FxRate":
-                extreme = df[col].abs() > 0.50
-                if extreme.any():
-                    logger.warning("bank_native(%s): %d rows with |%s| > 50%% — are rates in decimal?",
-                                   sheet_name, int(extreme.sum()), col)
+
+    # Real K+EUR exports store rates as percent and spreads as bps; fixtures
+    # are decimal. Detect per-column: |x| > 1.0 means the value is encoded.
+    for col in _PERCENT_RATE_COLUMNS:
+        if col in df.columns and df[col].abs().max() > _PERCENT_DETECT_THRESHOLD:
+            logger.info("bank_native(%s): %s percent-encoded, rescaling /100", sheet_name, col)
+            df[col] = df[col] / 100.0
+    for col in _BPS_RATE_COLUMNS:
+        if col in df.columns and df[col].abs().max() > _PERCENT_DETECT_THRESHOLD:
+            logger.info("bank_native(%s): %s bps-encoded, rescaling /10000", sheet_name, col)
+            df[col] = df[col] / 10000.0
 
     for col in ["Maturitydate", "Valuedate", "Tradedate",
                 "last_fixing_date", "next_fixing_date"]:
@@ -202,10 +262,15 @@ def _parse_one_sheet(xl: pd.ExcelFile, sheet_name: str, book: str,
     else:
         df["Floating Rates Short Name"] = ""
 
-    # current_fixing_rate is Clientrate for the active fixing period (engine
-    # uses last_fixing_date/next_fixing_date to identify fixing-period rates)
+    is_float = df["Floating Rates Short Name"].ne("")
+    df["is_floating"] = is_float
+    df["ref_index"] = np.where(
+        is_float,
+        df["Floating Rates Short Name"].map(FLOAT_NAME_TO_WASP).fillna(""),
+        "",
+    )
+
     if "Clientrate" in df.columns:
-        is_float = df["Floating Rates Short Name"].ne("")
         df["current_fixing_rate"] = np.where(is_float, df["Clientrate"], np.nan)
 
     return df.reset_index(drop=True)

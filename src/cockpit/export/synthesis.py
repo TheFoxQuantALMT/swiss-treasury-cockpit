@@ -53,6 +53,7 @@ def build_synthesis(
     deals: pd.DataFrame,
     *,
     shock: str,
+    by_currency: bool = False,
 ) -> pd.DataFrame:
     """Roll per-deal monthly P&L up to the ``(IAS Book, Category2)`` grid.
 
@@ -60,79 +61,109 @@ def build_synthesis(
     ----------
     pnl_by_deal
         Long-format engine output: one row per ``(Dealid, Shock, Month)`` with
-        a ``PnL`` column. Only rows matching ``shock`` are kept.
+        a ``PnL_Simple`` column. Only rows matching ``shock`` are kept.
     deals
         Canonical deals DataFrame carrying ``Dealid``, ``IAS Book`` and
-        ``Category2``. Supplies the Book/Category2 lookup since engine output
-        does not carry the bank-native taxonomy.
+        ``Category2`` (and ``Currency`` when ``by_currency=True``).
     shock
         Shock label to filter on (e.g. ``"0"`` for unshocked, ``"50"`` for
         +50bp). Required — passing the wrong value silently returns empty.
+    by_currency
+        When True, adds ``Currency`` as a third row dimension (one row per
+        bucket × currency combination, plus one ``FVH All`` row per currency).
 
     Returns
     -------
     pd.DataFrame
-        Wide DataFrame with ``IAS Book`` and ``Category2`` as the first two
-        columns, followed by one ``YYYY/MM`` column per forecast month. The
-        last row is the derived ``FVH All`` aggregate across both books.
+        Wide DataFrame with ``IAS Book``, ``Category2`` (and optionally
+        ``Currency``) as the first columns, followed by one ``YYYY/MM``
+        column per forecast month. Trailing rows are the derived ``FVH All``
+        aggregate(s).
     """
+    header_cols = ["IAS Book", "Category2"] + (["Currency"] if by_currency else [])
+
     if pnl_by_deal is None or pnl_by_deal.empty:
         logger.warning("build_synthesis: pnl_by_deal is empty — returning empty Synthesis")
-        return pd.DataFrame(columns=["IAS Book", "Category2"])
+        return pd.DataFrame(columns=header_cols)
 
-    required = {"Dealid", "Month", "PnL"}
+    required = {"Dealid", "Month", "PnL_Simple"}
     missing = required - set(pnl_by_deal.columns)
     if missing:
         raise ValueError(f"build_synthesis: pnl_by_deal missing columns {sorted(missing)}")
     if not {"Dealid", "IAS Book", "Category2"}.issubset(deals.columns):
         raise ValueError("build_synthesis: deals must carry Dealid, IAS Book, Category2")
+    if by_currency and "Currency" not in deals.columns:
+        raise ValueError("build_synthesis: by_currency=True requires 'Currency' in deals")
 
     df = pnl_by_deal
     if "Shock" in df.columns:
         df = df[df["Shock"].astype(str) == str(shock)]
         if df.empty:
             logger.warning("build_synthesis: no rows for shock=%s", shock)
-            return pd.DataFrame(columns=["IAS Book", "Category2"])
+            return pd.DataFrame(columns=header_cols)
 
+    tax_cols = ["Dealid", "IAS Book", "Category2"] + (["Currency"] if by_currency else [])
     taxonomy = (
-        deals[["Dealid", "IAS Book", "Category2"]]
+        deals[tax_cols]
         .drop_duplicates(subset=["Dealid"])
         .assign(Dealid=lambda d: d["Dealid"].astype(str))
     )
-    joined = df.assign(Dealid=lambda d: d["Dealid"].astype(str)).merge(
-        taxonomy, on="Dealid", how="left"
-    )
+    # Drop any taxonomy columns already present on the left to avoid _x/_y
+    # suffix collisions (pnl_by_deal carries Currency in deal-level exports).
+    df_for_merge = df.drop(
+        columns=[c for c in tax_cols if c != "Dealid" and c in df.columns]
+    ).assign(Dealid=lambda d: d["Dealid"].astype(str))
+    joined = df_for_merge.merge(taxonomy, on="Dealid", how="left")
 
-    orphans = joined["IAS Book"].isna().sum()
+    dropna_cols = ["IAS Book", "Category2"] + (["Currency"] if by_currency else [])
+    orphans = joined[dropna_cols].isna().any(axis=1).sum()
     if orphans:
-        logger.warning("build_synthesis: %d deal-month rows without book/category (dropped)", orphans)
-        joined = joined.dropna(subset=["IAS Book", "Category2"])
+        logger.warning("build_synthesis: %d deal-month rows without %s (dropped)",
+                       orphans, "/".join(dropna_cols))
+        joined = joined.dropna(subset=dropna_cols)
 
     joined["Month_Label"] = joined["Month"].dt.strftime("%Y/%m")
+    index_cols = ["IAS Book", "Category2"] + (["Currency"] if by_currency else [])
     grid = joined.pivot_table(
-        index=["IAS Book", "Category2"],
+        index=index_cols,
         columns="Month_Label",
-        values="PnL",
+        values="PnL_Simple",
         aggfunc="sum",
         fill_value=0.0,
     )
     grid.columns.name = None
-
     month_cols = sorted(grid.columns)  # YYYY/MM format sorts chronologically
+
+    if by_currency:
+        currencies = sorted(joined["Currency"].dropna().unique().tolist())
+        full_index = pd.MultiIndex.from_tuples(
+            [(b, c, ccy) for b, c in _BUCKET_ORDER for ccy in currencies],
+            names=index_cols,
+        )
+    else:
+        full_index = pd.MultiIndex.from_tuples(_BUCKET_ORDER, names=index_cols)
+
     ordered = (
-        grid.reindex(pd.MultiIndex.from_tuples(_BUCKET_ORDER, names=["IAS Book", "Category2"]),
-                     fill_value=0.0)
+        grid.reindex(full_index, fill_value=0.0)
         .reindex(columns=month_cols, fill_value=0.0)
         .reset_index()
     )
 
     fvh_mask = ordered["Category2"].isin(CATEGORY2_FVH_ALL)
-    fvh_row = ordered.loc[fvh_mask, month_cols].sum().to_dict()
-    fvh_row["IAS Book"] = ""
-    fvh_row["Category2"] = FVH_ALL_LABEL
-    ordered = pd.concat([ordered, pd.DataFrame([fvh_row])], ignore_index=True)
+    if by_currency:
+        fvh_rows = (
+            ordered.loc[fvh_mask]
+            .groupby("Currency", as_index=False)[month_cols].sum()
+            .assign(**{"IAS Book": "", "Category2": FVH_ALL_LABEL})
+        )
+        ordered = pd.concat([ordered, fvh_rows], ignore_index=True)
+    else:
+        fvh_row = ordered.loc[fvh_mask, month_cols].sum().to_dict()
+        fvh_row["IAS Book"] = ""
+        fvh_row["Category2"] = FVH_ALL_LABEL
+        ordered = pd.concat([ordered, pd.DataFrame([fvh_row])], ignore_index=True)
 
-    return ordered[["IAS Book", "Category2", *month_cols]]
+    return ordered[[*index_cols, *month_cols]]
 
 
 def export_synthesis_to_excel(synthesis: pd.DataFrame, path: Path) -> Path:

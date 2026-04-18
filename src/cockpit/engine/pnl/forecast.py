@@ -429,7 +429,6 @@ class ForecastRatePnL:
                     "FundingRate_Simple",
                     "FundingCost_Compounded", "PnL_Compounded",
                     "FundingRate_Compounded",
-                    "PnL",
                 ] if c in self.pnl_by_deal.columns]
                 self.pnl_by_deal[deal_cols].to_excel(
                     writer, sheet_name="Deal PnL", index=False,

@@ -21,7 +21,7 @@ def _make_pnl_by_deal(deal_ids, pnl_values, currencies=None, shock="0"):
         "Direction": ["D"] * n,
         "Périmètre TOTAL": ["CC"] * n,
         "Month": [pd.Period("2026-04")] * n,
-        "PnL": pnl_values,
+        "PnL_Simple": pnl_values,
         "Nominal": [1e6] * n,
         "Shock": [shock] * n,
     })
@@ -31,7 +31,7 @@ def _make_pnl_all_s(currencies, pnl_values, ois_values, nominal_values):
     """Helper: create a minimal pnlAllS DataFrame."""
     rows = []
     for i, ccy in enumerate(currencies):
-        for indice, val in [("PnL", pnl_values[i]), ("OISfwd", ois_values[i]), ("Nominal", nominal_values[i]), ("RateRef", 0.01)]:
+        for indice, val in [("PnL_Simple", pnl_values[i]), ("OISfwd", ois_values[i]), ("Nominal", nominal_values[i]), ("RateRef", 0.01)]:
             rows.append({
                 "Périmètre TOTAL": "CC",
                 "Deal currency": ccy,

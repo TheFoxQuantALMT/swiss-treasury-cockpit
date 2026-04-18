@@ -44,7 +44,7 @@ def _build_risk_cube(
         if c in source.columns:
             prod_col = c
             break
-    pnl_col = "PnL" if "PnL" in source.columns else "Value" if "Value" in source.columns else None
+    pnl_col = "PnL_Simple" if "PnL_Simple" in source.columns else "Value" if "Value" in source.columns else None
 
     if pnl_col is None:
         return {"has_data": False, "product_currency": {}, "counterparty_product": {},
@@ -531,7 +531,7 @@ def _build_hedge_strategy(
         hedge_deal_ids = set(hedging["Dealid"].astype(str).unique()) if "Dealid" in hedging.columns else set()
         if hedge_deal_ids:
             hedge_pnl_matched = hedge_pnl[hedge_pnl["Dealid"].astype(str).isin(hedge_deal_ids)]
-            pnl_col = "PnL" if "PnL" in hedge_pnl_matched.columns else "Value"
+            pnl_col = "PnL_Simple" if "PnL_Simple" in hedge_pnl_matched.columns else "Value"
             if pnl_col in hedge_pnl_matched.columns:
                 total_hc = float(hedge_pnl_matched[pnl_col].sum())
                 hedge_cost["total"] = round(total_hc, 0)

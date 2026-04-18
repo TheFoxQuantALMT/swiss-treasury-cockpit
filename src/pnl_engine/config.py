@@ -78,6 +78,10 @@ FLOAT_NAME_TO_WASP: dict[str, str] = {
     "ESTR1M":  "EUREST1M", "ESTR3M":  "EUREST3M", "ESTR6M":  "EUREST6M",
     "SOFR1M":  "USSOFR1M", "SOFR3M":  "USSOFR3M", "SOFR6M":  "USSOFR6M",
     "SONIA1M": "GBPOIS1M", "SONIA3M": "GBPOIS3M", "SONIA6M": "GBPOIS6M",
+    # Bank-native aliases observed in K+EUR exports (CHF SARON family)
+    "CHF-SAROIS": "CHFSON",  # SARON OIS
+    "CHF-SARFLR": "CHFSON",  # SARON Floor — same base curve
+    "CHF-SNB-PR": "CHFSON",  # SNB policy rate, modelled on SARON
 }
 
 # ---------------------------------------------------------------------------
