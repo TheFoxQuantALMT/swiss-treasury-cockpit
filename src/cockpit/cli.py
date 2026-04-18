@@ -11,6 +11,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from cockpit.config import DATA_DIR, OUTPUT_DIR
 
@@ -68,8 +69,9 @@ def main() -> None:
     p_render_pnl.add_argument("--prev-date", help="Previous date for P&L attribution (YYYY-MM-DD)")
     p_render_pnl.add_argument("--prev-input-dir", help="Directory for previous date's Excel inputs (defaults to --input-dir)")
     p_render_pnl.add_argument("--shocks", help="Comma-separated shock list (e.g. '-200,-100,0,50,100,200,wirp') or 'extended' for full grid")
-    p_render_pnl.add_argument("--format", choices=["html", "xlsx", "pdf", "all"], default="html",
-                              help="Output format: html (default), xlsx, pdf, or all")
+    p_render_pnl.add_argument("--format", choices=["html", "xlsx", "pnl-xlsx", "pdf", "all"], default="html",
+                              help="Output format: html (default), xlsx (full dashboard), pnl-xlsx (focused P&L report), pdf, or all")
+    p_render_pnl.add_argument("--output-dir", dest="output_dir", help="Override output directory (default: ./output)")
     p_render_pnl.add_argument("--custom-scenarios", dest="custom_scenarios",
                               help="Path to custom_scenarios.xlsx for user-defined stress tests")
 
@@ -141,7 +143,8 @@ def main() -> None:
         cmd_render(date=args.date, data_dir=data_dir, output_dir=output_dir)
     elif args.command == "render-pnl":
         from cockpit.commands.render import cmd_render_pnl
-        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source, budget_file=args.budget_file, prev_date=args.prev_date, prev_input_dir=getattr(args, 'prev_input_dir', None), shocks=getattr(args, 'shocks', None), format=getattr(args, 'format', 'html'), custom_scenarios=getattr(args, 'custom_scenarios', None))
+        pnl_output_dir = Path(args.output_dir) if getattr(args, 'output_dir', None) else output_dir
+        cmd_render_pnl(date=args.date, input_dir=args.input_dir, output_dir=pnl_output_dir, funding_source=args.funding_source, budget_file=args.budget_file, prev_date=args.prev_date, prev_input_dir=getattr(args, 'prev_input_dir', None), shocks=getattr(args, 'shocks', None), format=getattr(args, 'format', 'html'), custom_scenarios=getattr(args, 'custom_scenarios', None))
     elif args.command == "backfill":
         from cockpit.commands.backfill import cmd_backfill
         cmd_backfill(from_date=args.from_date, to_date=args.to_date, input_dir=args.input_dir, output_dir=output_dir, funding_source=args.funding_source)

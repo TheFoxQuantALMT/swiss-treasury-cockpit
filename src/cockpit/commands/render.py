@@ -379,7 +379,13 @@ def cmd_render_pnl(
             locked_in_nii_data = enrichment.get("locked_in_nii")
             beta_sensitivity_data = enrichment.get("beta_sensitivity")
             if locked_in_nii_data and locked_in_nii_data.get("has_data"):
-                print(f"[render-pnl] Locked-in NII: {locked_in_nii_data.get('locked_pct', 0):.1f}%")
+                pct = locked_in_nii_data.get("locked_pct")
+                total = locked_in_nii_data.get("total_nii", 0)
+                locked = locked_in_nii_data.get("locked_nii", 0)
+                if locked_in_nii_data.get("pct_meaningful", True):
+                    print(f"[render-pnl] Locked-in NII: {pct:.1f}%")
+                else:
+                    print(f"[render-pnl] Locked-in NII: {pct:.1f}% (total={total:,.0f}, locked={locked:,.0f}; certainty-floor narrative N/A when total NII <= 0)")
             if beta_sensitivity_data and beta_sensitivity_data.get("by_currency"):
                 print(f"[render-pnl] Beta sensitivity computed for {len(beta_sensitivity_data['by_currency'])} currencies")
         except Exception as e:
@@ -453,6 +459,16 @@ def cmd_render_pnl(
             print(f"[render-pnl] Excel export: {xlsx_path}")
         except Exception as e:
             print(f"[render-pnl] Warning: Excel export failed: {e}")
+
+    if format in ("pnl-xlsx", "all") and dashboard_data:
+        try:
+            from cockpit.export.pnl_report import export_pnl_report
+            pnl_xlsx_path = output_dir / f"{date}_pnl_report.xlsx"
+            result_path = export_pnl_report(dashboard_data, pnl_xlsx_path, date, deals=pnl.pnlData)
+            if result_path:
+                print(f"[render-pnl] P&L report export: {result_path}")
+        except Exception as e:
+            print(f"[render-pnl] Warning: P&L report export failed: {e}")
 
     if format in ("pdf", "all"):
         try:

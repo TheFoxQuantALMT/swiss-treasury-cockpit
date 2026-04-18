@@ -14,7 +14,10 @@
   {% if summary.locked_in_nii is defined and summary.locked_in_nii.has_data %}
   <div class="grid-3" style="margin-bottom: 16px;">
     {{ kpi_card("Locked-in NII (12M)", "{:,.0f}".format(summary.locked_in_nii.locked_nii),
-                css_class="positive", sub="{:.1f}% of total NII contractually locked".format(summary.locked_in_nii.locked_pct)) }}
+                css_class="positive",
+                sub=("{:.1f}% of total NII contractually locked".format(summary.locked_in_nii.locked_pct)
+                     if summary.locked_in_nii.pct_meaningful
+                     else "Total NII ≤ 0 — % undefined")) }}
     {{ kpi_card("Total NII (12M)", "{:,.0f}".format(summary.locked_in_nii.total_nii)) }}
     {{ kpi_card("At-Risk NII", "{:,.0f}".format(summary.locked_in_nii.total_nii - summary.locked_in_nii.locked_nii),
                 css_class="negative" if (summary.locked_in_nii.total_nii - summary.locked_in_nii.locked_nii) > summary.locked_in_nii.locked_nii else "neutral",
@@ -27,8 +30,13 @@
   <div class="grid-3" style="margin-bottom: 16px;">
     {{ kpi_card("Locked-in NII (12M)", "{:,.0f}".format(summary.locked_in_nii.locked_nii),
                 css_class="positive", sub="Fixed-rate deals only") }}
+    {% if summary.locked_in_nii.pct_meaningful %}
     {{ kpi_card("% of Total NII Locked", "{:.1f}%".format(summary.locked_in_nii.locked_pct),
                 css_class="positive" if summary.locked_in_nii.locked_pct > 50 else "neutral") }}
+    {% else %}
+    {{ kpi_card("% of Total NII Locked", "N/A",
+                css_class="neutral", sub="Total NII ≤ 0 — ratio undefined") }}
+    {% endif %}
     {{ kpi_card("Total NII (12M)", "{:,.0f}".format(summary.locked_in_nii.total_nii)) }}
   </div>
   {% endif %}

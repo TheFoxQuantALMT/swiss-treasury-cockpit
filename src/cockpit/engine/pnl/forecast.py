@@ -43,6 +43,7 @@ import dill
 import numpy as np
 import pandas as pd
 
+from pnl_engine import config as pnl_cfg
 from pnl_engine.config import FUNDING_SOURCE
 from pnl_engine.orchestrator import PnlEngine
 from cockpit.export.synthesis import build_synthesis, export_synthesis_to_excel
@@ -122,7 +123,10 @@ class ForecastRatePnL:
         self._engine: Optional[PnlEngine] = None
 
         if auto_run:
-            self.run(shocks=["50", "0"], export=export)
+            # Honor the configured SHOCKS list — CLI callers override via
+            # pnl_engine.config.SHOCKS, and the previous hardcoded ["50", "0"]
+            # silently dropped the WIRP shock from downstream dashboards.
+            self.run(shocks=list(pnl_cfg.SHOCKS), export=export)
 
     def load_data(self) -> None:
         """Load deal data, schedule, WIRP, and IRS stock from Excel files.
@@ -334,7 +338,7 @@ class ForecastRatePnL:
     ) -> None:
         """Execute the full pipeline: load data, build curves, compute all shocks."""
         if shocks is None:
-            shocks = ["50", "0"]
+            shocks = list(pnl_cfg.SHOCKS)
 
         self.load_data()
 

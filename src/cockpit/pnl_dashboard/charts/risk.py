@@ -178,6 +178,8 @@ def _build_counterparty_pnl(df: pd.DataFrame, pnl_by_deal: Optional[pd.DataFrame
     if source.empty:
         return empty
 
+    source[pnl_col] = pd.to_numeric(source[pnl_col], errors="coerce").fillna(0.0)
+
     # Group by counterparty
     cpty_pnl = source.groupby(cpty_col)[pnl_col].sum().reset_index()
     cpty_pnl.columns = ["Counterparty", "Value"]

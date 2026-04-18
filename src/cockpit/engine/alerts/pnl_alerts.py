@@ -49,8 +49,18 @@ def check_pnl_alerts(
     if pnl.empty:
         return alerts
 
+    # Collapse PnL_Type to avoid triple-counting the current month (engine emits
+    # Total + Realized + Forecast for rates_month). Realized + Forecast = Total
+    # across all months without double-counting.
+    if "PnL_Type" in pnl.columns:
+        split = pnl[pnl["PnL_Type"].isin(["Realized", "Forecast"])]
+        if not split.empty:
+            pnl = split
+
+    pnl = pnl.assign(Value=pd.to_numeric(pnl["Value"], errors="coerce").fillna(0.0))
+
     # 1. Annual NII floor
-    total_nii = pnl["Value"].sum()
+    total_nii = float(pnl["Value"].sum())
     if total_nii < t["annual_nii_floor"]:
         alerts.append({
             "type": "nii_floor",
@@ -82,25 +92,29 @@ def check_pnl_alerts(
                             "recommendation": "Investigate rate or volume drivers for this swing",
                         })
 
-    # 3. Single currency concentration (supports per-currency thresholds)
-    if "Deal currency" in pnl.columns and abs(total_nii) > 0:
+    # 3. Single currency concentration (supports per-currency thresholds).
+    # Use Σ|ccy_nii| as the denominator so cross-currency cancellation near zero
+    # doesn't blow the ratio up to thousands of percent. A single leg can still
+    # dominate on an absolute-contribution basis when others net out.
+    if "Deal currency" in pnl.columns:
         ccy_pnl = pnl.groupby("Deal currency")["Value"].sum()
-        for ccy, val in ccy_pnl.items():
-            pct = abs(val / total_nii) * 100
-            # Per-currency threshold override
-            ccy_limit = t["ccy_concentration_pct"]
-            if isinstance(t.get("_per_currency"), dict):
-                ccy_limit = t["_per_currency"].get(ccy, {}).get("ccy_concentration_pct", ccy_limit)
-            if pct > ccy_limit:
-                alerts.append({
-                    "type": "ccy_concentration",
-                    "severity": "medium",
-                    "metric": f"{ccy} concentration",
-                    "current": round(float(pct), 1),
-                    "threshold": t["ccy_concentration_pct"],
-                    "message": f"{ccy} represents {pct:.1f}% of total NII",
-                    "recommendation": f"Consider diversifying {ccy} exposure",
-                })
+        abs_total = float(ccy_pnl.abs().sum())
+        if abs_total > 0:
+            for ccy, val in ccy_pnl.items():
+                pct = abs(float(val)) / abs_total * 100
+                ccy_limit = t["ccy_concentration_pct"]
+                if isinstance(t.get("_per_currency"), dict):
+                    ccy_limit = t["_per_currency"].get(ccy, {}).get("ccy_concentration_pct", ccy_limit)
+                if pct > ccy_limit:
+                    alerts.append({
+                        "type": "ccy_concentration",
+                        "severity": "medium",
+                        "metric": f"{ccy} concentration",
+                        "current": round(pct, 1),
+                        "threshold": ccy_limit,
+                        "message": f"{ccy} represents {pct:.1f}% of gross |NII|",
+                        "recommendation": f"Consider diversifying {ccy} exposure",
+                    })
 
     # 4. Negative CoC (funding cost exceeds carry)
     if t["negative_coc_alert"]:

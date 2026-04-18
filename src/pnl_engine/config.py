@@ -82,6 +82,11 @@ FLOAT_NAME_TO_WASP: dict[str, str] = {
     "CHF-SAROIS": "CHFSON",  # SARON OIS
     "CHF-SARFLR": "CHFSON",  # SARON Floor — same base curve
     "CHF-SNB-PR": "CHFSON",  # SNB policy rate, modelled on SARON
+    # Bank-native term / RFR aliases (K+EUR)
+    "SRNCBG05": "CHFSON",     # SARON RFR (compounded); overnight path
+    "GBPSTI3M": "GBPOIS3M",   # GBP 3M term rate (SONIA-linked); 3M term curve
+    "EURIBOR3M": "EUREST3M",  # Euribor 3M term — proxied via €STR 3M forward
+                              # curve (missing Euribor term-premium ~5–10bp)
 }
 
 # ---------------------------------------------------------------------------

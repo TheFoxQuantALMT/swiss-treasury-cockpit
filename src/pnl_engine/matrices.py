@@ -172,14 +172,23 @@ def build_rate_matrix(
                 indice, extrap_days,
             )
 
-    # Pre-extract per-deal columns into numpy arrays (avoid 7 .iloc calls per row)
+    # Pre-extract per-deal columns into numpy arrays (avoid pandas .iloc per row)
     ref_index_arr = deals["ref_index"].values if "ref_index" in deals.columns else np.array([""] * n_deals)
     spread_arr = pd.to_numeric(deals["Spread"], errors="coerce").fillna(0.0).values if "Spread" in deals.columns else np.zeros(n_deals)
     currency_arr = deals["Currency"].values if "Currency" in deals.columns else np.array([""] * n_deals)
     rate_ref_arr = pd.to_numeric(deals["RateRef"], errors="coerce").fillna(0.0).values if "RateRef" in deals.columns else np.zeros(n_deals)
-    last_fix_arr = pd.to_datetime(deals["last_fixing_date"], errors="coerce") if "last_fixing_date" in deals.columns else pd.Series([pd.NaT] * n_deals)
-    next_fix_arr = pd.to_datetime(deals["next_fixing_date"], errors="coerce") if "next_fixing_date" in deals.columns else pd.Series([pd.NaT] * n_deals)
-    current_fix_arr = pd.to_numeric(deals["current_fixing_rate"], errors="coerce") if "current_fixing_rate" in deals.columns else pd.Series([np.nan] * n_deals)
+    last_fix_arr = (
+        pd.to_datetime(deals["last_fixing_date"], errors="coerce").values
+        if "last_fixing_date" in deals.columns else np.array([np.datetime64("NaT")] * n_deals, dtype="datetime64[ns]")
+    )
+    next_fix_arr = (
+        pd.to_datetime(deals["next_fixing_date"], errors="coerce").values
+        if "next_fixing_date" in deals.columns else np.array([np.datetime64("NaT")] * n_deals, dtype="datetime64[ns]")
+    )
+    current_fix_arr = (
+        pd.to_numeric(deals["current_fixing_rate"], errors="coerce").values
+        if "current_fixing_rate" in deals.columns else np.full(n_deals, np.nan)
+    )
     tenor_col = deals["fixing_tenor_days"].values if "fixing_tenor_days" in deals.columns else np.zeros(n_deals, dtype=int)
 
     _ref_ts = pd.Timestamp(date_run) if date_run is not None else pd.Timestamp.today()
@@ -188,42 +197,76 @@ def build_rate_matrix(
     grid_end = day_dates[-1]
     one_day = np.timedelta64(1, "D")
 
+    # Pre-compute overnight daily-rate arrays per (indice, lookback). Each
+    # unique (indice, lookback) combination shares a single np.interp call —
+    # without this, an N-deal book with one shared curve does N redundant
+    # interpolations per shock.
+    overnight_cache: dict[tuple[str, int], np.ndarray] = {}
+
+    def _overnight_rates(indice: str, lookback: int) -> np.ndarray | None:
+        key = (indice, lookback)
+        cached = overnight_cache.get(key)
+        if cached is not None:
+            return cached
+        curve = curve_by_indice.get(indice) if indice else None
+        if curve is None:
+            return None
+        curve_dates_num, curve_vals = curve
+        rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+        if lookback > 0:
+            rates = apply_lookback_shift(rates, lookback_days=lookback)
+        overnight_cache[key] = rates
+        return rates
+
     for i in np.where(is_floating)[0]:
         indice = ref_index_arr[i]
-        if not indice:
-            continue
-        curve = curve_by_indice.get(indice)
-        if curve is None:
-            continue
-        curve_dates_num, curve_vals = curve
-
         spread = float(spread_arr[i])
         tenor_days = int(tenor_col[i]) if i < len(tenor_col) else 0
+        curve = curve_by_indice.get(indice) if indice else None
 
         if tenor_days <= 0:
             # Overnight RFR: rate floats every day, with optional lookback shift.
-            daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
+            # Curve required — no contractual fallback for daily refixings.
+            if not indice:
+                logger.warning("Floating deal idx %d: empty ref_index, RateRef=0", i)
+                continue
             lookback = LOOKBACK_DAYS.get(currency_arr[i], 0)
-            if lookback > 0:
-                daily_rates = apply_lookback_shift(daily_rates, lookback_days=lookback)
+            daily_rates = _overnight_rates(indice, lookback)
+            if daily_rates is None:
+                logger.warning(
+                    "Overnight floater (deal idx %d, %s) curve missing; RateRef=0",
+                    i, indice,
+                )
+                continue
             result[i] = daily_rates + spread
             continue
 
         # Term floater: walk the fixing schedule and hold the rate constant
-        # over each [t_k, t_k+tenor) segment.
-        last_fix = last_fix_arr.iloc[i]
-        next_fix = next_fix_arr.iloc[i]
-        current_fix = current_fix_arr.iloc[i]
+        # over each [t_k, t_k+tenor) segment. Active segment uses
+        # current_fixing_rate (contractual fix, no curve needed); future
+        # segments sample the forward curve, falling back to current_fix flat
+        # if the curve is unavailable (e.g. WIRP mock has no term variants).
+        last_fix = last_fix_arr[i]
+        next_fix = next_fix_arr[i]
+        current_fix = current_fix_arr[i]
+        current_fix_valid = not np.isnan(current_fix)
 
-        if pd.notna(last_fix):
-            anchor = pd.Timestamp(last_fix).to_datetime64().astype("datetime64[D]")
-        elif pd.notna(next_fix):
-            anchor = (pd.Timestamp(next_fix) - pd.Timedelta(days=tenor_days)).to_datetime64().astype("datetime64[D]")
+        if not np.isnat(last_fix):
+            anchor = last_fix.astype("datetime64[D]")
+        elif not np.isnat(next_fix):
+            anchor = (next_fix.astype("datetime64[D]") - np.timedelta64(tenor_days, "D"))
         else:
+            if curve is None:
+                logger.warning(
+                    "Term floater (deal idx %d, %s) missing fixing dates and curve; RateRef=0",
+                    i, indice,
+                )
+                continue
             logger.warning(
                 "Term floater (deal idx %d, %s) missing fixing dates; degrading to overnight RFR",
                 i, indice,
             )
+            curve_dates_num, curve_vals = curve
             daily_rates = np.interp(day_dates_num, curve_dates_num, curve_vals)
             result[i] = daily_rates + spread
             continue
@@ -238,12 +281,13 @@ def build_rate_matrix(
             while anchor + step <= grid_start:
                 anchor = anchor + step
 
+        warned_missing_curve = False
         rates_path = np.zeros(n_days, dtype=np.float64)
         seg_start = anchor
         while seg_start <= grid_end:
             seg_end = seg_start + step  # exclusive
             if seg_start <= ref_day < seg_end:
-                if pd.notna(current_fix):
+                if current_fix_valid:
                     seg_rate = float(current_fix)
                 else:
                     logger.warning(
@@ -252,7 +296,19 @@ def build_rate_matrix(
                         i, indice,
                     )
                     seg_rate = float(rate_ref_arr[i])
+            elif curve is None:
+                # Future segment, no forward curve — flat-extrapolate the
+                # contractual fix. Loud once per deal so the gap surfaces.
+                if not warned_missing_curve:
+                    logger.warning(
+                        "Term floater (deal idx %d, %s) curve missing; future "
+                        "segments use current_fixing_rate as flat proxy",
+                        i, indice,
+                    )
+                    warned_missing_curve = True
+                seg_rate = float(current_fix) if current_fix_valid else float(rate_ref_arr[i])
             else:
+                curve_dates_num, curve_vals = curve
                 fix_num = int(seg_start.astype(np.int64))
                 seg_rate = float(np.interp(fix_num, curve_dates_num, curve_vals))
 

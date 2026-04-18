@@ -26,12 +26,21 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_stacked(pnl_all_s: pd.DataFrame) -> pd.DataFrame:
-    """Reset MultiIndex to flat columns for easier filtering."""
+    """Reset MultiIndex to flat columns for easier filtering.
+
+    Also coerces ``Value`` to float — the upstream ``pivot_table`` leaves it as
+    object dtype, which silently poisons downstream arithmetic: ``.mean()`` on
+    object dtype includes all rows raw (no NaN skip), and numpy broadcasting
+    against an object array can emit zeros. The Strategy Leg Summary's Avg
+    RateRef/OIS = 0 bug was caused by exactly this.
+    """
     if pnl_all_s is None or pnl_all_s.empty:
         return pd.DataFrame()
     df = pnl_all_s.copy()
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+    if "Value" in df.columns and df["Value"].dtype == object:
+        df["Value"] = pd.to_numeric(df["Value"], errors="coerce").fillna(0.0)
     return df
 
 
@@ -83,8 +92,16 @@ def _auto_pnl_explain(
 
 
 def _filter_total(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter for PnL_Type == 'Total', falling back to all rows if no Total rows exist."""
+    """Collapse PnL_Type to the row set that sums to the true total.
+
+    The engine emits actual P&L in ``Realized`` (past + current-month slice) and
+    ``Forecast`` (future + current-month slice); ``Realized + Forecast = Total``
+    across all months by construction. ``Total`` rows carry data only for the
+    current month and are zero-filled by the upstream pivot_table for every
+    other month — so summing ``Total`` rows truncates to just rates_month, which
+    was the bug that made Monthly Series and CoC show only April.
+    """
     if "PnL_Type" not in df.columns:
         return df
-    total = df[df["PnL_Type"] == "Total"]
-    return total if not total.empty else df
+    split = df[df["PnL_Type"].isin(["Realized", "Forecast"])]
+    return split if not split.empty else df

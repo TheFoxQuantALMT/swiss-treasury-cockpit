@@ -54,9 +54,12 @@ def compute_locked_in_nii(
     else:
         locked_nii = float(np.nansum(daily_pnl[fixed_idx]))
 
-    locked_pct = (locked_nii / total_nii * 100) if total_nii != 0 else 0.0
+    # Bounds-check on the raw ratio so display rounding (1 dp) cannot flip the
+    # narrative gate at the boundary (e.g. true 100.04% rounds to 100.0).
+    raw_pct = locked_nii / total_nii * 100 if total_nii != 0 else 0.0
+    pct_meaningful = total_nii > 0 and 0.0 <= raw_pct <= 100.0
+    locked_pct = round(raw_pct, 1)
 
-    # Per currency
     by_currency = {}
     if "Currency" in deals.columns:
         for ccy in deals["Currency"].str.strip().str.upper().unique():
@@ -66,18 +69,23 @@ def compute_locked_in_nii(
 
             ccy_total = float(np.nansum(daily_pnl[ccy_idx])) if len(ccy_idx) > 0 else 0.0
             ccy_locked = float(np.nansum(daily_pnl[ccy_fixed])) if len(ccy_fixed) > 0 else 0.0
+            ccy_raw_pct = ccy_locked / ccy_total * 100 if ccy_total != 0 else 0.0
+            ccy_meaningful = ccy_total > 0 and 0.0 <= ccy_raw_pct <= 100.0
+            ccy_pct = round(ccy_raw_pct, 1)
 
             by_currency[ccy] = {
                 "total_nii": round(ccy_total, 0),
                 "locked_nii": round(ccy_locked, 0),
-                "locked_pct": round(ccy_locked / ccy_total * 100, 1) if ccy_total != 0 else 0.0,
+                "locked_pct": ccy_pct,
+                "pct_meaningful": ccy_meaningful,
             }
 
     return {
         "has_data": True,
         "total_nii": round(total_nii, 0),
         "locked_nii": round(locked_nii, 0),
-        "locked_pct": round(locked_pct, 1),
+        "locked_pct": locked_pct,
+        "pct_meaningful": pct_meaningful,
         "horizon_days": n_days,
         "by_currency": by_currency,
     }

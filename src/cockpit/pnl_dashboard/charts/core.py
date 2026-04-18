@@ -35,13 +35,19 @@ def _build_summary(
     if pnl_rows.empty:
         return {"has_data": False, "kpis": {}, "donut": {}, "waterfall": {}, "top5": [], "dod_bridge": None}
 
+    # Cap KPI aggregation at the 12-month regulatory horizon — the engine emits
+    # P&L across the full 60-month grid, but Cover KPIs claim "12-month" and
+    # must match Locked-in NII's 365-day window for cross-sheet reconciliation.
+    if "Month" in pnl_rows.columns:
+        months_sorted = sorted(pnl_rows["Month"].unique())[:12]
+        pnl_rows = pnl_rows[pnl_rows["Month"].isin(months_sorted)]
+
     # KPI cards: total P&L per shock (12-month horizon)
     kpis = {}
     for shock in ("0", "50", "wirp"):
         shock_data = pnl_rows[pnl_rows["Shock"] == shock]
         if shock_data.empty:
             continue
-        # Use "Total" PnL_Type to avoid triple-counting with Realized+Forecast
         total = _filter_total(shock_data)["Value"].sum()
         if "PnL_Type" in shock_data.columns:
             realized = float(shock_data[shock_data["PnL_Type"] == "Realized"]["Value"].sum())
@@ -91,7 +97,8 @@ def _build_summary(
     # Top 5 contributors (by |PnL|, shock=0)
     top5 = []
     if "Product2BuyBack" in base.columns and "Deal currency" in base.columns:
-        grouped = base.groupby(["Deal currency", "Product2BuyBack"])["Value"].sum().reset_index()
+        base_num = base.assign(Value=pd.to_numeric(base["Value"], errors="coerce").fillna(0.0))
+        grouped = base_num.groupby(["Deal currency", "Product2BuyBack"])["Value"].sum().reset_index()
         grouped["abs_val"] = grouped["Value"].abs()
         top = grouped.nlargest(5, "abs_val")
         for _, row in top.iterrows():
