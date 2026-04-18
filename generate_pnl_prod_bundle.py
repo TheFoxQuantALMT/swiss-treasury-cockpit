@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""generate_pnl_prod_bundle.py — Production-only PnL bundle.
+"""generate_pnl_prod_bundle.py — Minimum bundle for ``_pnl_report.xlsx``.
 
 Builds a single text file that deploys the minimum set of modules needed to
-run ``uv run cockpit render-pnl`` on the prod PC (the one with WASP reachable,
-no Claude Code, no internet fetchers).
+run ``uv run cockpit render-pnl --format pnl-xlsx`` on the prod PC (the one
+with WASP reachable, no Claude Code, no internet fetchers).
 
-Compared to the generic ``generate_bundles.py`` this bundle:
-  * Excludes every path touched by the mock WIRP-curve fallback — prod must
-    fail loud when WASP is unreachable, never silently use a mock.
-  * Excludes agents / web fetchers / HTML cockpit renderer / Notion — the
-    daily PnL pipeline only reads Excel inputs and writes xlsx/html/pdf.
-  * Ships ``scripts/wasp_preflight.py`` so the pipeline can verify WASP
-    before burning time on a full run.
-  * Refuses to include any file whose path contains ``mock`` or lives under
-    ``tests/`` — belt-and-braces guard against accidentally shipping dev code.
+Scope is strictly ``_pnl_report.xlsx``. Compared to the broader render-pnl
+pipeline, this bundle also excludes:
+  * HTML rendering: ``pnl_dashboard/renderer.py`` + ``pnl_dashboard/templates/``
+    (xlsx format path skips HTML rendering via ``format != "pnl-xlsx"`` guard)
+  * The generic dashboard Excel export (``cockpit/export/excel_export.py``,
+    output ``{date}_pnl_dashboard.xlsx``) — different file, not needed
+  * PDF export (``cockpit/export/pdf_export.py``)
+  * Agents / web fetchers / old HTML cockpit renderer / Notion integration
+  * Mock WIRP-curve fallback — prod must fail loud when WASP is unreachable
+  * Anything under ``tests/`` or whose path contains ``mock`` / ``demo_``
+
+Ships ``scripts/wasp_preflight.py`` so the pipeline can verify WASP before
+burning time on a full run.
 
 Usage:
     python generate_pnl_prod_bundle.py           # writes pnl_prod_bundle.txt
@@ -52,6 +56,14 @@ EXCLUDE_SUBSTRINGS: tuple[str, ...] = (
     "/src/cockpit/data/manager.py",
     "/src/cockpit/render/",
     "/src/cockpit/integrations/notion_export.py",
+    # HTML rendering path — xlsx pipeline skips HTML via format guard
+    "/src/cockpit/pnl_dashboard/renderer.py",
+    "/src/cockpit/pnl_dashboard/templates/",
+    # Other export formats — only _pnl_report.xlsx is in scope
+    "/src/cockpit/export/excel_export.py",
+    "/src/cockpit/export/pdf_export.py",
+    # Dev / demo scripts — must never ship to prod
+    "/scripts/demo_",
     # Mock-curve guard: any dev helper must stay in tests/ — this is the
     # last line of defense if someone forgets.
     "mock_curves",
@@ -106,7 +118,9 @@ def extract(bundle_path: str, output_dir: str) -> None:
     print("  1. uv sync                                  # install deps")
     print("  2. python scripts/wasp_preflight.py --date YYYY-MM-DD")
     print("     (must exit 0 — if not, DO NOT run the pipeline)")
-    print("  3. uv run cockpit render-pnl --date YYYY-MM-DD --input-dir <path>")
+    print("  3. uv run cockpit render-pnl --date YYYY-MM-DD \\")
+    print("       --input-dir <path> --format pnl-xlsx")
+    print("     (writes <output-dir>/<date>_pnl_report.xlsx)")
 
 
 if __name__ == "__main__":
@@ -208,7 +222,8 @@ def _write_bundle(output_path: Path, files: list[Path], project_root: Path) -> N
     lines.append("STEP 2: Copy the extractor script below into extract_pnl_prod_bundle.py")
     lines.append("STEP 3: python extract_pnl_prod_bundle.py --output-dir <target>")
     lines.append("STEP 4: python scripts/wasp_preflight.py --date YYYY-MM-DD  (must exit 0)")
-    lines.append("STEP 5: uv run cockpit render-pnl --date YYYY-MM-DD --input-dir <path>")
+    lines.append("STEP 5: uv run cockpit render-pnl --date YYYY-MM-DD --input-dir <path> --format pnl-xlsx")
+    lines.append("        (output: <output-dir>/<date>_pnl_report.xlsx)")
     lines.append("")
     lines.append("=" * 60)
     lines.append("===EXTRACTOR START===")

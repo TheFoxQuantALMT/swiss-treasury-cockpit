@@ -80,7 +80,6 @@ def cmd_render_pnl(
 ) -> None:
     """Render dedicated P&L dashboard from Excel inputs."""
     from cockpit.engine.pnl.forecast import ForecastRatePnL
-    from cockpit.pnl_dashboard.renderer import render_pnl_dashboard
 
     date_dt = datetime.strptime(date, "%Y-%m-%d")
 
@@ -511,7 +510,8 @@ def cmd_render_pnl(
     except Exception as e:
         print(f"[render-pnl] Warning: could not build dashboard data: {e}")
 
-    if dashboard_data is not None:
+    if dashboard_data is not None and format != "pnl-xlsx":
+        from cockpit.pnl_dashboard.renderer import render_pnl_dashboard
         render_pnl_dashboard(
             data=dashboard_data,
             date_run=date_dt,
@@ -519,7 +519,7 @@ def cmd_render_pnl(
             output_path=output_path,
         )
         print(f"[render-pnl] Output: {output_path}")
-    else:
+    elif dashboard_data is None:
         print("[render-pnl] Skipping HTML render: dashboard data unavailable")
 
     # Save daily KPI snapshot for Trends tab
