@@ -14,7 +14,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+
+
+def _json_default(v):
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return v.isoformat()
+    if isinstance(v, np.floating):
+        return float(v)
+    if isinstance(v, np.integer):
+        return int(v)
+    return str(v)
 
 
 def save_daily_kpis(
@@ -237,10 +248,6 @@ def load_realized_mtd(
 # P&L Explain snapshot (for Month-over-Month attribution waterfall)
 # ---------------------------------------------------------------------------
 
-_EXPLAIN_DEAL_COLS = (
-    "Dealid", "Counterparty", "Currency", "Product", "Direction",
-    "PnL_Simple", "Nominal",
-)
 _EXPLAIN_INDICES = ("PnL_Simple", "Nominal", "OISfwd", "RateRef")
 
 
@@ -297,21 +304,8 @@ def save_pnl_explain_snapshot(
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     out_path = snapshot_dir / f"{date}_explain.json"
 
-    def _default(v):
-        if isinstance(v, (pd.Timestamp, datetime)):
-            return v.isoformat()
-        try:
-            import numpy as np
-            if isinstance(v, np.floating):
-                return float(v)
-            if isinstance(v, np.integer):
-                return int(v)
-        except ImportError:
-            pass
-        return str(v)
-
     out_path.write_text(
-        json.dumps(payload, indent=2, default=_default, allow_nan=True),
+        json.dumps(payload, indent=2, default=_json_default, allow_nan=True),
         encoding="utf-8",
     )
     return out_path
@@ -409,21 +403,8 @@ def save_strategy_snapshot(
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     out_path = snapshot_dir / f"{date}_strategy.json"
 
-    def _default(v):
-        if isinstance(v, (pd.Timestamp, datetime)):
-            return v.isoformat()
-        try:
-            import numpy as np
-            if isinstance(v, np.floating):
-                return float(v)
-            if isinstance(v, np.integer):
-                return int(v)
-        except ImportError:
-            pass
-        return str(v)
-
     out_path.write_text(
-        json.dumps(payload, indent=2, default=_default, allow_nan=True),
+        json.dumps(payload, indent=2, default=_json_default, allow_nan=True),
         encoding="utf-8",
     )
     return out_path

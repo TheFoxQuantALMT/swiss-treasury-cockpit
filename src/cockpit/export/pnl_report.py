@@ -1026,11 +1026,11 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         f"BOOK1 Realized — MTD ({month_start} \u2192 {date_end})",
         f"Sum of bank-reported BOOK1 daily P&L across {days} snapshot(s). "
         "Accrual = @PnL_Acc_Estim_Adj; IAS = [Daily] PnL IAS - ORC.",
-        span_cols=5,
+        span_cols=4,
     )
     header_row = row
     row = write_header_row(
-        ws, row, ["Currency", "BOOK1 Accrual MTD", "BOOK1 IAS MTD", "BOOK1 Total MTD", "# Deals"],
+        ws, row, ["Currency", "BOOK1 Accrual MTD", "BOOK1 IAS MTD", "BOOK1 Total MTD"],
     )
 
     rows = block.get("rows") or []
@@ -1049,7 +1049,6 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         tc.number_format = FMT_CURRENCY
         tc.font = Font(bold=True)
         apply_sign_fill(tc, total)
-        # Column 5 left blank — deal count is not tracked in snapshot; kept for future use.
         row += 1
 
     totals = block.get("totals") or {}
@@ -1063,7 +1062,7 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         c.font = Font(bold=True)
         apply_sign_fill(c, v)
 
-    set_column_widths(ws, [12, 22, 22, 22, 10])
+    set_column_widths(ws, [12, 22, 22, 22])
     freeze(ws, f"A{header_row + 1}")
     footer(ws, date_run=date_run, source_key="book1_realized_mtd")
 
