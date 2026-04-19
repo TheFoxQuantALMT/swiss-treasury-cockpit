@@ -17,12 +17,12 @@ import pandas as pd
 import pytest
 
 from cockpit.config import CURRENCY_TO_OIS, FLOAT_NAME_TO_WASP
-from cockpit.data.parsers import parse_wirp_ideal
+from cockpit.data.parsers import parse_bank_native_wirp
 from cockpit.engine.pnl.matrices import build_date_grid
 from tests._helpers.mock_curves import _mock_curves_from_wirp
 from tests.conftest import requires_wasp as wasp
 
-FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "ideal_input"
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "bank_native" / "202624" / "2026041400"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -36,7 +36,7 @@ class TestMockCurvesFromWirp:
 
     @pytest.fixture()
     def wirp(self):
-        return parse_wirp_ideal(FIXTURES / "wirp.xlsx")
+        return parse_bank_native_wirp(FIXTURES / "20260414_WIRP.xlsx")
 
     @pytest.fixture()
     def days(self):
@@ -138,7 +138,7 @@ class TestWaspCurves:
         from cockpit.engine.pnl.curves import load_daily_curves
         from datetime import datetime
 
-        wirp = parse_wirp_ideal(FIXTURES / "wirp.xlsx")
+        wirp = parse_bank_native_wirp(FIXTURES / "20260414_WIRP.xlsx")
         days = build_date_grid(pd.Timestamp("2026-04-01"), months=24)
 
         wasp_curves = load_daily_curves(
@@ -171,17 +171,19 @@ class TestBook2Mtm:
     def test_wasp_stockswapmtm_returns_mtm(self):
         """stockSwapMTM should return a DataFrame with MTM column."""
         from cockpit.engine.pnl.engine import compute_book2_mtm
-        from cockpit.data.parsers import parse_deals
+        from cockpit.data.parsers import parse_bank_native_deals
         from cockpit.engine.pnl.forecast import ForecastRatePnL
         from datetime import datetime
 
-        deals = parse_deals(FIXTURES / "deals.xlsx")
-        _, irs_stock = ForecastRatePnL._split_deals_by_book(deals)
+        deals = parse_bank_native_deals(FIXTURES / "K+EUR Daily Rate PnL GVA_20260414.xlsx")
+        irs_stock, _ = ForecastRatePnL._split_book2_bank_native(
+            deals[deals["IAS Book"] == "BOOK2"].reset_index(drop=True)
+        )
 
         if irs_stock.empty:
             pytest.skip("No BOOK2 deals in test data")
 
-        result = compute_book2_mtm(irs_stock, datetime(2026, 4, 4), shock="0")
+        result = compute_book2_mtm(irs_stock, datetime(2026, 4, 14), shock="0")
         assert "MTM" in result.columns
         assert len(result) == len(irs_stock)
 

@@ -49,11 +49,14 @@ ws_idx = wb.active
 make_sheet(ws_idx, "INDEX",
     ["File Name", "Sheet Name", "Parser Function", "Type", "Primary Key(s)", "Description"],
     [
-        ("deals.xlsx", "Deals", "parse_deals()", "Core", "deal_id",
-         "Deal master data: product, amount, rates, maturity, counterparty, FTP"),
-        ("rate_schedule.xlsx", "Schedule", "parse_schedule()", "Core", "deal_id + YYYY/MM",
+        ("K+EUR Daily Rate PnL GVA_YYYYMMDD.xlsx", "Book1_Daily_PnL + Book2_Daily_PnL",
+         "parse_bank_native_deals()", "Core", "deal_id",
+         "Bank-native daily P&L workbook: deal master + per-day realized P&L (BOOK1 + BOOK2)"),
+        ("YYYYMMDD_rate_schedule.xlsx", "Operation_Propres EoM",
+         "parse_bank_native_schedule()", "Core", "deal_id + YYYY/MM",
          "Monthly nominal balance schedules per deal (wide format)"),
-        ("wirp.xlsx", "WIRP", "parse_wirp_ideal()", "Core", "index + meeting_date",
+        ("YYYYMMDD_WIRP.xlsx", "WIRP", "parse_bank_native_wirp()", "Core",
+         "index + meeting_date",
          "Market-implied rate expectations by currency (WIRP Bloomberg)"),
         ("reference_table.xlsx", "Reference", "parse_reference_table()", "Core", "counterparty",
          "Counterparty credit ratings, HQLA level, country codes"),
@@ -396,7 +399,7 @@ make_sheet(ws, "Constants & Enums",
     [22, 20, 28, 50],
 )
 
-out = "tests/fixtures/ideal_input/data_dictionary.xlsx"
+out = "tests/fixtures/bank_native/202624/2026041400/data_dictionary.xlsx"
 wb.save(out)
 print(f"Created {out}")
 print(f"Sheets ({len(wb.sheetnames)}): {wb.sheetnames}")

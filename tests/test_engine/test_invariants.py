@@ -1,7 +1,7 @@
 """Tier 2: Invariant property tests.
 
 These test properties that must ALWAYS hold regardless of input data.
-Uses the mock ideal-format input files for realistic multi-deal scenarios.
+Uses the bank-native fixture for realistic multi-deal scenarios.
 
 Regulatory basis:
     - IFRS 9 §6.5.16: hedge effectiveness (strategy legs sum to original)
@@ -17,7 +17,11 @@ import pandas as pd
 import pytest
 
 from cockpit.config import CURRENCY_TO_OIS
-from cockpit.data.parsers import parse_deals, parse_schedule, _month_columns
+from cockpit.data.parsers import (
+    _month_columns,
+    parse_bank_native_deals,
+    parse_bank_native_schedule,
+)
 from cockpit.engine.pnl.engine import (
     _build_ois_matrix,
     _resolve_rate_ref,
@@ -36,7 +40,7 @@ from cockpit.engine.pnl.matrices import (
     expand_nominal_to_daily,
 )
 
-FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "ideal_input"
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "bank_native" / "202624" / "2026041400"
 
 
 # ---------------------------------------------------------------------------
@@ -45,13 +49,13 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "ideal_input"
 
 @pytest.fixture(scope="module")
 def engine_result():
-    """Run the engine on the mock ideal-format files and return monthly DataFrame.
+    """Run the engine on the bank-native fixture and return monthly DataFrame.
 
     Returns dict with keys: monthly, deals, schedule, days, daily_pnl, etc.
     """
-    deals_all = parse_deals(FIXTURES / "deals.xlsx")
+    deals_all = parse_bank_native_deals(FIXTURES / "K+EUR Daily Rate PnL GVA_20260414.xlsx")
     book1 = deals_all[deals_all["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
-    schedule = parse_schedule(FIXTURES / "rate_schedule.xlsx")
+    schedule = parse_bank_native_schedule(FIXTURES / "20260414_rate_schedule.xlsx")
 
     deals = _resolve_rate_ref(book1)
 
@@ -73,7 +77,7 @@ def engine_result():
 
     # Build matrices
     nominal_daily = expand_nominal_to_daily(merged[month_cols], days)
-    alive = build_alive_mask(merged, days, date_run=pd.Timestamp("2026-04-04"))
+    alive = build_alive_mask(merged, days, date_run=pd.Timestamp("2026-04-14"))
     nominal_daily = nominal_daily * alive
     mm = build_mm_vector(merged)
     n_days = len(days)
@@ -95,7 +99,7 @@ def engine_result():
     accrual_days = build_accrual_days(days)
 
     # Two runs: with and without date_rates
-    date_rates = pd.Timestamp("2026-04-10")
+    date_rates = pd.Timestamp("2026-04-18")
     monthly_split = aggregate_to_monthly(
         daily_pnl, nominal_daily, ois_matrix, rate_matrix, days,
         funding_daily=funding_matrix, carry_funding_daily=carry_funding_matrix,

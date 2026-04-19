@@ -1,7 +1,3 @@
-from cockpit.data.parsers.mtd import parse_deals
-from cockpit.data.parsers.book import parse_book
-from cockpit.data.parsers.echeancier import parse_schedule
-from cockpit.data.parsers.wirp import parse_wirp_ideal
 from cockpit.data.parsers.reference_table import parse_reference_table
 from cockpit.data.parsers.budget import parse_budget
 from cockpit.data.parsers.hedge_pairs import derive_hedge_pairs
@@ -21,12 +17,6 @@ from cockpit.data.parsers.bank_native import (
 from pnl_engine.engine import _month_columns
 
 __all__ = [
-    # Ideal format parsers
-    "parse_deals",
-    "parse_schedule",
-    "parse_wirp_ideal",
-    # K+EUR Daily Rate PnL format
-    "parse_book",
     # Utilities
     "_month_columns",
     "parse_reference_table",
@@ -35,11 +25,12 @@ __all__ = [
     "derive_hedge_pairs",
     "parse_scenarios",
     "get_default_scenarios",
+    "parse_alert_thresholds",
     "parse_nmd_profiles",
     "parse_limits",
     "parse_liquidity_schedule",
     "parse_production_plan",
-    # Bank-native (K+EUR Daily PnL) — replacement format
+    # Bank-native (K+EUR Daily PnL) — only supported deal/schedule/WIRP format
     "BankNativeInputs",
     "discover_bank_native_input",
     "parse_bank_native_deals",

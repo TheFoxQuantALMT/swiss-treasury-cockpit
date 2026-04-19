@@ -13,9 +13,10 @@ The bank delivers three files per day under ``YYYYPP/YYYYMMDDVV/``:
 3. ``YYYYMMDD_rate_schedule.xlsx`` — wide monthly nominal schedule, sheet
    ``Operation_Propres EoM``, 60 monthly buckets (``YYYY/MM``).
 
-The parser output shape is drop-in compatible with ``parse_deals()`` /
-``parse_schedule()`` / ``parse_wirp_ideal()`` so downstream code sees
-familiar column names. It additionally carries three bank-native columns:
+The parser output is the canonical shape consumed by the engine
+(``Dealid``, ``Product``, ``Currency``, ``Direction``, ``Amount``,
+``Clientrate``, ``Maturitydate`` …). It additionally carries three
+bank-native columns:
 
 - ``Category2`` — one of :data:`pnl_engine.config.VALID_CATEGORY2`
 - ``FxRate`` — per-deal ``Optimus Reporting FxRate`` (CHF per deal-ccy unit);
@@ -285,11 +286,11 @@ def parse_bank_native_deals(
 
     Reads both ``Book1_Daily_PnL`` and ``Book2_Daily_PnL`` sheets, tags each
     row with ``IAS Book`` via :data:`SHEET_TO_BOOK`, and concatenates. The
-    resulting DataFrame has the same canonical column names as
-    :func:`parse_deals` (``Dealid``, ``Product``, ``Currency``, ``Direction``,
-    ``Amount``, ``Clientrate``, ``Maturitydate`` …) plus the three
-    bank-native additions ``Category2``, ``FxRate``, and retained reconciliation
-    columns (``PnL_Realized``, ``PnL_Acc_Adj``, …).
+    resulting DataFrame has the canonical column names consumed by the engine
+    (``Dealid``, ``Product``, ``Currency``, ``Direction``, ``Amount``,
+    ``Clientrate``, ``Maturitydate`` …) plus the three bank-native additions
+    ``Category2``, ``FxRate``, and retained reconciliation columns
+    (``PnL_Realized``, ``PnL_Acc_Adj``, …).
     """
     xl = pd.ExcelFile(path, engine="openpyxl")
     frames: list[pd.DataFrame] = []
@@ -323,7 +324,7 @@ def parse_bank_native_schedule(path: Path) -> pd.DataFrame:
     """Parse the bank-native wide rate schedule → canonical schedule DataFrame.
 
     Reads sheet ``Operation_Propres EoM``, normalises column names to the
-    ``parse_schedule()`` shape (``Dealid``, ``Direction``, ``Currency``,
+    canonical schedule shape (``Dealid``, ``Direction``, ``Currency``,
     ``Rate Type`` + ``YYYY/MM`` monthly balance columns).
     """
     df = pd.read_excel(path, sheet_name="Operation_Propres EoM", engine="openpyxl")

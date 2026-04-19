@@ -8,11 +8,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cockpit.data.parsers import parse_deals
 from cockpit.engine.pnl.forecast import ForecastRatePnL
 from tests.conftest import requires_wasp
 
-FIXTURES = Path(__file__).parent / "fixtures" / "ideal_input"
+FIXTURES = Path(__file__).parent / "fixtures" / "bank_native" / "202624" / "2026041400"
 
 
 @requires_wasp
@@ -23,8 +22,8 @@ class TestEveComputation:
     def engine(self):
         """Build and run a PnlEngine from fixtures."""
         pnl = ForecastRatePnL(
-            dateRun=datetime(2026, 4, 5),
-            dateRates=datetime(2026, 4, 5),
+            dateRun=datetime(2026, 4, 14),
+            dateRates=datetime(2026, 4, 14),
             export=False,
             input_dir=str(FIXTURES),
             output_dir="output",
@@ -70,8 +69,8 @@ class TestEveScenarios:
     @pytest.fixture
     def engine(self):
         pnl = ForecastRatePnL(
-            dateRun=datetime(2026, 4, 5),
-            dateRates=datetime(2026, 4, 5),
+            dateRun=datetime(2026, 4, 14),
+            dateRates=datetime(2026, 4, 14),
             export=False,
             input_dir=str(FIXTURES),
             output_dir="output",
@@ -184,8 +183,8 @@ class TestEveConvexity:
         """run_eve with scenarios populates eve_convexity attribute."""
         from cockpit.data.parsers.scenarios import parse_scenarios
         pnl = ForecastRatePnL(
-            dateRun=datetime(2026, 4, 5),
-            dateRates=datetime(2026, 4, 5),
+            dateRun=datetime(2026, 4, 14),
+            dateRates=datetime(2026, 4, 14),
             export=False,
             input_dir=str(FIXTURES),
             output_dir="output",

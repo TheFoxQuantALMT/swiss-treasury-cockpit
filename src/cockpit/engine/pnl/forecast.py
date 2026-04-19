@@ -53,10 +53,6 @@ from cockpit.data.parsers import (
     parse_bank_native_deals,
     parse_bank_native_schedule,
     parse_bank_native_wirp,
-    parse_book,
-    parse_deals,
-    parse_schedule,
-    parse_wirp_ideal,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,58 +125,23 @@ class ForecastRatePnL:
             self.run(shocks=list(pnl_cfg.SHOCKS), export=export)
 
     def load_data(self) -> None:
-        """Load deal data, schedule, WIRP, and IRS stock from Excel files.
+        """Load deal data, schedule, WIRP, and IRS stock from the bank-native triple.
 
-        Supports three input layouts (tried in order):
-        - **Bank-native format**: triple of ``*Daily Rate PnL*_YYYYMMDD.xlsx``,
-          ``YYYYMMDD_WIRP.xlsx``, ``YYYYMMDD_rate_schedule.xlsx`` — either
-          directly in ``input_dir`` or under a ``YYYYPP/YYYYMMDDVV/`` tree.
-          Applies per-deal FX re-apply via ``Optimus Reporting FxRate``.
-        - **K+EUR format**: ``*Daily Rate PnL*`` (Book1 + Book2 sheets, IRS-MTM from Folder Short Name)
-        - **Ideal format**: ``*deals*`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
+        Expects ``*Daily Rate PnL*_YYYYMMDD.xlsx``, ``YYYYMMDD_WIRP.xlsx``,
+        ``YYYYMMDD_rate_schedule.xlsx`` — either directly in ``input_dir`` or
+        under a ``YYYYPP/YYYYMMDDVV/`` tree. Applies per-deal FX re-apply via
+        ``Optimus Reporting FxRate``.
         """
         bank_native_inputs = self._detect_bank_native_input()
-        if bank_native_inputs is not None:
-            self._load_bank_native(bank_native_inputs)
-            logger.info("load_data Done (bank-native: %d deals, %d schedule rows)",
-                        len(self.pnlData), len(self.scheduleData))
-            return
-
-        book_files = list(self.input_dir.glob("*Daily Rate PnL*"))
-        deals_files = list(self.input_dir.glob("*deals*"))
-
-        if book_files:
-            book_file = book_files[0]
-            date_run_ts = pd.Timestamp(self.dateRun)
-            book1 = parse_book(book_file, date_run_ts, "Book1")
-            book2 = parse_book(book_file, date_run_ts, "Book2")
-            self.pnlData = pd.concat([book1, book2], ignore_index=True)
-            self.irsStock = self._irs_stock_from_pnl_data()
-            logger.info(
-                "Loaded K+EUR format: %s (Book1=%d, Book2=%d, IRS-MTM=%d)",
-                book_file.name, len(book1), len(book2), len(self.irsStock),
+        if bank_native_inputs is None:
+            raise FileNotFoundError(
+                f"No bank-native input triple found in {self.input_dir} "
+                f"(expected *Daily Rate PnL*_YYYYMMDD.xlsx + YYYYMMDD_WIRP.xlsx + "
+                f"YYYYMMDD_rate_schedule.xlsx)"
             )
-        elif deals_files:
-            all_deals = parse_deals(deals_files[0])
-            self.pnlData, self.irsStock = self._split_deals_by_book(all_deals)
-            logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
-                        deals_files[0].name, len(self.pnlData), len(self.irsStock))
-        else:
-            raise FileNotFoundError(f"No deal file found in {self.input_dir}")
-
-        schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*"))
-        if not schedule_files:
-            raise FileNotFoundError(f"No rate_schedule file found in {self.input_dir}")
-        self.scheduleData = parse_schedule(schedule_files[0])
-
-        wirp_files = list(self.input_dir.glob("*wirp*")) or list(self.input_dir.glob("*WIRP*"))
-        if not wirp_files:
-            raise FileNotFoundError(f"No WIRP file found in {self.input_dir}")
-        self.wirpData = parse_wirp_ideal(wirp_files[0])
-
-        self.scheduleDataMTM = pd.DataFrame()
-
-        logger.info("load_data Done (%d deals, %d schedule rows)", len(self.pnlData), len(self.scheduleData))
+        self._load_bank_native(bank_native_inputs)
+        logger.info("load_data Done (bank-native: %d deals, %d schedule rows)",
+                    len(self.pnlData), len(self.scheduleData))
 
     def _detect_bank_native_input(self) -> Optional[BankNativeInputs]:
         """Return a BankNativeInputs if the input_dir resolves to bank-native files.
@@ -282,54 +243,6 @@ class ForecastRatePnL:
             )
 
         return irs_stock.reset_index(drop=True), non_irs.reset_index(drop=True)
-
-    @staticmethod
-    def _split_deals_by_book(all_deals: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Split unified deals into BOOK1 (accrual) and BOOK2 (IRS stock for WASP MTM)."""
-        if "IAS Book" not in all_deals.columns:
-            return all_deals.copy(), pd.DataFrame()
-
-        book1 = all_deals[all_deals["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
-        book2_raw = all_deals[all_deals["IAS Book"] == "BOOK2"].copy()
-
-        if book2_raw.empty:
-            return book1, pd.DataFrame()
-
-        irs_stock = book2_raw.rename(columns={
-            "Maturitydate": "Maturity Date",
-            "Valuedate": "Value Date",
-            "Strategy IAS": "Strategy (Agapes IAS)",
-            "Currency": "Currency Code (ISO)",
-            "notional": "Notional",
-            "pay_receive": "Pay/Receive",
-            "Dealid": "Deal",
-            "Floating Rates Short Name": "Index",
-            "Clientrate": "Rate",
-        })
-
-        if "Pay/Receive" in irs_stock.columns:
-            irs_stock["Buy / Sell"] = np.where(
-                irs_stock["Pay/Receive"] == "RECEIVE", "Buy", "Sell"
-            )
-            irs_stock["Asset / Liabilities"] = np.where(
-                irs_stock["Pay/Receive"] == "RECEIVE", "Actif", "Passif"
-            )
-
-        return book1, irs_stock.reset_index(drop=True)
-
-    def _irs_stock_from_pnl_data(self) -> pd.DataFrame:
-        """Extract IRS-MTM deals from pnlData for compute_book2_mtm."""
-        mtm = self.pnlData[self.pnlData["Product"] == "IRS-MTM"].copy()
-        if mtm.empty:
-            return pd.DataFrame()
-
-        # Derive Pay/Receive from Direction: L/B/S → RECEIVE, D → PAY
-        if "Direction" in mtm.columns:
-            mtm["Pay/Receive"] = np.where(
-                mtm["Direction"].isin(["L", "B", "S"]), "RECEIVE", "PAY"
-            )
-
-        return mtm.reset_index(drop=True)
 
     def run(
         self,

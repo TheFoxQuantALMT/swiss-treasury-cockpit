@@ -16,7 +16,7 @@ from pnl_engine.nmd import (
     get_behavioral_maturity,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures" / "ideal_input"
+FIXTURES = Path(__file__).parent / "fixtures" / "bank_native" / "202624" / "2026041400"
 
 
 class TestNmdDecay:

@@ -13,10 +13,12 @@ def cmd_validate(
     *,
     input_dir: str,
 ) -> None:
-    """Validate input Excel files against expected schemas.
+    """Validate bank-native input files against expected schemas.
 
-    Runs the centralised checks in `cockpit.data.quality.build_quality_report`
-    so the CLI matches what the dashboard's Data Quality tab surfaces.
+    Auto-discovers the bank-native triple under ``input_dir`` (either flat or
+    in a ``YYYYPP/YYYYMMDDVV/`` tree) and runs the centralised checks in
+    :func:`cockpit.data.quality.build_quality_report` so the CLI matches what
+    the dashboard's Data Quality tab surfaces.
     """
     input_path = Path(input_dir)
     if not input_path.exists():
@@ -27,16 +29,25 @@ def cmd_validate(
     warnings: list[str] = []
     deals = None
     schedule = None
+    wirp = None
+    inputs = None
 
-    # Parse deals
-    deals_files = list(input_path.glob("*deals*"))
-    if not deals_files:
-        errors.append("No deals file found")
-    else:
+    from cockpit.data.parsers import (
+        discover_bank_native_input,
+        parse_bank_native_deals,
+        parse_bank_native_schedule,
+        parse_bank_native_wirp,
+    )
+
+    try:
+        inputs = discover_bank_native_input(input_path)
+    except FileNotFoundError as e:
+        errors.append(f"No bank-native input triple discovered: {e}")
+
+    if inputs is not None:
         try:
-            from cockpit.data.parsers import parse_deals
-            deals = parse_deals(deals_files[0])
-            print(f"[validate] Deals: {len(deals)} rows from {deals_files[0].name}")
+            deals = parse_bank_native_deals(inputs.pnl_workbook, date_run=inputs.position_date)
+            print(f"[validate] Deals: {len(deals)} rows from {inputs.pnl_workbook.name}")
             required_cols = {"Dealid", "Product", "Direction"}
             missing = required_cols - set(deals.columns)
             if missing:
@@ -49,26 +60,26 @@ def cmd_validate(
         except Exception as e:
             errors.append(f"Failed to parse deals: {e}")
 
-    # Parse schedule
-    schedule_files = list(input_path.glob("*schedule*"))
-    if not schedule_files:
-        errors.append("No schedule file found")
-    else:
         try:
-            from cockpit.data.parsers import parse_schedule
-            schedule = parse_schedule(schedule_files[0])
-            print(f"[validate] Schedule: {len(schedule)} rows from {schedule_files[0].name}")
+            schedule = parse_bank_native_schedule(inputs.rate_schedule)
+            print(f"[validate] Schedule: {len(schedule)} rows from {inputs.rate_schedule.name}")
         except Exception as e:
             errors.append(f"Failed to parse schedule: {e}")
 
-    # Check optional files (presence only; parse errors surface at run time)
+        try:
+            wirp = parse_bank_native_wirp(inputs.wirp)
+            print(f"[validate] WIRP: {len(wirp)} rows from {inputs.wirp.name}")
+        except Exception as e:
+            warnings.append(f"Failed to parse WIRP: {e}")
+
+    # Check optional aux files (presence only; parse errors surface at run time)
+    discovery_root = inputs.day_dir if inputs is not None else input_path
     for pattern, name in [
         ("*budget*", "Budget"), ("*hedge*", "Hedge pairs"),
         ("*scenario*", "Scenarios"), ("*nmd*", "NMD profiles"),
         ("*limits*", "Limits"), ("*liquidity*", "Liquidity schedule"),
-        ("*wirp*", "WIRP"),
     ]:
-        candidates = list(input_path.glob(pattern))
+        candidates = list(discovery_root.glob(pattern))
         if candidates:
             print(f"[validate] {name}: found {candidates[0].name}")
         else:
@@ -80,7 +91,7 @@ def cmd_validate(
         try:
             from cockpit.data.quality import build_quality_report
             report = build_quality_report(
-                date_run=datetime.now(),
+                date_run=inputs.position_date.to_pydatetime() if inputs is not None else datetime.now(),
                 deals=deals,
                 echeancier=schedule,
                 ois_curves=None,
