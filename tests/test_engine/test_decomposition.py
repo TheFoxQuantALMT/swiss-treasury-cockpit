@@ -201,6 +201,7 @@ def test_wasp_carry_comparison():
             pd.Timestamp("2026-04-01"),
             pd.Timestamp("2026-04-30"),
             "CHF",
+            ref_date=pd.Timestamp("2026-04-01"),
         )
     except (ImportError, RuntimeError):
         pytest.skip("WASP unavailable")

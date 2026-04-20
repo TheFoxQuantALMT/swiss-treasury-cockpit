@@ -163,7 +163,11 @@ def _parse_one_sheet(xl: pd.ExcelFile, sheet_name: str, book: str,
                      date_run: pd.Timestamp | None) -> pd.DataFrame:
     """Parse a single Book{1,2} sheet into canonical shape."""
     raw = _read_sheet_with_anchored_header(xl, sheet_name)
-    rename = {k: v for k, v in _DEAL_RENAME.items() if k in raw.columns}
+    # Case-insensitive header match — bank exports drift on casing
+    # (e.g. "Calculated Initial Amount (Measure)" vs "…initial…").
+    col_by_lower = {str(c).lower(): c for c in raw.columns}
+    rename = {col_by_lower[k.lower()]: v
+              for k, v in _DEAL_RENAME.items() if k.lower() in col_by_lower}
     df = raw.rename(columns=rename)
 
     if "Position Date" in df.columns:

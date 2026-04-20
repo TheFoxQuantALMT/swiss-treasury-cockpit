@@ -42,8 +42,8 @@ def load_daily_curves(
     _require_wasp()
     shock_f = 0.0 if shock == "wirp" else float(shock)
 
-    # Pre-load all ramp markets (registers mktUSD/mktEUR/… handles)
-    wt.loadAllRampMarket(wt.lastBusinessDay(date), Shock=shock_f)
+    # Register mktUSD/mktEUR/... handles for (date, shock_f); no-op if already active.
+    _ensure_ramp_loaded(date, shock=shock_f)
 
     def _load_one(indice: str) -> pd.DataFrame:
         ccy = wt.indiceDict.get(indice)
@@ -80,47 +80,57 @@ def overlay_wirp(base: pd.DataFrame, wirp: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+# mkt{CCY} handles are shared between the AGG ramp and the carry ramp, so we
+# track the *currently active* state rather than a set of "ever loaded" keys:
+# any load overwrites the handles, so a cache that only recorded intent would
+# serve stale state after an interleaved load of the other ramp kind.
+_active_ramp: Optional[tuple] = None
+
+
 def _ensure_ramp_loaded(date: Any, shock: float = 0.0) -> None:
-    """Call ``loadAllRampMarket`` once per (date, shock) to populate mkt handles."""
+    """Load the AGG ramp for (date, shock). No-op if already the active ramp."""
+    global _active_ramp
     _require_wasp()
     bday = wt.lastBusinessDay(date)
     key = ("agg", str(bday), shock)
-    if key not in _ramp_loaded:
-        wt.loadAllRampMarket(bday, Shock=shock)
-        _ramp_loaded.add(key)
+    if _active_ramp == key:
+        return
+    wt.loadAllRampMarket(bday, Shock=shock)
+    _active_ramp = key
 
 
-def _ensure_carry_ramp_loaded(date: Any) -> None:
-    """Load MESA MARKET ALMT ramp via wt.loadCarryCompoundedMarket.
+def _ensure_carry_ramp_loaded(ref_date: Any) -> None:
+    """Load the MESA MARKET ALMT (carry) ramp for ``ref_date``.
 
-    Note: this overwrites mkt{CCY} handles (shared with AGG ramp).
-    Call AGG ramp reload after carry if both are needed in same session.
+    Carry values are shock-independent, so only ``lastBusinessDay(ref_date)``
+    is part of the cache key. No-op if already the active ramp.
     """
+    global _active_ramp
     _require_wasp()
-    bday = wt.lastBusinessDay(date)
+    bday = wt.lastBusinessDay(ref_date)
     key = ("carry", str(bday))
-    if key not in _ramp_loaded:
-        wt.loadCarryCompoundedMarket(bday)
-        _ramp_loaded.add(key)
-        # Invalidate AGG ramp cache since handles were overwritten
-        _ramp_loaded.discard(("agg", str(bday), 0.0))
-
-
-_ramp_loaded: set[tuple] = set()
+    if _active_ramp == key:
+        return
+    wt.loadCarryCompoundedMarket(bday)
+    _active_ramp = key
 
 
 def load_carry_compounded(
     start: Any,
     end: Any,
     currency: str,
+    *,
+    ref_date: Any,
 ) -> float:
     """Load WASP carry-compounded rate for a (start, end, currency) period.
 
     Uses carry-specific indices (CHF->CSCML5, EUR->ESAVB1, USD->USSOFR,
-    GBP->GBPOIS) and the ``MESA MARKET ALMT`` ramp.
+    GBP->GBPOIS) and the ``MESA MARKET ALMT`` ramp. ``ref_date`` is the market
+    reference date (typically ``dateRates``) used to load the ramp; it is
+    independent of the (start, end) period being priced.
     """
     _require_wasp()
-    _ensure_carry_ramp_loaded(start)
+    _ensure_carry_ramp_loaded(ref_date)
     return wt.carryCompounded(start, end, currency)
 
 
@@ -131,15 +141,18 @@ def load_carry_compounded_cached(
     start: Any,
     end: Any,
     currency: str,
+    *,
+    ref_date: Any,
 ) -> float:
     """Cached version of load_carry_compounded — avoids duplicate WASP calls.
 
-    Cache key is (currency, start_date_str, end_date_str).
-    Call clear_carry_cache() between runs to reset.
+    Cache key is (currency, start_date_str, end_date_str); carry values are
+    shock-independent so shock is not part of the key. ``ref_date`` is forwarded
+    to the ramp loader. Call clear_carry_cache() between runs to reset.
     """
     key = (currency, str(pd.Timestamp(start).date()), str(pd.Timestamp(end).date()))
     if key not in _carry_cache:
-        _carry_cache[key] = load_carry_compounded(start, end, currency)
+        _carry_cache[key] = load_carry_compounded(start, end, currency, ref_date=ref_date)
     return _carry_cache[key]
 
 
@@ -152,6 +165,8 @@ def load_carry_compounded_series(
     start: Any,
     end: Any,
     currency: str,
+    *,
+    ref_date: Any,
 ) -> pd.DataFrame:
     """Monthly carry-compounded series via WASP for validation."""
     _require_wasp()
@@ -161,7 +176,7 @@ def load_carry_compounded_series(
 
     rows = []
     for month_end in months:
-        carry = load_carry_compounded(start, month_end, currency)
+        carry = load_carry_compounded(start, month_end, currency, ref_date=ref_date)
         rows.append({"Date": month_end, "Currency": currency, "CarryCompounded": carry})
 
     return pd.DataFrame(rows)

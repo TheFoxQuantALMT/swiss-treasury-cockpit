@@ -582,7 +582,7 @@ def stockSwapMTM(dateC, stockSwapsMTM, useMRX = False, Shock=0):
             row['Value Date'],
             row['Maturity Date'],
             row['Currency Code (ISO)'],
-            row['Amount'],
+            row['Notional'],
             _resolve_swap_indice(row['Index']),
             row['Buy / Sell'],
             mkt_handle,

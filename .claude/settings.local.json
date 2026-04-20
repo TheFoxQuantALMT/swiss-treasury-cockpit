@@ -37,7 +37,13 @@
       "Bash(git -C /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit log --oneline --all -- \"*bundle.txt\")",
       "Bash(git -C /c/Users/blanc/Documents/Projects/swiss-treasury-cockpit log --all --pretty=format:\"%H %s\" -- \"*bundle.txt\")",
       "Bash(git *)",
-      "Bash(sed 's/===FILE START=== //')"
+      "Bash(sed 's/===FILE START=== //')",
+      "Bash(cygpath -w /tmp/simplify_diff.txt)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(rm -rf /tmp/pnl_extract)",
+      "Bash(mkdir -p /tmp/pnl_extract)",
+      "Bash(awk '/^===EXTRACTOR START===$/,/^===EXTRACTOR END===$/' pnl_prod_bundle.txt)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run *)"
     ]
   }
 }

@@ -59,10 +59,18 @@ class TestDetection:
 
 
 class TestLoadBankNative:
-    def test_pnldata_is_book1(self, loaded):
+    def test_pnldata_is_book1_plus_synthesized_hcd(self, loaded):
+        # 18 native BOOK1 rows + HCD rows synthesized from BOOK2 hedge
+        # counter-deals sharing a Strategy IAS with a BOOK1 item.
         assert loaded.pnlData is not None
-        assert len(loaded.pnlData) == 18
         assert (loaded.pnlData["IAS Book"] == "BOOK1").all()
+        native = loaded.pnlData[loaded.pnlData["Product"] != "HCD"]
+        hcd = loaded.pnlData[loaded.pnlData["Product"] == "HCD"]
+        assert len(native) == 18
+        # Every HCD row must trace to a BOOK1 Strategy IAS
+        book1_strats = set(native.loc[native["Strategy IAS"].notna(), "Strategy IAS"])
+        assert set(hcd["Strategy IAS"]).issubset(book1_strats)
+        assert len(hcd) > 0  # fixture has overlapping strategies
 
     def test_irsstock_is_book2_irs_only(self, loaded):
         assert loaded.irsStock is not None
@@ -106,7 +114,10 @@ class TestLoadBankNative:
         assert (irs.loc[~is_recv, "Pay/Receive"] == "PAY").all()
 
     def test_disjoint_book_split(self, loaded):
-        # Book1 ∩ Book2 = ∅ on Dealid
-        book1_ids = set(loaded.pnlData["Dealid"])
+        # Native BOOK1 (excluding synthesized HCD) ∩ BOOK2 = ∅ on Dealid.
+        # Synthesized HCD rows intentionally share dealids with BOOK2 hedge
+        # deals — they're the same economic deal viewed as an accrual leg.
+        native = loaded.pnlData[loaded.pnlData["Product"] != "HCD"]
+        book1_ids = set(native["Dealid"])
         book2_ids = set(loaded.irsStock["Deal"]) | set(loaded.book2NonIrs["Dealid"])
         assert book1_ids.isdisjoint(book2_ids)

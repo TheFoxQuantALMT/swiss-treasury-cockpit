@@ -1,7 +1,7 @@
 ============================================================
 PNL_PROD BUNDLE — swiss-treasury-cockpit
-Generated: 2026-04-18
-Files: 108
+Generated: 2026-04-19
+Files: 104
 ============================================================
 
 STEP 1: Save this entire file as "pnl_prod_bundle.txt"
@@ -252,11 +252,14 @@ ws_idx = wb.active
 make_sheet(ws_idx, "INDEX",
     ["File Name", "Sheet Name", "Parser Function", "Type", "Primary Key(s)", "Description"],
     [
-        ("deals.xlsx", "Deals", "parse_deals()", "Core", "deal_id",
-         "Deal master data: product, amount, rates, maturity, counterparty, FTP"),
-        ("rate_schedule.xlsx", "Schedule", "parse_schedule()", "Core", "deal_id + YYYY/MM",
+        ("K+EUR Daily Rate PnL GVA_YYYYMMDD.xlsx", "Book1_Daily_PnL + Book2_Daily_PnL",
+         "parse_bank_native_deals()", "Core", "deal_id",
+         "Bank-native daily P&L workbook: deal master + per-day realized P&L (BOOK1 + BOOK2)"),
+        ("YYYYMMDD_rate_schedule.xlsx", "Operation_Propres EoM",
+         "parse_bank_native_schedule()", "Core", "deal_id + YYYY/MM",
          "Monthly nominal balance schedules per deal (wide format)"),
-        ("wirp.xlsx", "WIRP", "parse_wirp_ideal()", "Core", "index + meeting_date",
+        ("YYYYMMDD_WIRP.xlsx", "WIRP", "parse_bank_native_wirp()", "Core",
+         "index + meeting_date",
          "Market-implied rate expectations by currency (WIRP Bloomberg)"),
         ("reference_table.xlsx", "Reference", "parse_reference_table()", "Core", "counterparty",
          "Counterparty credit ratings, HQLA level, country codes"),
@@ -599,7 +602,7 @@ make_sheet(ws, "Constants & Enums",
     [22, 20, 28, 50],
 )
 
-out = "tests/fixtures/ideal_input/data_dictionary.xlsx"
+out = "tests/fixtures/bank_native/202624/2026041400/data_dictionary.xlsx"
 wb.save(out)
 print(f"Created {out}")
 print(f"Sheets ({len(wb.sheetnames)}): {wb.sheetnames}")
@@ -2239,10 +2242,12 @@ def cmd_validate(
     *,
     input_dir: str,
 ) -> None:
-    """Validate input Excel files against expected schemas.
+    """Validate bank-native input files against expected schemas.
 
-    Runs the centralised checks in `cockpit.data.quality.build_quality_report`
-    so the CLI matches what the dashboard's Data Quality tab surfaces.
+    Auto-discovers the bank-native triple under ``input_dir`` (either flat or
+    in a ``YYYYPP/YYYYMMDDVV/`` tree) and runs the centralised checks in
+    :func:`cockpit.data.quality.build_quality_report` so the CLI matches what
+    the dashboard's Data Quality tab surfaces.
     """
     input_path = Path(input_dir)
     if not input_path.exists():
@@ -2253,16 +2258,25 @@ def cmd_validate(
     warnings: list[str] = []
     deals = None
     schedule = None
+    wirp = None
+    inputs = None
 
-    # Parse deals
-    deals_files = list(input_path.glob("*deals*"))
-    if not deals_files:
-        errors.append("No deals file found")
-    else:
+    from cockpit.data.parsers import (
+        discover_bank_native_input,
+        parse_bank_native_deals,
+        parse_bank_native_schedule,
+        parse_bank_native_wirp,
+    )
+
+    try:
+        inputs = discover_bank_native_input(input_path)
+    except FileNotFoundError as e:
+        errors.append(f"No bank-native input triple discovered: {e}")
+
+    if inputs is not None:
         try:
-            from cockpit.data.parsers import parse_deals
-            deals = parse_deals(deals_files[0])
-            print(f"[validate] Deals: {len(deals)} rows from {deals_files[0].name}")
+            deals = parse_bank_native_deals(inputs.pnl_workbook, date_run=inputs.position_date)
+            print(f"[validate] Deals: {len(deals)} rows from {inputs.pnl_workbook.name}")
             required_cols = {"Dealid", "Product", "Direction"}
             missing = required_cols - set(deals.columns)
             if missing:
@@ -2275,26 +2289,26 @@ def cmd_validate(
         except Exception as e:
             errors.append(f"Failed to parse deals: {e}")
 
-    # Parse schedule
-    schedule_files = list(input_path.glob("*schedule*"))
-    if not schedule_files:
-        errors.append("No schedule file found")
-    else:
         try:
-            from cockpit.data.parsers import parse_schedule
-            schedule = parse_schedule(schedule_files[0])
-            print(f"[validate] Schedule: {len(schedule)} rows from {schedule_files[0].name}")
+            schedule = parse_bank_native_schedule(inputs.rate_schedule)
+            print(f"[validate] Schedule: {len(schedule)} rows from {inputs.rate_schedule.name}")
         except Exception as e:
             errors.append(f"Failed to parse schedule: {e}")
 
-    # Check optional files (presence only; parse errors surface at run time)
+        try:
+            wirp = parse_bank_native_wirp(inputs.wirp)
+            print(f"[validate] WIRP: {len(wirp)} rows from {inputs.wirp.name}")
+        except Exception as e:
+            warnings.append(f"Failed to parse WIRP: {e}")
+
+    # Check optional aux files (presence only; parse errors surface at run time)
+    discovery_root = inputs.day_dir if inputs is not None else input_path
     for pattern, name in [
         ("*budget*", "Budget"), ("*hedge*", "Hedge pairs"),
         ("*scenario*", "Scenarios"), ("*nmd*", "NMD profiles"),
         ("*limits*", "Limits"), ("*liquidity*", "Liquidity schedule"),
-        ("*wirp*", "WIRP"),
     ]:
-        candidates = list(input_path.glob(pattern))
+        candidates = list(discovery_root.glob(pattern))
         if candidates:
             print(f"[validate] {name}: found {candidates[0].name}")
         else:
@@ -2306,7 +2320,7 @@ def cmd_validate(
         try:
             from cockpit.data.quality import build_quality_report
             report = build_quality_report(
-                date_run=datetime.now(),
+                date_run=inputs.position_date.to_pydatetime() if inputs is not None else datetime.now(),
                 deals=deals,
                 echeancier=schedule,
                 ois_curves=None,
@@ -2690,10 +2704,6 @@ def reset_cache() -> None:
 ===FILE END=== src/cockpit/data/__init__.py
 
 ===FILE START=== src/cockpit/data/parsers/__init__.py
-from cockpit.data.parsers.mtd import parse_deals
-from cockpit.data.parsers.book import parse_book
-from cockpit.data.parsers.echeancier import parse_schedule
-from cockpit.data.parsers.wirp import parse_wirp_ideal
 from cockpit.data.parsers.reference_table import parse_reference_table
 from cockpit.data.parsers.budget import parse_budget
 from cockpit.data.parsers.hedge_pairs import derive_hedge_pairs
@@ -2713,12 +2723,6 @@ from cockpit.data.parsers.bank_native import (
 from pnl_engine.engine import _month_columns
 
 __all__ = [
-    # Ideal format parsers
-    "parse_deals",
-    "parse_schedule",
-    "parse_wirp_ideal",
-    # K+EUR Daily Rate PnL format
-    "parse_book",
     # Utilities
     "_month_columns",
     "parse_reference_table",
@@ -2727,11 +2731,12 @@ __all__ = [
     "derive_hedge_pairs",
     "parse_scenarios",
     "get_default_scenarios",
+    "parse_alert_thresholds",
     "parse_nmd_profiles",
     "parse_limits",
     "parse_liquidity_schedule",
     "parse_production_plan",
-    # Bank-native (K+EUR Daily PnL) — replacement format
+    # Bank-native (K+EUR Daily PnL) — only supported deal/schedule/WIRP format
     "BankNativeInputs",
     "discover_bank_native_input",
     "parse_bank_native_deals",
@@ -2802,9 +2807,10 @@ The bank delivers three files per day under ``YYYYPP/YYYYMMDDVV/``:
 3. ``YYYYMMDD_rate_schedule.xlsx`` — wide monthly nominal schedule, sheet
    ``Operation_Propres EoM``, 60 monthly buckets (``YYYY/MM``).
 
-The parser output shape is drop-in compatible with ``parse_deals()`` /
-``parse_schedule()`` / ``parse_wirp_ideal()`` so downstream code sees
-familiar column names. It additionally carries three bank-native columns:
+The parser output is the canonical shape consumed by the engine
+(``Dealid``, ``Product``, ``Currency``, ``Direction``, ``Amount``,
+``Clientrate``, ``Maturitydate`` …). It additionally carries three
+bank-native columns:
 
 - ``Category2`` — one of :data:`pnl_engine.config.VALID_CATEGORY2`
 - ``FxRate`` — per-deal ``Optimus Reporting FxRate`` (CHF per deal-ccy unit);
@@ -3074,11 +3080,11 @@ def parse_bank_native_deals(
 
     Reads both ``Book1_Daily_PnL`` and ``Book2_Daily_PnL`` sheets, tags each
     row with ``IAS Book`` via :data:`SHEET_TO_BOOK`, and concatenates. The
-    resulting DataFrame has the same canonical column names as
-    :func:`parse_deals` (``Dealid``, ``Product``, ``Currency``, ``Direction``,
-    ``Amount``, ``Clientrate``, ``Maturitydate`` …) plus the three
-    bank-native additions ``Category2``, ``FxRate``, and retained reconciliation
-    columns (``PnL_Realized``, ``PnL_Acc_Adj``, …).
+    resulting DataFrame has the canonical column names consumed by the engine
+    (``Dealid``, ``Product``, ``Currency``, ``Direction``, ``Amount``,
+    ``Clientrate``, ``Maturitydate`` …) plus the three bank-native additions
+    ``Category2``, ``FxRate``, and retained reconciliation columns
+    (``PnL_Realized``, ``PnL_Acc_Adj``, …).
     """
     xl = pd.ExcelFile(path, engine="openpyxl")
     frames: list[pd.DataFrame] = []
@@ -3112,7 +3118,7 @@ def parse_bank_native_schedule(path: Path) -> pd.DataFrame:
     """Parse the bank-native wide rate schedule → canonical schedule DataFrame.
 
     Reads sheet ``Operation_Propres EoM``, normalises column names to the
-    ``parse_schedule()`` shape (``Dealid``, ``Direction``, ``Currency``,
+    canonical schedule shape (``Dealid``, ``Direction``, ``Currency``,
     ``Rate Type`` + ``YYYY/MM`` monthly balance columns).
     """
     df = pd.read_excel(path, sheet_name="Operation_Propres EoM", engine="openpyxl")
@@ -3298,194 +3304,6 @@ def discover_bank_native_input(
 
 ===FILE END=== src/cockpit/data/parsers/bank_native.py
 
-===FILE START=== src/cockpit/data/parsers/book.py
-"""Parser for K+EUR Daily Rate PnL GVA format (Book1 + Book2 sheets)."""
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-
-from cockpit.config import SUPPORTED_CURRENCIES
-from pnl_engine.config import VALID_DIRECTIONS
-
-logger = logging.getLogger(__name__)
-
-_SHEET_MAP = {
-    "Book1": "Book1_Daily_PnL",
-    "Book2": "Book2_Daily_PnL",
-}
-
-_BOOK_RENAME = {
-    "Deal ID": "Dealid",
-    "Deal Currency @Cur_Agg": "Currency",
-    "@Direction": "Direction",
-    "Calculated Initial Amount (Measure)": "Amount",
-    "Rate Reference": "Floating Rates Short Name",
-    "Nominal Interest Rate": "Clientrate",
-    "Yield to Maturity": "YTM",
-    "BD - 1 - Rate": "EqOisRate",
-    "BD \u2013 1 \u2013 Rate": "EqOisRate",  # em-dash variant
-    "Credit Spread FIFO": "CreditSpread_FIFO",
-    "Trade Date": "Tradedate",
-    "Value Date": "Valuedate",
-    "Maturity Date": "Maturitydate",
-    "Liquidation Date": "Liquidation Date",
-    "Strategy IAS": "Strategy IAS",
-    "CRDS Counterparty Code": "Counterparty",
-    "@Amount_CHF": "Amount_CHF",
-    "Portfolio Short Name": "Portfolio Short Name",
-    "Folder Short Name": "Folder Short Name",
-    "Source Product Code": "Source Product Code",
-    "Source Sub Product Type": "Source Sub Product Type",
-    "@Indexation": "Indexation",
-    "ISIN Code": "ISIN Code",
-    "Rate Start Date": "Rate Start Date",
-    "Rate End Date": "Rate End Date",
-    "@NbBasis": "NbBasis",
-    "@EqOISRate2": "EqOISRate2",
-    "CoC/SellDown Carry Date": "CocCarryDate",
-    "@Pnl_Acc_Estim_Unadj": "PnL_Acc_Unadj",
-    "@PnL_CoC_Estim_Unadj": "PnL_CoC_Unadj",
-    "@Nb_Day_Adj": "Nb_Day_Adj",
-    "@PnL_Acc_Estim_Adj": "PnL_Acc_Adj",
-    "@PnL_Coc_Estim_Adj": "PnL_CoC_Adj",
-    "[Daily] PnL IAS - ORC": "PnL_IAS",
-    "[Daily] PnL MTM - ORC": "PnL_MTM",
-    "IAM Deal ID": "IAM Deal ID",
-    "Clean_Price": "Clean Price",  # % of par, bonds only; NaN elsewhere
-}
-
-_RATE_COLS = ["Clientrate", "EqOisRate", "YTM"]
-
-
-def parse_book(
-    path: Path,
-    date_run: pd.Timestamp,
-    book: str,
-) -> pd.DataFrame:
-    """Parse a single book sheet from K+EUR Daily Rate PnL GVA file.
-
-    Parameters
-    ----------
-    path : Path
-        Excel file path (e.g. ``K+EUR Daily Rate PnL GVA.xlsx``).
-    date_run : pd.Timestamp
-        Position date to filter on.
-    book : str
-        ``"Book1"`` or ``"Book2"``.
-
-    Returns
-    -------
-    pd.DataFrame
-        Deals with canonical internal column names, rates in decimal.
-    """
-    sheet = _SHEET_MAP.get(book)
-    if sheet is None:
-        raise ValueError(f"Unknown book '{book}', expected one of {list(_SHEET_MAP)}")
-
-    raw = pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
-    rename = {k: v for k, v in _BOOK_RENAME.items() if k in raw.columns}
-    df = raw.rename(columns=rename)
-
-    # --- Filter by Position Date ---
-    if "Position Date" in df.columns:
-        df["Position Date"] = pd.to_datetime(df["Position Date"], errors="coerce")
-        target = pd.Timestamp(date_run).normalize()
-        df = df[df["Position Date"].dt.normalize() == target].copy()
-        if df.empty:
-            logger.warning("parse_book(%s): no rows for Position Date %s", book, target.date())
-            return df
-
-    # --- Dealid ---
-    if "Dealid" not in df.columns:
-        raise ValueError(f"parse_book({book}): missing 'Deal ID' column in {path.name}")
-    df["Dealid"] = pd.to_numeric(df["Dealid"], errors="coerce")
-    n_bad_id = df["Dealid"].isna().sum()
-    if n_bad_id > 0:
-        logger.warning("parse_book(%s): %d rows with non-numeric Deal ID (dropped)", book, n_bad_id)
-        df = df[df["Dealid"].notna()].copy()
-
-    # --- Product derivation ---
-    src_product = df.get("Source Product Code", pd.Series("", index=df.index)).fillna("")
-    folder = df.get("Folder Short Name", pd.Series("", index=df.index)).fillna("")
-    df["Product"] = np.where(
-        src_product.isin(["LD", "IAM"]),
-        "IAM/LD",
-        np.where(folder == "TMSWBFIGE", "IRS-MTM", src_product),
-    )
-
-    # --- Direction: first char ---
-    if "Direction" in df.columns:
-        df["Direction"] = df["Direction"].astype(str).str[0]
-        bad_dir = ~df["Direction"].isin(VALID_DIRECTIONS)
-        if bad_dir.any():
-            logger.warning("parse_book(%s): %d rows with invalid Direction (dropped)", book, int(bad_dir.sum()))
-            df = df[~bad_dir].copy()
-
-    # --- IAS Book from sheet name ---
-    df["IAS Book"] = book.upper()  # "BOOK1" or "BOOK2"
-
-    # --- Perimeter from counterparty ---
-    from cockpit.config import _WM_COUNTERPARTIES, _CIB_COUNTERPARTIES
-
-    if "Counterparty" in df.columns:
-        df["Périmètre TOTAL"] = np.where(
-            df["Counterparty"].isin(_WM_COUNTERPARTIES), "WM",
-            np.where(df["Counterparty"].isin(_CIB_COUNTERPARTIES), "CIB", "CC"),
-        )
-    else:
-        df["Périmètre TOTAL"] = "CC"
-
-    # --- Credit Spread subtraction for BND ---
-    if "CreditSpread_FIFO" in df.columns and "YTM" in df.columns:
-        df["YTM"] = df["YTM"].fillna(0) - df["CreditSpread_FIFO"].fillna(0) / 100
-        df = df.drop(columns=["CreditSpread_FIFO"])
-
-    # --- Rates: percent → decimal ---
-    for col in _RATE_COLS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0) / 100.0
-
-    # --- Spread: bps → decimal ---
-    if "Spread" in df.columns:
-        df["Spread"] = pd.to_numeric(df["Spread"], errors="coerce").fillna(0.0) / 10_000.0
-
-    # --- Clean Price: % of par, kept as-is (NaN for non-bond rows) ---
-    if "Clean Price" in df.columns:
-        df["Clean Price"] = pd.to_numeric(df["Clean Price"], errors="coerce")
-
-    # --- Filter: supported currencies ---
-    if "Currency" in df.columns:
-        n_before = len(df)
-        df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
-        n_dropped = n_before - len(df)
-        if n_dropped > 0:
-            logger.info("parse_book(%s): dropped %d rows with unsupported currency", book, n_dropped)
-
-    # --- Parse dates ---
-    for col in ["Maturitydate", "Valuedate", "Tradedate"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-
-    # --- Maturity required ---
-    if "Maturitydate" in df.columns:
-        bad_mat = df["Maturitydate"].isna()
-        if bad_mat.any():
-            logger.warning("parse_book(%s): %d rows with invalid maturity (dropped)", book, int(bad_mat.sum()))
-            df = df[~bad_mat].copy()
-
-    # --- Fill blanks ---
-    if "Floating Rates Short Name" in df.columns:
-        df["Floating Rates Short Name"] = df["Floating Rates Short Name"].fillna("")
-
-    logger.info("parse_book(%s): %d deals loaded from %s", book, len(df), path.name)
-    return df.reset_index(drop=True)
-
-===FILE END=== src/cockpit/data/parsers/book.py
-
 ===FILE START=== src/cockpit/data/parsers/budget.py
 """Parser for budget.xlsx — monthly NII budget by currency."""
 from __future__ import annotations
@@ -3647,76 +3465,6 @@ def custom_scenarios_to_bcbs_format(df: pd.DataFrame) -> list[dict]:
     return scenarios
 
 ===FILE END=== src/cockpit/data/parsers/custom_scenarios.py
-
-===FILE START=== src/cockpit/data/parsers/echeancier.py
-"""Parser for ideal-format rate_schedule.xlsx → wide DataFrame with monthly balances."""
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-import pandas as pd
-
-from cockpit.config import SUPPORTED_CURRENCIES
-
-logger = logging.getLogger(__name__)
-
-_VALID_DIRECTIONS = {"B", "L", "D", "S"}
-
-
-def _month_columns(df: pd.DataFrame) -> list[str]:
-    """Return column names that look like 'YYYY/MM' date strings."""
-    return [c for c in df.columns if isinstance(c, str) and "/" in c and c[:4].isdigit()]
-
-
-_SCHEDULE_RENAME = {
-    "deal_id": "Dealid",
-    "direction": "Direction",
-    "currency": "Currency",
-    "rate_type": "Rate Type",
-}
-
-
-def parse_schedule(path: Path) -> pd.DataFrame:
-    """Parse ideal-format rate_schedule.xlsx → wide DataFrame with monthly balances.
-
-    Expects sheet 'Schedule' with header in row 1, deal_id as plain integer,
-    direction as single char, RFR V-legs and reverse repos pre-filtered,
-    V-leg balances pre-forward-filled.
-    """
-    df = pd.read_excel(path, sheet_name="Schedule", engine="openpyxl")
-
-    rename = {k: v for k, v in _SCHEDULE_RENAME.items() if k in df.columns}
-    df = df.rename(columns=rename)
-
-    if "Dealid" not in df.columns:
-        raise ValueError("rate_schedule.xlsx: missing required column 'deal_id'")
-
-    df["Dealid"] = pd.to_numeric(df["Dealid"], errors="coerce")
-    n_bad = df["Dealid"].isna().sum()
-    if n_bad > 0:
-        logger.warning("rate_schedule.xlsx: %d rows with non-numeric deal_id (dropped)", n_bad)
-        df = df[df["Dealid"].notna()].copy()
-
-    if "Direction" in df.columns:
-        bad_dir = ~df["Direction"].isin(_VALID_DIRECTIONS)
-        if bad_dir.any():
-            logger.warning("rate_schedule.xlsx: %d rows with invalid direction (dropped)", bad_dir.sum())
-            df = df[~bad_dir].copy()
-
-    if "Currency" in df.columns:
-        bad_ccy = ~df["Currency"].isin(SUPPORTED_CURRENCIES)
-        if bad_ccy.any():
-            logger.warning("rate_schedule.xlsx: %d rows with unsupported currency (dropped)", bad_ccy.sum())
-            df = df[~bad_ccy].copy()
-
-    month_cols = _month_columns(df)
-    if not month_cols:
-        logger.warning("rate_schedule.xlsx: no YYYY/MM balance columns found")
-
-    return df.reset_index(drop=True)
-
-===FILE END=== src/cockpit/data/parsers/echeancier.py
 
 ===FILE START=== src/cockpit/data/parsers/hedge_pairs.py
 """Derive hedge pairs from strategy_ias grouping in deals.
@@ -3960,164 +3708,6 @@ def parse_liquidity_schedule(path: Path) -> pd.DataFrame:
     return df
 
 ===FILE END=== src/cockpit/data/parsers/liquidity_schedule.py
-
-===FILE START=== src/cockpit/data/parsers/mtd.py
-"""Parser for ideal-format deals.xlsx → unified BOOK1 + BOOK2 DataFrame."""
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-import pandas as pd
-
-from cockpit.config import SUPPORTED_CURRENCIES
-from pnl_engine.config import (
-    VALID_PRODUCTS,
-    VALID_DIRECTIONS,
-    VALID_BOOKS,
-    VALID_PERIMETERS,
-    VALID_FLOAT_INDICES,
-)
-
-logger = logging.getLogger(__name__)
-
-_DEALS_RENAME = {
-    "deal_id": "Dealid",
-    "product": "Product",
-    "currency": "Currency",
-    "direction": "Direction",
-    "book": "IAS Book",
-    "amount": "Amount",
-    "client_rate": "Clientrate",
-    "eq_ois_rate": "EqOisRate",
-    "ytm": "YTM",
-    "coc_rate": "CocRate",
-    "spread": "Spread",
-    "floating_index": "Floating Rates Short Name",
-    "trade_date": "Tradedate",
-    "value_date": "Valuedate",
-    "maturity_date": "Maturitydate",
-    "strategy_ias": "Strategy IAS",
-    "hedge_type": "hedge_type",
-    "ias_standard": "ias_standard",
-    "designation_date": "designation_date",
-    "perimeter": "Périmètre TOTAL",
-    "counterparty": "Counterparty",
-    "pay_receive": "pay_receive",
-    "notional": "notional",
-    "last_fixing_date": "last_fixing_date",
-    "next_fixing_date": "next_fixing_date",
-    "current_fixing_rate": "current_fixing_rate",
-    "ftp": "FTP",
-    "asset_liability": "AssetLiability",
-}
-
-_VALID_PRODUCTS = VALID_PRODUCTS
-_VALID_DIRECTIONS = VALID_DIRECTIONS
-_VALID_BOOKS = VALID_BOOKS
-_VALID_PERIMETERS = VALID_PERIMETERS
-_VALID_FLOAT_INDICES = VALID_FLOAT_INDICES
-
-
-def parse_deals(path: Path) -> pd.DataFrame:
-    """Parse ideal-format deals.xlsx → unified BOOK1 + BOOK2 DataFrame.
-
-    Expects sheet 'Deals' with header in row 1, rates in decimal,
-    direction as single char, perimeter explicit.
-    """
-    df = pd.read_excel(path, sheet_name="Deals", engine="openpyxl")
-
-    rename = {k: v for k, v in _DEALS_RENAME.items() if k in df.columns}
-    df = df.rename(columns=rename)
-
-    if "Dealid" not in df.columns:
-        raise ValueError("deals.xlsx: missing required column 'deal_id'")
-
-    df["Dealid"] = pd.to_numeric(df["Dealid"], errors="coerce")
-    n_bad_id = df["Dealid"].isna().sum()
-    if n_bad_id > 0:
-        logger.warning("deals.xlsx: %d rows with non-numeric deal_id (dropped)", n_bad_id)
-        df = df[df["Dealid"].notna()].copy()
-
-    _n_before_filter = len(df)
-    _n_bad_product = 0
-    _n_bad_currency = 0
-    _n_bad_dir = 0
-    _n_bad_book = 0
-
-    if "Product" in df.columns:
-        bad_product = ~df["Product"].isin(_VALID_PRODUCTS)
-        _n_bad_product = int(bad_product.sum())
-        if bad_product.any():
-            logger.warning("deals.xlsx: %d rows with invalid product (dropped)", _n_bad_product)
-            df = df[~bad_product].copy()
-
-    if "Currency" in df.columns:
-        _n_bad_currency = int((~df["Currency"].isin(SUPPORTED_CURRENCIES)).sum())
-        df = df[df["Currency"].isin(SUPPORTED_CURRENCIES)].copy()
-
-    if "Direction" in df.columns:
-        bad_dir = ~df["Direction"].isin(_VALID_DIRECTIONS)
-        _n_bad_dir = int(bad_dir.sum())
-        if bad_dir.any():
-            logger.warning("deals.xlsx: %d rows with invalid direction (dropped)", _n_bad_dir)
-            df = df[~bad_dir].copy()
-
-    if "IAS Book" in df.columns:
-        bad_book = ~df["IAS Book"].isin(_VALID_BOOKS)
-        _n_bad_book = int(bad_book.sum())
-        if bad_book.any():
-            logger.warning("deals.xlsx: %d rows with invalid book (dropped)", _n_bad_book)
-            df = df[~bad_book].copy()
-
-    _n_dropped = _n_before_filter - len(df)
-    if _n_dropped > 0:
-        logger.info(
-            "[parse] Dropped %d rows: %d unknown products, %d unsupported currencies, "
-            "%d invalid directions, %d invalid books",
-            _n_dropped, _n_bad_product, _n_bad_currency, _n_bad_dir, _n_bad_book,
-        )
-
-    if "Périmètre TOTAL" in df.columns:
-        bad_peri = ~df["Périmètre TOTAL"].isin(_VALID_PERIMETERS)
-        if bad_peri.any():
-            logger.warning("deals.xlsx: %d rows with invalid perimeter, defaulting to CC", bad_peri.sum())
-            df.loc[bad_peri, "Périmètre TOTAL"] = "CC"
-
-    for col in ["Clientrate", "EqOisRate", "YTM", "CocRate", "Spread"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            extreme = df[col].abs() > 0.50
-            if extreme.any():
-                logger.warning("deals.xlsx: %d rows with |%s| > 50%% — are rates in decimal?", extreme.sum(), col)
-
-    # FTP: keep NaN to distinguish "missing FTP" from "explicit 0.0 FTP".
-    # Downstream charts filter on .notna() and surface coverage separately.
-    if "FTP" in df.columns:
-        df["FTP"] = pd.to_numeric(df["FTP"], errors="coerce")
-        n_ftp_missing = int(df["FTP"].isna().sum())
-        if n_ftp_missing > 0:
-            logger.info("deals.xlsx: %d rows with missing FTP (kept as NaN)", n_ftp_missing)
-        extreme_ftp = df["FTP"].abs() > 0.50
-        if extreme_ftp.any():
-            logger.warning("deals.xlsx: %d rows with |FTP| > 50%% — are rates in decimal?", int(extreme_ftp.sum()))
-
-    for col in ["Maturitydate", "Valuedate", "Tradedate"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-
-    if "Maturitydate" in df.columns:
-        bad_mat = df["Maturitydate"].isna()
-        if bad_mat.any():
-            logger.warning("deals.xlsx: %d rows with invalid maturity_date (dropped)", bad_mat.sum())
-            df = df[bad_mat == False].copy()  # noqa: E712
-
-    if "Floating Rates Short Name" in df.columns:
-        df["Floating Rates Short Name"] = df["Floating Rates Short Name"].fillna("")
-
-    return df.reset_index(drop=True)
-
-===FILE END=== src/cockpit/data/parsers/mtd.py
 
 ===FILE START=== src/cockpit/data/parsers/nmd_profiles.py
 """Parser for nmd_profiles.xlsx — Non-Maturing Deposit behavioral profiles."""
@@ -4481,55 +4071,6 @@ def get_snb_reversal_scenario() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 ===FILE END=== src/cockpit/data/parsers/scenarios.py
-
-===FILE START=== src/cockpit/data/parsers/wirp.py
-"""Parser for ideal-format wirp.xlsx — proper header, WASP index names, rates in decimal."""
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-import pandas as pd
-
-logger = logging.getLogger(__name__)
-
-_VALID_INDICES = {"CHFSON", "EUREST", "USSOFR", "GBPOIS"}
-
-_WIRP_RENAME = {
-    "index": "Indice",
-    "meeting_date": "Meeting",
-    "rate": "Rate",
-    "change_bps": "Hike / Cut",
-}
-
-
-def parse_wirp_ideal(path: Path) -> pd.DataFrame:
-    """Parse ideal-format wirp.xlsx → long DataFrame with WASP index names."""
-    df = pd.read_excel(path, sheet_name="WIRP", engine="openpyxl")
-
-    rename = {k: v for k, v in _WIRP_RENAME.items() if k in df.columns}
-    df = df.rename(columns=rename)
-
-    if "Indice" not in df.columns:
-        raise ValueError("wirp.xlsx: missing required column 'index'")
-
-    bad_idx = ~df["Indice"].isin(_VALID_INDICES)
-    if bad_idx.any():
-        logger.warning("wirp.xlsx: %d rows with unknown index (dropped)", bad_idx.sum())
-        df = df[~bad_idx].copy()
-
-    df["Meeting"] = pd.to_datetime(df["Meeting"], errors="coerce", dayfirst=True)
-    df = df.dropna(subset=["Meeting"])
-
-    if "Rate" in df.columns:
-        df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce")
-        extreme = df["Rate"].abs() > 0.20
-        if extreme.any():
-            logger.warning("wirp.xlsx: %d rows with |rate| > 20%% — are rates in decimal?", extreme.sum())
-
-    return df.sort_values(["Indice", "Meeting"]).reset_index(drop=True)
-
-===FILE END=== src/cockpit/data/parsers/wirp.py
 
 ===FILE START=== src/cockpit/data/quality.py
 """Data quality checks for the daily ALM pipeline.
@@ -5747,10 +5288,6 @@ from cockpit.data.parsers import (
     parse_bank_native_deals,
     parse_bank_native_schedule,
     parse_bank_native_wirp,
-    parse_book,
-    parse_deals,
-    parse_schedule,
-    parse_wirp_ideal,
 )
 
 logger = logging.getLogger(__name__)
@@ -5823,58 +5360,23 @@ class ForecastRatePnL:
             self.run(shocks=list(pnl_cfg.SHOCKS), export=export)
 
     def load_data(self) -> None:
-        """Load deal data, schedule, WIRP, and IRS stock from Excel files.
+        """Load deal data, schedule, WIRP, and IRS stock from the bank-native triple.
 
-        Supports three input layouts (tried in order):
-        - **Bank-native format**: triple of ``*Daily Rate PnL*_YYYYMMDD.xlsx``,
-          ``YYYYMMDD_WIRP.xlsx``, ``YYYYMMDD_rate_schedule.xlsx`` — either
-          directly in ``input_dir`` or under a ``YYYYPP/YYYYMMDDVV/`` tree.
-          Applies per-deal FX re-apply via ``Optimus Reporting FxRate``.
-        - **K+EUR format**: ``*Daily Rate PnL*`` (Book1 + Book2 sheets, IRS-MTM from Folder Short Name)
-        - **Ideal format**: ``*deals*`` (unified BOOK1+BOOK2), ``rate_schedule.xlsx``, ``wirp.xlsx``
+        Expects ``*Daily Rate PnL*_YYYYMMDD.xlsx``, ``YYYYMMDD_WIRP.xlsx``,
+        ``YYYYMMDD_rate_schedule.xlsx`` — either directly in ``input_dir`` or
+        under a ``YYYYPP/YYYYMMDDVV/`` tree. Applies per-deal FX re-apply via
+        ``Optimus Reporting FxRate``.
         """
         bank_native_inputs = self._detect_bank_native_input()
-        if bank_native_inputs is not None:
-            self._load_bank_native(bank_native_inputs)
-            logger.info("load_data Done (bank-native: %d deals, %d schedule rows)",
-                        len(self.pnlData), len(self.scheduleData))
-            return
-
-        book_files = list(self.input_dir.glob("*Daily Rate PnL*"))
-        deals_files = list(self.input_dir.glob("*deals*"))
-
-        if book_files:
-            book_file = book_files[0]
-            date_run_ts = pd.Timestamp(self.dateRun)
-            book1 = parse_book(book_file, date_run_ts, "Book1")
-            book2 = parse_book(book_file, date_run_ts, "Book2")
-            self.pnlData = pd.concat([book1, book2], ignore_index=True)
-            self.irsStock = self._irs_stock_from_pnl_data()
-            logger.info(
-                "Loaded K+EUR format: %s (Book1=%d, Book2=%d, IRS-MTM=%d)",
-                book_file.name, len(book1), len(book2), len(self.irsStock),
+        if bank_native_inputs is None:
+            raise FileNotFoundError(
+                f"No bank-native input triple found in {self.input_dir} "
+                f"(expected *Daily Rate PnL*_YYYYMMDD.xlsx + YYYYMMDD_WIRP.xlsx + "
+                f"YYYYMMDD_rate_schedule.xlsx)"
             )
-        elif deals_files:
-            all_deals = parse_deals(deals_files[0])
-            self.pnlData, self.irsStock = self._split_deals_by_book(all_deals)
-            logger.info("Loaded unified deals file: %s (BOOK1=%d, BOOK2=%d)",
-                        deals_files[0].name, len(self.pnlData), len(self.irsStock))
-        else:
-            raise FileNotFoundError(f"No deal file found in {self.input_dir}")
-
-        schedule_files = list(self.input_dir.glob("*rate_schedule*")) or list(self.input_dir.glob("*schedule*"))
-        if not schedule_files:
-            raise FileNotFoundError(f"No rate_schedule file found in {self.input_dir}")
-        self.scheduleData = parse_schedule(schedule_files[0])
-
-        wirp_files = list(self.input_dir.glob("*wirp*")) or list(self.input_dir.glob("*WIRP*"))
-        if not wirp_files:
-            raise FileNotFoundError(f"No WIRP file found in {self.input_dir}")
-        self.wirpData = parse_wirp_ideal(wirp_files[0])
-
-        self.scheduleDataMTM = pd.DataFrame()
-
-        logger.info("load_data Done (%d deals, %d schedule rows)", len(self.pnlData), len(self.scheduleData))
+        self._load_bank_native(bank_native_inputs)
+        logger.info("load_data Done (bank-native: %d deals, %d schedule rows)",
+                    len(self.pnlData), len(self.scheduleData))
 
     def _detect_bank_native_input(self) -> Optional[BankNativeInputs]:
         """Return a BankNativeInputs if the input_dir resolves to bank-native files.
@@ -5976,54 +5478,6 @@ class ForecastRatePnL:
             )
 
         return irs_stock.reset_index(drop=True), non_irs.reset_index(drop=True)
-
-    @staticmethod
-    def _split_deals_by_book(all_deals: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Split unified deals into BOOK1 (accrual) and BOOK2 (IRS stock for WASP MTM)."""
-        if "IAS Book" not in all_deals.columns:
-            return all_deals.copy(), pd.DataFrame()
-
-        book1 = all_deals[all_deals["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
-        book2_raw = all_deals[all_deals["IAS Book"] == "BOOK2"].copy()
-
-        if book2_raw.empty:
-            return book1, pd.DataFrame()
-
-        irs_stock = book2_raw.rename(columns={
-            "Maturitydate": "Maturity Date",
-            "Valuedate": "Value Date",
-            "Strategy IAS": "Strategy (Agapes IAS)",
-            "Currency": "Currency Code (ISO)",
-            "notional": "Notional",
-            "pay_receive": "Pay/Receive",
-            "Dealid": "Deal",
-            "Floating Rates Short Name": "Index",
-            "Clientrate": "Rate",
-        })
-
-        if "Pay/Receive" in irs_stock.columns:
-            irs_stock["Buy / Sell"] = np.where(
-                irs_stock["Pay/Receive"] == "RECEIVE", "Buy", "Sell"
-            )
-            irs_stock["Asset / Liabilities"] = np.where(
-                irs_stock["Pay/Receive"] == "RECEIVE", "Actif", "Passif"
-            )
-
-        return book1, irs_stock.reset_index(drop=True)
-
-    def _irs_stock_from_pnl_data(self) -> pd.DataFrame:
-        """Extract IRS-MTM deals from pnlData for compute_book2_mtm."""
-        mtm = self.pnlData[self.pnlData["Product"] == "IRS-MTM"].copy()
-        if mtm.empty:
-            return pd.DataFrame()
-
-        # Derive Pay/Receive from Direction: L/B/S → RECEIVE, D → PAY
-        if "Direction" in mtm.columns:
-            mtm["Pay/Receive"] = np.where(
-                mtm["Direction"].isin(["L", "B", "S"]), "RECEIVE", "PAY"
-            )
-
-        return mtm.reset_index(drop=True)
 
     def run(
         self,
@@ -6408,7 +5862,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+
+
+def _json_default(v):
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return v.isoformat()
+    if isinstance(v, np.floating):
+        return float(v)
+    if isinstance(v, np.integer):
+        return int(v)
+    return str(v)
 
 
 def save_daily_kpis(
@@ -6631,10 +6096,6 @@ def load_realized_mtd(
 # P&L Explain snapshot (for Month-over-Month attribution waterfall)
 # ---------------------------------------------------------------------------
 
-_EXPLAIN_DEAL_COLS = (
-    "Dealid", "Counterparty", "Currency", "Product", "Direction",
-    "PnL_Simple", "Nominal",
-)
 _EXPLAIN_INDICES = ("PnL_Simple", "Nominal", "OISfwd", "RateRef")
 
 
@@ -6691,21 +6152,8 @@ def save_pnl_explain_snapshot(
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     out_path = snapshot_dir / f"{date}_explain.json"
 
-    def _default(v):
-        if isinstance(v, (pd.Timestamp, datetime)):
-            return v.isoformat()
-        try:
-            import numpy as np
-            if isinstance(v, np.floating):
-                return float(v)
-            if isinstance(v, np.integer):
-                return int(v)
-        except ImportError:
-            pass
-        return str(v)
-
     out_path.write_text(
-        json.dumps(payload, indent=2, default=_default, allow_nan=True),
+        json.dumps(payload, indent=2, default=_json_default, allow_nan=True),
         encoding="utf-8",
     )
     return out_path
@@ -6803,21 +6251,8 @@ def save_strategy_snapshot(
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     out_path = snapshot_dir / f"{date}_strategy.json"
 
-    def _default(v):
-        if isinstance(v, (pd.Timestamp, datetime)):
-            return v.isoformat()
-        try:
-            import numpy as np
-            if isinstance(v, np.floating):
-                return float(v)
-            if isinstance(v, np.integer):
-                return int(v)
-        except ImportError:
-            pass
-        return str(v)
-
     out_path.write_text(
-        json.dumps(payload, indent=2, default=_default, allow_nan=True),
+        json.dumps(payload, indent=2, default=_json_default, allow_nan=True),
         encoding="utf-8",
     )
     return out_path
@@ -9383,11 +8818,11 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         f"BOOK1 Realized — MTD ({month_start} \u2192 {date_end})",
         f"Sum of bank-reported BOOK1 daily P&L across {days} snapshot(s). "
         "Accrual = @PnL_Acc_Estim_Adj; IAS = [Daily] PnL IAS - ORC.",
-        span_cols=5,
+        span_cols=4,
     )
     header_row = row
     row = write_header_row(
-        ws, row, ["Currency", "BOOK1 Accrual MTD", "BOOK1 IAS MTD", "BOOK1 Total MTD", "# Deals"],
+        ws, row, ["Currency", "BOOK1 Accrual MTD", "BOOK1 IAS MTD", "BOOK1 Total MTD"],
     )
 
     rows = block.get("rows") or []
@@ -9406,7 +8841,6 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         tc.number_format = FMT_CURRENCY
         tc.font = Font(bold=True)
         apply_sign_fill(tc, total)
-        # Column 5 left blank — deal count is not tracked in snapshot; kept for future use.
         row += 1
 
     totals = block.get("totals") or {}
@@ -9420,7 +8854,7 @@ def _write_book1_realized_mtd(wb: Workbook, data: dict, date_run: str) -> None:
         c.font = Font(bold=True)
         apply_sign_fill(c, v)
 
-    set_column_widths(ws, [12, 22, 22, 22, 10])
+    set_column_widths(ws, [12, 22, 22, 22])
     freeze(ws, f"A{header_row + 1}")
     footer(ws, date_run=date_run, source_key="book1_realized_mtd")
 

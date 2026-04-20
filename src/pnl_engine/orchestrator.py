@@ -286,6 +286,21 @@ class PnlEngine:
             return None
         return self._load_curves_cached("ref", self._float_wasp_indices, shock)
 
+    def _refix_curves(self, ois_curves, shock: str):
+        """Curves for `build_rate_matrix`: OIS ∪ ref.
+
+        Why: term floaters can carry an OIS-base `ref_index` (e.g. SARON →
+        CHFSON) which is filtered out of `_float_wasp_indices`. Without
+        merging OIS in, future-segment forward sampling falls back to the
+        flat `current_fixing_rate` proxy and emits a "curve missing" warning.
+        """
+        ref = self._load_ref_curves(shock=shock)
+        if ois_curves is None:
+            return ref
+        if not ref:
+            return ois_curves
+        return {**ois_curves, **ref}
+
     def update_pnl(
         self,
         dateRates: Optional[datetime] = None,
@@ -314,8 +329,8 @@ class PnlEngine:
             ois_curves = self._load_ois_curves(shock=Shock)
 
         ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
-        ref_curves = self._load_ref_curves(shock=Shock)
-        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
+        refix_curves = self._refix_curves(ois_curves, shock=Shock)
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, refix_curves, date_run=self._dateRun_ts)
 
         # Broadcast to 2D so `_aggregate_slice` can do `mm_daily[:, mask]`.
         mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
@@ -345,10 +360,12 @@ class PnlEngine:
         funding_matrix = build_funding_matrix(
             self._deals_use, self._days, ois_matrix,
             funding_source=self._funding_source,
+            date_rates=self._dateRates_ts,
         )
         carry_funding_matrix = build_funding_matrix(
             self._deals_use, self._days, ois_matrix,
             funding_source="carry",
+            date_rates=self._dateRates_ts,
         )
 
         # --- Cumulative factors for value-date compounding ---
@@ -697,8 +714,8 @@ class PnlEngine:
             self.fwdOIS0 = self._load_ois_curves(shock="0")
 
         ois_matrix = _build_ois_matrix(self._deals_use, self.fwdOIS0, self._days)
-        ref_curves = self._load_ref_curves(shock="0")
-        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
+        refix_curves = self._refix_curves(self.fwdOIS0, shock="0")
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, refix_curves, date_run=self._dateRun_ts)
 
         # Build client rate matrix for EVE cashflow generation
         client_rate_matrix = build_client_rate_matrix(self._deals_use, len(self._days))
@@ -785,8 +802,8 @@ class PnlEngine:
 
         # Hoist invariants out of the scenario loop: rate_matrix and mm
         # broadcast don't depend on the OIS shift.
-        ref_curves = self._load_ref_curves(shock="0")
-        rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
+        refix_curves = self._refix_curves(self.fwdOIS0, shock="0")
+        rate_matrix = build_rate_matrix(self._deals_use, self._days, refix_curves, date_run=self._dateRun_ts)
         mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
         currencies_present = set(self._deals_use["Currency"].unique())
 
@@ -892,8 +909,8 @@ class PnlEngine:
         try:
             ois_curves = self._load_ois_curves(shock="0")
             ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
-            ref_curves = self._load_ref_curves(shock="0")
-            rate_matrix = build_rate_matrix(self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts)
+            refix_curves = self._refix_curves(ois_curves, shock="0")
+            rate_matrix = build_rate_matrix(self._deals_use, self._days, refix_curves, date_run=self._dateRun_ts)
 
             if self._nmd_profiles is not None and not self._nmd_profiles.empty:
                 from pnl_engine.nmd import apply_deposit_beta
@@ -954,9 +971,9 @@ class PnlEngine:
             ois_curves = self._load_ois_curves(shock=shock)
 
         ois_matrix = _build_ois_matrix(self._deals_use, ois_curves, self._days)
-        ref_curves = self._load_ref_curves(shock=shock)
+        refix_curves = self._refix_curves(ois_curves, shock=shock)
         rate_matrix = build_rate_matrix(
-            self._deals_use, self._days, ref_curves, date_run=self._dateRun_ts,
+            self._deals_use, self._days, refix_curves, date_run=self._dateRun_ts,
         )
         mm_broadcast = np.broadcast_to(self._mm[:, np.newaxis], rate_matrix.shape)
 

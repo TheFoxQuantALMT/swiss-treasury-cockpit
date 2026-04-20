@@ -192,14 +192,56 @@ class ForecastRatePnL:
         book1 = deals[deals["IAS Book"] == "BOOK1"].copy().reset_index(drop=True)
         book2 = deals[deals["IAS Book"] == "BOOK2"].copy().reset_index(drop=True)
 
-        self.pnlData = book1
+        self.pnlData = self._append_book2_hcd_rows(book1, book2)
         self.irsStock, self.book2NonIrs = self._split_book2_bank_native(book2)
 
         logger.info(
-            "Bank-native: BOOK1=%d, BOOK2 IRS=%d, BOOK2 non-IRS=%d (deferred), schedule=%d",
+            "Bank-native: BOOK1=%d (incl. synthesized HCD), BOOK2 IRS=%d, BOOK2 non-IRS=%d (deferred), schedule=%d",
             len(self.pnlData), len(self.irsStock), len(self.book2NonIrs),
             len(self.scheduleData),
         )
+
+    @staticmethod
+    def _append_book2_hcd_rows(book1: pd.DataFrame, book2: pd.DataFrame) -> pd.DataFrame:
+        """Synthesize ``Product="HCD"`` rows from BOOK2 hedge counter-deals.
+
+        Why: the accrual engine runs on BOOK1 only, but ``compute_strategy_pnl``
+        pivots by Product and expects ``Nominal_HCD``, ``Clientrate_HCD``,
+        ``OISfwd_HCD`` to produce the ``BND-HCD`` / ``IAM/LD-HCD`` legs of the
+        §10 decomposition. Legacy MTD data carried explicit HCD rows in BOOK1;
+        in bank-native the hedging deal lives in BOOK2 and is flagged either
+        by ``@Category == "HC-DEAL"`` (explicit hedge counter-deal tag, used
+        for IAM/LD legs of ASW / OPR_FVH pairs) or ``@Category2 == "IRS_FVH"``
+        (IRS designated as fair-value hedging instrument). ``IRS_FVO`` is
+        intentionally excluded — fair-value-option IRS are not hedge
+        instruments even if they carry a Strategy IAS. Without this synthesis
+        the HCD legs are always 0 and the Strategy tab looks empty. Rows join
+        the schedule on ``(Dealid, Direction, Currency)``.
+        """
+        if book2.empty or "Strategy IAS" not in book1.columns:
+            return book1
+
+        book1_strats = set(
+            book1.loc[book1["Strategy IAS"].notna(), "Strategy IAS"].astype(str).unique()
+        )
+        if not book1_strats:
+            return book1
+
+        cat = book2.get("Category", pd.Series("", index=book2.index)).fillna("").astype(str)
+        cat2 = book2.get("Category2", pd.Series("", index=book2.index)).fillna("").astype(str)
+        is_hedge = cat.eq("HC-DEAL") | cat2.eq("IRS_FVH")
+        hcd_mask = (
+            is_hedge
+            & book2["Strategy IAS"].notna()
+            & book2["Strategy IAS"].astype(str).isin(book1_strats)
+        )
+        book2_hcd = book2.loc[hcd_mask].copy()
+        if book2_hcd.empty:
+            return book1
+
+        book2_hcd["Product"] = "HCD"
+        book2_hcd["IAS Book"] = "BOOK1"
+        return pd.concat([book1, book2_hcd], ignore_index=True)
 
     @staticmethod
     def _split_book2_bank_native(book2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

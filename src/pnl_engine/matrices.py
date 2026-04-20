@@ -341,6 +341,8 @@ def build_funding_matrix(
     days: pd.DatetimeIndex,
     ois_matrix: np.ndarray,
     funding_source: str = "carry",
+    *,
+    date_rates: "pd.Timestamp | None" = None,
 ) -> np.ndarray:
     """Build (n_deals x n_days) funding rate matrix.
 
@@ -349,6 +351,9 @@ def build_funding_matrix(
             "carry" (default) uses WASP carry-compounded rates per currency/month.
             "ois" uses the OIS forward curve (ISDA CSA standard).
             "coc" uses the deal-level CocRate.
+        date_rates: Market reference date for the WASP carry ramp. Required
+            when ``funding_source == "carry"`` to keep the ramp pinned to a
+            single RefDate across the run. Ignored for other sources.
     """
     if funding_source == "coc" and "CocRate" in deals.columns:
         n_deals = len(deals)
@@ -356,7 +361,7 @@ def build_funding_matrix(
         return np.broadcast_to(coc_rates[:, np.newaxis], ois_matrix.shape).copy()
 
     if funding_source == "carry":
-        return _build_carry_funding_matrix(deals, days, ois_matrix)
+        return _build_carry_funding_matrix(deals, days, ois_matrix, date_rates=date_rates)
 
     # "ois": OIS curve = standard post-LIBOR funding rate
     return ois_matrix
@@ -366,6 +371,8 @@ def _build_carry_funding_matrix(
     deals: pd.DataFrame,
     days: pd.DatetimeIndex,
     ois_matrix: np.ndarray,
+    *,
+    date_rates: "pd.Timestamp | None" = None,
 ) -> np.ndarray:
     """Build funding matrix from WASP carry-compounded rates per (currency, month).
 
@@ -379,6 +386,8 @@ def _build_carry_funding_matrix(
 
     logger = logging.getLogger(__name__)
     result = ois_matrix.copy()  # baseline: OIS (used for currencies without a carry index)
+
+    ref_date = date_rates if date_rates is not None else days[0]
 
     months = days.to_period("M").unique()
     day_periods = days.to_period("M")
@@ -395,7 +404,9 @@ def _build_carry_funding_matrix(
                 continue
 
             try:
-                carry_rate = load_carry_compounded(month.start_time, month.end_time, ccy)
+                carry_rate = load_carry_compounded(
+                    month.start_time, month.end_time, ccy, ref_date=ref_date,
+                )
                 result[np.ix_(deal_mask, day_mask)] = carry_rate
             except Exception as exc:
                 logger.warning("Carry compounded failed %s %s, keeping OIS: %s", ccy, month, exc)
@@ -466,13 +477,16 @@ def build_cumulative_carry_factors(
         key = (ccy, str(vd.date()))
         groups.setdefault(key, []).append(i)
 
+    # Carry ramp RefDate is dateRates (market as-of), not the deal Valuedate.
+    ref_date = date_rates if date_rates is not None else days[0]
+
     for (ccy, vd_str), deal_indices in groups.items():
         vd = pd.Timestamp(vd_str)
         for j, bd in enumerate(boundary_dates):
             if bd < vd:
                 continue
             try:
-                cc = load_carry_compounded_cached(vd, bd, ccy)
+                cc = load_carry_compounded_cached(vd, bd, ccy, ref_date=ref_date)
                 for i in deal_indices:
                     cum[i, j + 1] = 1.0 + cc
             except RuntimeError as exc:
