@@ -14,8 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cockpit.engine.pnl.engine import aggregate_to_monthly, compute_daily_pnl
-from cockpit.engine.pnl.matrices import (
+from pnl_engine.engine import aggregate_to_monthly, compute_daily_pnl
+from pnl_engine.matrices import (
     build_accrual_days,
     build_funding_matrix,
     build_mm_vector,

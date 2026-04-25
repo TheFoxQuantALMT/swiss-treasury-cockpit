@@ -47,7 +47,7 @@ from pnl_engine.curves import load_daily_curves, overlay_wirp, CurveCache
 from pnl_engine.matrices import (
     build_accrual_days,
     build_date_grid,
-    expand_nominal_to_daily,
+    build_alive_nominal_daily,
     build_alive_mask,
     build_mm_vector,
     build_rate_matrix,
@@ -788,9 +788,8 @@ def run_all_shocks(
 
     deals_use = merged.reset_index(drop=True)
 
-    nominal_daily = expand_nominal_to_daily(deals_use[month_cols], days)
     alive = build_alive_mask(deals_use, days, date_run=start)
-    nominal_daily = nominal_daily * alive
+    nominal_daily = build_alive_nominal_daily(deals_use[month_cols], alive, days)
 
     # Apply CPR prepayment to fixed-rate mortgages (reduces nominal schedule)
     try:

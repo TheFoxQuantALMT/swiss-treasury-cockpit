@@ -30,6 +30,7 @@ from pnl_engine.curves import CurveCache, load_daily_curves, overlay_wirp
 from pnl_engine.matrices import (
     build_date_grid,
     expand_nominal_to_daily,
+    build_alive_nominal_daily,
     build_alive_mask,
     build_mm_vector,
     build_accrual_days,
@@ -70,6 +71,7 @@ __all__ = [
     # Matrices
     "build_date_grid",
     "expand_nominal_to_daily",
+    "build_alive_nominal_daily",
     "build_alive_mask",
     "build_mm_vector",
     "build_accrual_days",

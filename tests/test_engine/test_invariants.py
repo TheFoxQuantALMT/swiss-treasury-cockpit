@@ -22,7 +22,7 @@ from cockpit.data.parsers import (
     parse_bank_native_deals,
     parse_bank_native_schedule,
 )
-from cockpit.engine.pnl.engine import (
+from pnl_engine.engine import (
     _build_ois_matrix,
     _resolve_rate_ref,
     aggregate_to_monthly,
@@ -30,7 +30,7 @@ from cockpit.engine.pnl.engine import (
     compute_strategy_pnl,
 )
 from tests._helpers.mock_curves import _mock_curves_from_wirp
-from cockpit.engine.pnl.matrices import (
+from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
     build_date_grid,

@@ -152,7 +152,7 @@ def load_carry_compounded_cached(
     """
     key = (currency, str(pd.Timestamp(start).date()), str(pd.Timestamp(end).date()))
     if key not in _carry_cache:
-        _carry_cache[key] = load_carry_compounded(start, end, currency, ref_date=ref_date)
+        _carry_cache[key] = load_carry_compounded(start, end, currency)
     return _carry_cache[key]
 
 

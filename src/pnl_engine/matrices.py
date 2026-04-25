@@ -63,6 +63,38 @@ def expand_nominal_to_daily(nominals_wide: pd.DataFrame, days: pd.DatetimeIndex)
     return result
 
 
+def build_alive_nominal_daily(
+    nominals_wide: pd.DataFrame,
+    alive_mask: np.ndarray,
+    days: pd.DatetimeIndex,
+) -> np.ndarray:
+    """Expand monthly buckets to daily alive nominal, correcting for pro-rata dilution.
+
+    The rate_schedule's monthly buckets are pro-rata averages: for boundary
+    months (first month, last month, or refix month for floating deals where
+    ``Maturitydate = next_fixing_date``), the bucket equals
+    ``full_nominal × days_alive / days_in_month``. Broadcasting the bucket
+    uniformly to every day of the month and then multiplying by ``alive_mask``
+    under-accrues the boundary month by a factor of ``days_alive / days_in_month``
+    (double pro-rata: once in the input, once from the mask).
+
+    This helper counteracts the dilution by scaling each boundary month's bucket
+    by ``days_in_month / days_alive`` before masking. Full-alive months have
+    factor == 1 (unchanged). Months with zero alive days are left at zero.
+    """
+    raw = expand_nominal_to_daily(nominals_wide, days)
+    day_months = pd.DatetimeIndex(days).to_period("M").astype(str)
+    for month in np.unique(day_months):
+        col_mask = day_months == month
+        days_in_month = int(col_mask.sum())
+        days_alive = alive_mask[:, col_mask].sum(axis=1).astype(np.float64)
+        factor = np.ones_like(days_alive, dtype=np.float64)
+        partial = (days_alive > 0) & (days_alive < days_in_month)
+        factor[partial] = days_in_month / days_alive[partial]
+        raw[:, col_mask] = raw[:, col_mask] * factor[:, np.newaxis]
+    return raw * alive_mask
+
+
 def build_alive_mask(
     deals: pd.DataFrame,
     days: pd.DatetimeIndex,

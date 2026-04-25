@@ -18,7 +18,7 @@ import pytest
 
 from cockpit.config import CURRENCY_TO_OIS, FLOAT_NAME_TO_WASP
 from cockpit.data.parsers import parse_bank_native_wirp
-from cockpit.engine.pnl.matrices import build_date_grid
+from pnl_engine.matrices import build_date_grid
 from tests._helpers.mock_curves import _mock_curves_from_wirp
 from tests.conftest import requires_wasp as wasp
 
@@ -119,7 +119,7 @@ class TestWaspCurves:
     @wasp
     def test_wasp_ois_curves_load(self):
         """WASP OIS curves should load without error."""
-        from cockpit.engine.pnl.curves import load_daily_curves
+        from pnl_engine.curves import load_daily_curves
         from datetime import datetime
 
         curves = load_daily_curves(
@@ -135,7 +135,7 @@ class TestWaspCurves:
     @wasp
     def test_wasp_vs_mock_same_shape(self):
         """WASP and mock curves should produce same-shaped output."""
-        from cockpit.engine.pnl.curves import load_daily_curves
+        from pnl_engine.curves import load_daily_curves
         from datetime import datetime
 
         wirp = parse_bank_native_wirp(FIXTURES / "20260414_WIRP.xlsx")
@@ -170,7 +170,7 @@ class TestBook2Mtm:
     @wasp
     def test_wasp_stockswapmtm_returns_mtm(self):
         """stockSwapMTM should return a DataFrame with MTM column."""
-        from cockpit.engine.pnl.engine import compute_book2_mtm
+        from pnl_engine.engine import compute_book2_mtm
         from cockpit.data.parsers import parse_bank_native_deals
         from cockpit.engine.pnl.forecast import ForecastRatePnL
         from datetime import datetime
@@ -219,7 +219,7 @@ class TestCrossCheckManual:
         rate_arr = np.full((1, n_days), client_rate)
         mm_arr = np.full((1, n_days), mm)
 
-        from cockpit.engine.pnl.engine import compute_daily_pnl, aggregate_to_monthly
+        from pnl_engine.engine import compute_daily_pnl, aggregate_to_monthly
         daily = compute_daily_pnl(nom_arr, ois_arr, rate_arr, mm_arr)
         monthly = aggregate_to_monthly(daily, nom_arr, ois_arr, rate_arr, days)
 
@@ -232,7 +232,7 @@ class TestCrossCheckManual:
 
     def test_manual_vs_engine_multi_month(self):
         """Multi-month manual calculation matches engine for 3 months."""
-        from cockpit.engine.pnl.engine import compute_daily_pnl, aggregate_to_monthly
+        from pnl_engine.engine import compute_daily_pnl, aggregate_to_monthly
 
         nominal = 20_000_000.0
         rate_ref = 0.0200  # YTM for BND

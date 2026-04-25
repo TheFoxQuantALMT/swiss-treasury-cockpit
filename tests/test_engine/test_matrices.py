@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from cockpit.engine.pnl.matrices import (
+from pnl_engine.matrices import (
     build_date_grid,
     expand_nominal_to_daily,
+    build_alive_nominal_daily,
     build_alive_mask,
     build_mm_vector,
     build_rate_matrix,
@@ -25,6 +26,42 @@ def test_expand_nominal_to_daily():
     assert result[0, 0] == 1_000_000.0
     assert result[0, 29] == 1_000_000.0
     assert result[0, 30] == 2_000_000.0
+
+
+def test_build_alive_nominal_daily_upscales_boundary_month():
+    """Mid-month refix: bucket is pro-rata, engine must upscale so alive-day nominal
+    equals the implied full nominal (undoing bank's pro-rata convention)."""
+    days = pd.date_range("2026-04-01", "2026-05-31")  # 61 days (April 30 + May 31)
+    # Deal alive April 1–April 20 (20 days), dies on April 20 (refix date).
+    # Bank bucket for April = full_nominal × 20/30 = 100M × 20/30 ≈ 66.67M.
+    nominals = pd.DataFrame({"2026/04": [66_666_666.67], "2026/05": [0.0]})
+    deals = pd.DataFrame({
+        "Valuedate": [pd.Timestamp("2026-01-01")],
+        "Maturitydate": [pd.Timestamp("2026-04-20")],
+    })
+    alive = build_alive_mask(deals, days)
+    nd = build_alive_nominal_daily(nominals, alive, days)
+    # Alive days (April 1–20) carry the full implied nominal (≈100M).
+    assert nd.shape == (1, 61)
+    assert np.isclose(nd[0, 0], 100_000_000.0, rtol=1e-6)
+    assert np.isclose(nd[0, 19], 100_000_000.0, rtol=1e-6)
+    # Dead days (April 21+ and all of May) are zero.
+    assert nd[0, 20:].sum() == 0.0
+    # Sum of alive-day nominals = 20 × 100M = 2,000M nominal-days.
+    assert np.isclose(nd[0].sum(), 2_000_000_000.0, rtol=1e-6)
+
+
+def test_build_alive_nominal_daily_full_month_unchanged():
+    """Full-alive month: factor == 1, result matches uniform broadcast × mask."""
+    days = pd.date_range("2026-04-01", "2026-04-30")
+    nominals = pd.DataFrame({"2026/04": [1_000_000.0]})
+    deals = pd.DataFrame({
+        "Valuedate": [pd.Timestamp("2026-01-01")],
+        "Maturitydate": [pd.Timestamp("2026-12-31")],
+    })
+    alive = build_alive_mask(deals, days)
+    nd = build_alive_nominal_daily(nominals, alive, days)
+    assert np.allclose(nd[0], 1_000_000.0)
 
 
 def test_build_alive_mask_mid_month_maturity():

@@ -41,6 +41,7 @@ from pnl_engine.engine import (
 from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
+    build_alive_nominal_daily,
     build_client_rate_matrix,
     build_cumulative_carry_factors,
     build_cumulative_rate_factors,
@@ -48,7 +49,6 @@ from pnl_engine.matrices import (
     build_funding_matrix,
     build_mm_vector,
     build_rate_matrix,
-    expand_nominal_to_daily,
 )
 from pnl_engine.report import export_excel
 
@@ -164,11 +164,14 @@ class PnlEngine:
 
         self._deals_use = merged.reset_index(drop=True)
 
-        # Build matrices (C6: alive mask caps start at first of dateRun's month)
-        self._nominal_daily = expand_nominal_to_daily(self._deals_use[self._month_cols], self._days)
+        # Build matrices (C6: alive mask caps start at first of dateRun's month).
+        # `build_alive_nominal_daily` also upscales partial-alive boundary months
+        # to undo the pro-rata dilution baked into rate_schedule buckets.
         alive = build_alive_mask(self._deals_use, self._days, date_run=self._dateRun_ts)
         self._alive_mask = alive
-        self._nominal_daily = self._nominal_daily * alive
+        self._nominal_daily = build_alive_nominal_daily(
+            self._deals_use[self._month_cols], alive, self._days,
+        )
 
         # Apply NMD behavioral decay if profiles provided
         if self._nmd_profiles is not None and not self._nmd_profiles.empty:
@@ -297,9 +300,9 @@ class PnlEngine:
         ref = self._load_ref_curves(shock=shock)
         if ois_curves is None:
             return ref
-        if not ref:
+        if ref is None:
             return ois_curves
-        return {**ois_curves, **ref}
+        return pd.concat([ois_curves, ref], ignore_index=True)
 
     def update_pnl(
         self,

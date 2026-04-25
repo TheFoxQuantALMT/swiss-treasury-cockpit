@@ -17,6 +17,7 @@ dependencies = [
     "plotly>=6.6.0",
     "kaleido>=1.2.0",
     "loguru>=0.7",
+    "pandera>=0.25",
 ]
 
 [project.optional-dependencies]

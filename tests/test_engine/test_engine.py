@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cockpit.engine.pnl.engine import compute_daily_pnl, aggregate_to_monthly, weighted_average, compute_strategy_pnl
+from pnl_engine.engine import compute_daily_pnl, aggregate_to_monthly, weighted_average, compute_strategy_pnl
 
 
 def test_compute_daily_pnl_simple():
@@ -115,7 +115,7 @@ def test_strategy_hcd_no_ois_subtraction():
 
 def test_build_rate_matrix_floating():
     """Floating deals should use ref_curves forward + spread."""
-    from cockpit.engine.pnl.matrices import build_rate_matrix
+    from pnl_engine.matrices import build_rate_matrix
 
     days = pd.date_range("2026-04-01", periods=3)
     deals = pd.DataFrame({
@@ -141,7 +141,7 @@ def test_build_rate_matrix_floating():
 
 def test_merge_results_direction_filtering():
     """BND legs exclude L/D; IAM/LD legs exclude B and S (bond-like)."""
-    from cockpit.engine.pnl.engine import merge_results
+    from pnl_engine.engine import merge_results
 
     strategy = pd.DataFrame({
         "Product2BuyBack": ["BND-HCD", "BND-NHCD", "IAM/LD-HCD", "IAM/LD-NHCD",
@@ -193,7 +193,7 @@ def test_merge_results_direction_filtering():
 
 def test_build_alive_mask_with_date_run():
     """Active range capped at max(Valuedate, first_of_month(dateRun))."""
-    from cockpit.engine.pnl.matrices import build_alive_mask
+    from pnl_engine.matrices import build_alive_mask
     days = pd.date_range("2026-03-01", "2026-04-30")
     deals = pd.DataFrame({
         "Valuedate": [pd.Timestamp("2020-01-01")],  # old deal
@@ -214,7 +214,7 @@ def test_build_alive_mask_with_date_run():
 
 def test_resolve_rate_ref_product_mapping():
     """Each product maps to the correct rate column."""
-    from cockpit.engine.pnl.engine import _resolve_rate_ref
+    from pnl_engine.engine import _resolve_rate_ref
     deals = pd.DataFrame({
         "Product": ["IAM/LD", "BND", "IRS", "HCD", "FXS"],
         "EqOisRate": [0.03, 0.0, 0.0, 0.0, 0.025],

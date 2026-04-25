@@ -12,13 +12,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cockpit.engine.pnl.engine import (
+from pnl_engine.engine import (
     _resolve_rate_ref,
     aggregate_to_monthly,
     compute_daily_pnl,
     compute_strategy_pnl,
 )
-from cockpit.engine.pnl.matrices import (
+from pnl_engine.matrices import (
     build_accrual_days,
     build_alive_mask,
     build_date_grid,
